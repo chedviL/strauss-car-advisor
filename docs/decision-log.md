@@ -140,3 +140,23 @@ PENDING (tracked, not faked): the production demo path still derives datasetId f
 the rule-set hash; a dataset-row import into the datasets table is needed before the
 Next.js app runs against Postgres end-to-end (the integration tests seed it manually).
 Conversation/model runtime still not built (O8).
+
+## Dataset import into Postgres + app uses real dataset UUID (end-to-end green)
+
+Reproducible, content-hash-versioned dataset import seeds rule_sets + datasets +
+vehicles into Postgres idempotently (re-run returns the same UUID; vehicles=20 not
+duplicated). The active app path now resolves the REAL datasets.id UUID (read-only
+lookup by content hash via the app role); the hash-slice shortcut is removed from
+the active path (contentId kept only for the local file-store demo).
+
+| # | Decision / fix | Rationale |
+|---|---|---|
+| D36 | DatasetRepository.ensureDataset (owner) upserts by combined content hash (rules+catalog+value-of-use source); findDatasetIdByContentHash (app, read-only) resolves the UUID. | reproducible, versioned, idempotent; app does not need owner creds at runtime. |
+| D37 | import:dataset script seeds Postgres when MIGRATION_DATABASE_URL is set; prints the dataset UUID. | one reproducible import, no unique per-test manual seed for the app path. |
+| D38 (BUG caught by Postgres) | RLS was effectively hiding config tables (datasets/vehicles/rule_sets) from the non-owner app role (owner bypasses RLS, so it saw rows; strauss_app saw 0). Migration 0007 disables RLS on these shared, non-owner config tables (0006 re-grants SELECT). | config tables are system data, not owner-scoped; the owner-scoped RLS belongs only to cases/facts/scenarios/messages/turn_runs/comparisons/inquiries. |
+| D39 | createDemoCaseFromEmployee resolves dataset UUID via DATABASE_URL lookup; clear error if the dataset was not imported (run import:dataset). No silent file fallback when a DB is configured. | ties the compared result to the documented dataset version. |
+
+Verified end-to-end against live Postgres (full suite 83/83, 0 skipped): employee
+-> case (real dataset UUID) -> alternative -> compare (E-001 11032->11693) -> save
+-> restore from a fresh service instance; cross-visit isolation; and re-running the
+import does not duplicate or disrupt existing cases/comparisons (idempotent).

@@ -15,11 +15,14 @@ import {
   verifyResolvedKey,
 } from "../../src/server/repositories/catalog-import.js";
 import { CATALOG } from "../../data/source/catalog.js";
+import { loadEnv, envPresence } from "../../src/server/web/load-env.js";
+import { ensureActiveDatasetId } from "../../src/server/services/dataset-provider.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const dataDir = join(here, "../../data/source");
 
-function main(): void {
+async function main(): Promise<void> {
+  loadEnv();
   const rulesText = readFileSync(join(dataDir, "strauss-rules.json"), "utf8");
   const { rules, appliedDefaults } = parseRules(rulesText);
 
@@ -77,6 +80,19 @@ function main(): void {
     process.exitCode = 1; // AC-2.1.7: לא לפרסם dataset עם רכב עמום
   }
   console.log(`דוח מלא נכתב ל: ${outPath}`);
+
+  if (blocked.length > 0) return; // לא לייבא dataset עם רכב עמום
+
+  // יבוא ל-Postgres (idempotent) כאשר קיים חיבור בעלים. אחרת מדלגים (מצב קבצים).
+  const presence = envPresence(["MIGRATION_DATABASE_URL"]);
+  console.log("חיבור בעלים (קיים/לא):", presence);
+  const ownerConn = process.env.MIGRATION_DATABASE_URL;
+  if (ownerConn && ownerConn.trim() !== "") {
+    const datasetId = await ensureActiveDatasetId(ownerConn);
+    console.log(`dataset יובא/קיים במסד. UUID: ${datasetId}`);
+  } else {
+    console.log("אין MIGRATION_DATABASE_URL - דילוג על יבוא ל-Postgres (מצב קבצים מקומי).");
+  }
 }
 
-main();
+main().catch((e) => { console.error("כשל ביבוא:", e instanceof Error ? e.message : String(e)); process.exit(1); });

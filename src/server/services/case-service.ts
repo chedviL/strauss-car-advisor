@@ -22,7 +22,7 @@ import type {
 import type { ResolvedVehicle } from "../repositories/catalog-import.js";
 import { validateEligibility, type Occupation } from "../../domain/eligibility/engine.js";
 import type { RouteKind } from "../../domain/contracts/types.js";
-import { getActiveDataset, type ActiveDataset } from "./dataset-provider.js";
+import { getActiveDataset, findActiveDatasetId, type ActiveDataset } from "./dataset-provider.js";
 import {
   SAMPLE_EMPLOYEES,
   type SampleEmployee,
@@ -145,13 +145,34 @@ export class CaseService {
       participation: emp.baseline.participation,
       maintenanceAllowance: emp.baseline.maintenanceAllowance,
     };
+    const datasetId = datasetIdOverride ?? (await this.resolveDatasetId(dataset));
     return await this.repo.createCase({
       ownerId,
       isDemo: true,
-      datasetId: datasetIdOverride ?? dataset.datasetId,
+      datasetId,
       facts,
       baseline,
     });
+  }
+
+  /**
+   * מחזיר את מזהה ה-dataset לשימוש ביצירת תיק:
+   * - אם קיים חיבור בעלים/מסד (MIGRATION_DATABASE_URL/DATABASE_URL) -> UUID אמיתי מהמסד (idempotent).
+   * - אחרת (אחסון קבצים מקומי) -> contentId (hash) שמספיק לקבצים.
+   */
+  private async resolveDatasetId(dataset: ActiveDataset): Promise<string> {
+    const appConn = process.env.DATABASE_URL;
+    if (appConn && appConn.trim() !== "") {
+      const id = await findActiveDatasetId(appConn);
+      if (!id) {
+        throw new Error(
+          "ה-dataset הפעיל טרם יובא למסד. הרץ: npm run import:dataset (ראו docs/supabase-setup.md).",
+        );
+      }
+      return id;
+    }
+    // אחסון קבצים מקומי בלבד (ללא DATABASE_URL): contentId מספיק.
+    return dataset.contentId;
   }
 
   async getCaseState(caseId: string, ownerId: string): Promise<CaseState | null> {

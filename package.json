@@ -2,7 +2,7 @@
     "name":  "strauss-car-advisor",
     "version":  "0.1.0",
     "private":  true,
-    "description":  "×™×•×¢×¥ ×”×¨×›×‘ ×©×œ ×©×˜×¨××•×¡ - ×¡×™×ž×•×œ×˜×•×¨ × ×˜×• ×œ×‘×—×™×¨×ª ×¨×›×‘",
+    "description":  "Ã—â„¢Ã—â€¢Ã—Â¢Ã—Â¥ Ã—â€Ã—Â¨Ã—â€ºÃ—â€˜ Ã—Â©Ã—Å“ Ã—Â©Ã—ËœÃ—Â¨Ã—ÂÃ—â€¢Ã—Â¡ - Ã—Â¡Ã—â„¢Ã—Å¾Ã—â€¢Ã—Å“Ã—ËœÃ—â€¢Ã—Â¨ Ã—Â Ã—ËœÃ—â€¢ Ã—Å“Ã—â€˜Ã—â€”Ã—â„¢Ã—Â¨Ã—Âª Ã—Â¨Ã—â€ºÃ—â€˜",
     "scripts":  {
                     "dev":  "next dev",
                     "build":  "next build",
@@ -12,7 +12,8 @@
                     "typecheck":  "tsc --noEmit",
                     "import:data":  "tsx scripts/import/import-dataset.ts",
                     "db:migrate":  "tsx scripts/db/migrate.ts",
-                    "db:set-app-password":  "tsx scripts/db/set-app-password.ts"
+                    "db:set-app-password":  "tsx scripts/db/set-app-password.ts",
+                    "import:dataset":  "tsx scripts/import/import-dataset.ts"
                 },
     "engines":  {
                     "node":  "\u003e=20"
