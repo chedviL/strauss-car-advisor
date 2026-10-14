@@ -119,7 +119,11 @@ export class CaseService {
   }
 
   /** יוצר תיק דגמה מעובד לדוגמה: עובדות + baseline (המצב הנוכחי). */
-  async createDemoCaseFromEmployee(ownerId: string, employeeId: string): Promise<CaseState> {
+  async createDemoCaseFromEmployee(
+    ownerId: string,
+    employeeId: string,
+    datasetIdOverride?: string,
+  ): Promise<CaseState> {
     const emp = SAMPLE_EMPLOYEES.find((e) => e.id === employeeId);
     if (!emp) throw new Error("עובד לדוגמה לא נמצא");
     const dataset = getActiveDataset();
@@ -144,7 +148,7 @@ export class CaseService {
     return await this.repo.createCase({
       ownerId,
       isDemo: true,
-      datasetId: dataset.datasetId,
+      datasetId: datasetIdOverride ?? dataset.datasetId,
       facts,
       baseline,
     });

@@ -9,6 +9,7 @@
 import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { Client } from "pg";
+import { sslFor } from "../../src/server/repositories/pg-ssl.js";
 import { PgCaseRepository } from "../../src/server/repositories/pg-case-repository.js";
 import { CaseService } from "../../src/server/services/case-service.js";
 import type { CaseFacts, CaseState } from "../../src/domain/contracts/case.js";
@@ -30,7 +31,7 @@ run("Postgres RLS + בידוד + שחזור + מקביליות", () => {
   let admin: Client; // תפקיד בעלים/אדמין ל-seed בלבד
 
   beforeAll(async () => {
-    admin = new Client({ connectionString: MIGRATION_URL });
+    admin = new Client({ connectionString: MIGRATION_URL!, ...sslFor(MIGRATION_URL!) });
     await admin.connect();
     const rs = await admin.query(
       `insert into rule_sets (version, content_hash, config)
@@ -47,7 +48,7 @@ run("Postgres RLS + בידוד + שחזור + מקביליות", () => {
     datasetId = ds.rows[0].id;
     repo = new PgCaseRepository(DATABASE_URL!);
     service = new CaseService(repo);
-  });
+  }, 30000);
 
   afterAll(async () => {
     if (admin) {
@@ -87,7 +88,7 @@ run("Postgres RLS + בידוד + שחזור + מקביליות", () => {
     const ownerB = "pg-raw-B-" + randomUUID();
     const caseA = await createCase(ownerA);
 
-    const appClient = new Client({ connectionString: DATABASE_URL });
+    const appClient = new Client({ connectionString: DATABASE_URL!, ...sslFor(DATABASE_URL!) });
     await appClient.connect();
     try {
       await appClient.query("begin");
@@ -137,9 +138,9 @@ run("Postgres RLS + בידוד + שחזור + מקביליות", () => {
     ).rejects.toThrow();
   });
 
-  it("חישוב מלא מול Postgres: E-001 נטו 11032→11693", async () => {
+  it("חישוב מלא מול Postgres: E-001 נטו 11032→11693", { timeout: 30000 }, async () => {
     const owner = "pg-calc-" + randomUUID();
-    const created = await service.createDemoCaseFromEmployee(owner, "E-001");
+    const created = await service.createDemoCaseFromEmployee(owner, "E-001", datasetId);
     await service.pickAlternative(created.case.id, owner, {
       role: "alternative", route: "company_car", vehicleCode: "CAR-10",
       participation: 300, maintenanceAllowance: 0,
@@ -203,7 +204,7 @@ run("Postgres RLS + בידוד + שחזור + מקביליות", () => {
     expect(asB).toBeNull();
   });
 
-  it("מקביליות: שתי הוספות חלופה במקביל אינן יוצרות כפילות", async () => {
+  it("מקביליות: שתי הוספות חלופה במקביל אינן יוצרות כפילות", { timeout: 30000 }, async () => {
     const owner = "pg-conc-" + randomUUID();
     const created = await createCase(owner);
     const alt = (code: string) =>

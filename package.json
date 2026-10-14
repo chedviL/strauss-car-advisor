@@ -1,40 +1,41 @@
 {
-  "name": "strauss-car-advisor",
-  "version": "0.1.0",
-  "private": true,
-  "description": "יועץ הרכב של שטראוס - סימולטור נטו לבחירת רכב",
-  "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "typecheck": "tsc --noEmit",
-    "import:data": "tsx scripts/import/import-dataset.ts",
-    "db:migrate": "tsx scripts/db/migrate.ts"
-  },
-  "engines": {
-    "node": ">=20"
-  },
-  "dependencies": {
-    "@supabase/ssr": "0.12.7",
-    "@supabase/supabase-js": "2.117.3",
-    "decimal.js": "10.6.0",
-    "dotenv": "^16.6.1",
-    "next": "15.5.27",
-    "pg": "8.23.1",
-    "react": "19.3.0",
-    "react-dom": "19.3.0",
-    "zod": "3.25.76"
-  },
-  "devDependencies": {
-    "@types/node": "22.10.5",
-    "@types/pg": "8.23.1",
-    "@types/react": "19.0.2",
-    "@types/react-dom": "19.0.2",
-    "fast-check": "3.23.2",
-    "tsx": "4.23.15",
-    "typescript": "5.9.3",
-    "vitest": "2.1.9"
-  }
+    "name":  "strauss-car-advisor",
+    "version":  "0.1.0",
+    "private":  true,
+    "description":  "×™×•×¢×¥ ×”×¨×›×‘ ×©×œ ×©×˜×¨××•×¡ - ×¡×™×ž×•×œ×˜×•×¨ × ×˜×• ×œ×‘×—×™×¨×ª ×¨×›×‘",
+    "scripts":  {
+                    "dev":  "next dev",
+                    "build":  "next build",
+                    "start":  "next start",
+                    "test":  "vitest run",
+                    "test:watch":  "vitest",
+                    "typecheck":  "tsc --noEmit",
+                    "import:data":  "tsx scripts/import/import-dataset.ts",
+                    "db:migrate":  "tsx scripts/db/migrate.ts",
+                    "db:set-app-password":  "tsx scripts/db/set-app-password.ts"
+                },
+    "engines":  {
+                    "node":  "\u003e=20"
+                },
+    "dependencies":  {
+                         "@supabase/ssr":  "0.12.7",
+                         "@supabase/supabase-js":  "2.117.3",
+                         "decimal.js":  "10.6.0",
+                         "dotenv":  "^16.6.1",
+                         "next":  "15.5.27",
+                         "pg":  "8.23.1",
+                         "react":  "19.3.0",
+                         "react-dom":  "19.3.0",
+                         "zod":  "3.25.76"
+                     },
+    "devDependencies":  {
+                            "@types/node":  "22.10.5",
+                            "@types/pg":  "8.23.1",
+                            "@types/react":  "19.0.2",
+                            "@types/react-dom":  "19.0.2",
+                            "fast-check":  "3.23.2",
+                            "tsx":  "4.23.15",
+                            "typescript":  "5.9.3",
+                            "vitest":  "2.1.9"
+                        }
 }

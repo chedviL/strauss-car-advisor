@@ -1,22 +1,23 @@
 -- supabase/migrations/0002_app_role.sql
 -- תפקיד אפליקציה מוגבל הכפוף ל-RLS, נפרד מתפקיד המיגרציות/בעלים.
--- האפליקציה מתחברת כ-strauss_app; המיגרציות רצות כבעלים (postgres/owner).
--- strauss_app אינו superuser ואינו bypassrls => RLS חוסם אותו ברמת המסד.
+-- האפליקציה מתחברת כ-strauss_app; המיגרציות רצות כבעלים (postgres).
 --
--- סיסמה: אינה נכתבת במיגרציה (סוד). לאחר הרצת המיגרציות, הגדר סיסמה פעם אחת:
---   alter role strauss_app with password '...';   (ראו README, שלב הגדרת סיסמה)
--- ה-DATABASE_URL של האפליקציה יצביע על strauss_app; MIGRATION_DATABASE_URL על postgres.
+-- הערה ל-Supabase: ה-postgres המנוהל אינו superuser, ולכן אינו רשאי להריץ
+-- ALTER ROLE ... NOSUPERUSER/NOBYPASSRLS. אין בכך צורך: תפקיד חדש נוצר כברירת
+-- מחדל ללא superuser וללא bypassrls. אנו רק יוצרים את התפקיד כ-LOGIN ומעניקים
+-- הרשאות DML מינימליות. RLS חל עליו כי הוא אינו הבעלים של הטבלאות.
+--
+-- סיסמה: אינה נכתבת במיגרציה (סוד). לאחר המיגרציות, כבעלים:
+--   alter role strauss_app with password '...';  (ראו docs/supabase-setup.md)
 
 do $$
 begin
   if not exists (select 1 from pg_roles where rolname = 'strauss_app') then
-    -- LOGIN כדי שהאפליקציה תוכל להתחבר ישירות; NOINHERIT; ללא superuser/createdb/createrole.
-    create role strauss_app login noinherit;
+    create role strauss_app login;
   else
-    alter role strauss_app login noinherit;
+    -- מוודאים LOGIN; לא נוגעים בתכונות superuser/bypassrls (ברירת מחדל: כבויות).
+    alter role strauss_app login;
   end if;
-  -- אכיפה מפורשת: לא superuser, לא bypassrls, לא createrole/createdb.
-  alter role strauss_app nosuperuser nobypassrls nocreatedb nocreaterole;
 end$$;
 
 -- הרשאות מינימליות: שימוש בסכמה + DML על טבלאות האפליקציה בלבד (ללא DDL).
@@ -29,10 +30,8 @@ grant select, insert, update, delete on
 -- קריאה בלבד על נתוני התצורה (נכתבים רק במסלול מיגרציה/אדמין).
 grant select on rule_sets, datasets, vehicles, staff_roles to strauss_app;
 
--- רצף ה-UUID נוצר ב-gen_random_uuid(); אין צורך בהרשאת sequence.
--- אין grant על טבלאות עתידיות אוטומטית; ברירת המחדל היא deny.
-
--- אימות עצמי: strauss_app חייב להיות כפוף ל-RLS.
+-- אימות עצמי: strauss_app חייב להיות כפוף ל-RLS (לא superuser, לא bypassrls).
+-- אם מסיבה כלשהי התכונות דלוקות - נכשל במפורש.
 do $$
 declare r record;
 begin

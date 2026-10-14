@@ -6,6 +6,9 @@ export default defineConfig({
     environment: "node",
     globals: false,
     setupFiles: ["tests/setup/env.ts"],
+    // בדיקות אינטגרציה מול Postgres דרך pooler - latency רשת; timeout נדיב.
+    testTimeout: 30000,
+    hookTimeout: 30000,
   },
   resolve: {
     alias: {

@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { Client } from "pg";
 import { loadEnv, envPresence } from "../../src/server/web/load-env.js";
+import { sslFor } from "../../src/server/repositories/pg-ssl.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const migrationsDir = join(here, "../../supabase/migrations");
@@ -21,7 +22,7 @@ async function main(): Promise<void> {
     console.error("MIGRATION_DATABASE_URL (או DATABASE_URL) לא מוגדר. ראו README.");
     process.exit(1);
   }
-  const client = new Client({ connectionString: url });
+  const client = new Client({ connectionString: url, ...sslFor(url) });
   await client.connect();
   try {
     await client.query(

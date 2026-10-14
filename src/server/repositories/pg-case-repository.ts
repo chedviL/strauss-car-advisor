@@ -5,6 +5,7 @@
 
 import { randomUUID } from "node:crypto";
 import { Pool, type PoolClient } from "pg";
+import { sslFor } from "./pg-ssl.js";
 import type {
   CaseFacts,
   InquiryRecord,
@@ -26,7 +27,7 @@ export class PgCaseRepository implements CaseRepository {
   private readonly pool: Pool;
 
   constructor(connectionString: string) {
-    this.pool = new Pool({ connectionString, max: 5 });
+    this.pool = new Pool({ connectionString, max: 5, ...sslFor(connectionString) });
   }
 
   async close(): Promise<void> {

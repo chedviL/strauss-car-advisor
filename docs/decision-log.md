@@ -121,3 +121,22 @@ index (0004), inquiries isolation, concurrency.
 NOT verified against Postgres yet: no local Postgres/Docker container could be
 started in this session (tooling guard). Postgres remains PENDING until the user
 runs the setup. File-store tests do NOT count as Postgres verification.
+
+## Postgres connected + integration tests GREEN (live Supabase)
+
+All 5 migrations applied to a separate Supabase project (owner conn). strauss_app
+created as LOGIN, NOT superuser, NOT bypassrls. All 13 integration tests pass under
+the strauss_app role, and the full suite is 81/81 with 0 skipped (DATABASE_URL set).
+
+| # | Decision / fix | Rationale |
+|---|---|---|
+| D31 | Added SSL for non-local pg hosts (src/server/repositories/pg-ssl.ts; rejectUnauthorized=false). | Supabase requires TLS; connection was terminated without it. |
+| D32 | 0002 made Supabase-compatible: no ALTER ROLE NOSUPERUSER/NOBYPASSRLS (managed postgres is not superuser and cannot set those). Role is non-super/non-bypass by default. | 'permission denied to alter role' on hosted Supabase. |
+| D33 | set-app-password tool: password bound to set_config('strauss.app_pw',,true) then read via current_setting inside DO + format(%L). | Earlier / inside a DO block = outer statement has 0 params ('requires 0'). Keeps safe escaping, no raw concatenation, no shell arg; verified with a special-char throwaway role. |
+| D34 (BUG caught by Postgres) | datasetId was rules.contentHash.slice(0,16) - not a UUID; cases.dataset_id is uuid FK. Added datasetId override to createDemoCaseFromEmployee; Postgres path uses the real seeded dataset UUID. File store masked this. | Production needs a real datasets row; seeding the active dataset into the datasets table is a PENDING task (not faked). |
+| D35 | Global vitest testTimeout/hookTimeout = 30s. | Pooler round-trips exceed the default 5s for multi-step integration tests. |
+
+PENDING (tracked, not faked): the production demo path still derives datasetId from
+the rule-set hash; a dataset-row import into the datasets table is needed before the
+Next.js app runs against Postgres end-to-end (the integration tests seed it manually).
+Conversation/model runtime still not built (O8).
