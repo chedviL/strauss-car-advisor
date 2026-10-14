@@ -153,6 +153,56 @@ run("Postgres RLS + בידוד + שחזור + מקביליות", () => {
     await admin.query("delete from cases where id = $1", [created.case.id]);
   });
 
+  it("override תרחיש נשמר ונטען תחת תפקיד האפליקציה (migration 0003)", async () => {
+    const owner = "pg-ov-" + randomUUID();
+    const created = await createCase(owner);
+    await repo.upsertAlternative(created.case.id, owner, {
+      role: "alternative", route: "company_car", vehicleCode: "CAR-10",
+      participation: 300, maintenanceAllowance: 0, overrides: { baseSalary: 25000 },
+    });
+    const state = await repo.getCaseState(created.case.id, owner);
+    const alt = state!.scenarios.find((s) => s.role === "alternative")!;
+    expect(alt.overrides.baseSalary).toBe(25000);
+    const baseline = state!.scenarios.find((s) => s.role === "baseline")!;
+    expect(baseline.overrides.baseSalary).toBeUndefined();
+  });
+
+  it("updateFacts תחת RLS: בדיקת גרסה מחזירה conflict (migration תקין)", async () => {
+    const owner = "pg-uf-" + randomUUID();
+    const created = await createCase(owner);
+    const r1 = await repo.updateFacts(created.case.id, owner, { baseSalary: 20000 }, 0);
+    expect(r1.status).toBe("ok");
+    const stale = await repo.updateFacts(created.case.id, owner, { baseSalary: 99999 }, 0);
+    expect(stale.status).toBe("conflict");
+  });
+
+  it("openInquiry dedup תחת RLS + אינדקס ייחודי (migration 0004)", async () => {
+    const owner = "pg-inq-" + randomUUID();
+    const created = await createCase(owner);
+    const a = await repo.openInquiry(created.case.id, owner, {
+      type: "employee_participation", scenarioId: null, contextFingerprint: "ctx-1",
+    });
+    const b = await repo.openInquiry(created.case.id, owner, {
+      type: "employee_participation", scenarioId: null, contextFingerprint: "ctx-1",
+    });
+    expect(a.deduped).toBe(false);
+    expect(b.deduped).toBe(true);
+    expect(b.inquiry.id).toBe(a.inquiry.id);
+    const state = await repo.getCaseState(created.case.id, owner);
+    expect(state!.openInquiries.length).toBe(1);
+  });
+
+  it("בידוד inquiries: owner אחר אינו רואה פנייה של אחר (RLS)", async () => {
+    const ownerA = "pg-inqA-" + randomUUID();
+    const ownerB = "pg-inqB-" + randomUUID();
+    const caseA = await createCase(ownerA);
+    await repo.openInquiry(caseA.case.id, ownerA, {
+      type: "employee_participation", scenarioId: null, contextFingerprint: "x",
+    });
+    const asB = await repo.getCaseState(caseA.case.id, ownerB);
+    expect(asB).toBeNull();
+  });
+
   it("מקביליות: שתי הוספות חלופה במקביל אינן יוצרות כפילות", async () => {
     const owner = "pg-conc-" + randomUUID();
     const created = await createCase(owner);

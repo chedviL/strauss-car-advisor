@@ -100,3 +100,24 @@ tool-contracts.test.ts (8): closed schemas reject arbitrary fields, override can
 ### Pending verification
 - Postgres: scenario overrides column (0003), inquiries + uniq_open_inquiry (0004), updateFacts revision check under RLS - tests written, SKIPPED until DATABASE_URL.
 - Conversation understanding (Hebrew, tool selection): requires a real model; mock tests do NOT prove it. The agent runtime (binding these tools to a model) is not yet built.
+
+## Postgres connection prep (migrations hardening + setup guide)
+
+| # | Decision | Rationale |
+|---|---|---|
+| D28 | strauss_app is a LOGIN role, RLS-subject, explicitly NOSUPERUSER/NOBYPASSRLS/NOCREATEDB/NOCREATEROLE (0002). Password set out-of-band (alter role), never in a migration. | app connects as a limited role; owner (postgres) runs migrations via MIGRATION_DATABASE_URL. |
+| D29 | RLS policies made explicit WITH CHECK on every owner policy incl. inquiries (0005). | INSERT/UPDATE post-image gated at the DB, not relying on implicit USING->WITH CHECK copy. |
+| D30 | Migrations applied as owner (MIGRATION_DATABASE_URL); app uses DATABASE_URL (strauss_app). Integration tests connect as the app role. | genuine least-privilege RLS verification. |
+
+docs/supabase-setup.md: step-by-step (separate project, two connection strings, env
+vars in .env.local only, run migrations as owner, set strauss_app password, run
+integration tests as the app role, run app against Postgres).
+
+Integration tests extended (now 12, all SKIPPED until DATABASE_URL): the decisive
+raw-query-without-ownership-filter RLS test, BYPASSRLS/superuser guard, scenario
+override persistence (0003), updateFacts revision conflict, inquiry dedup + unique
+index (0004), inquiries isolation, concurrency.
+
+NOT verified against Postgres yet: no local Postgres/Docker container could be
+started in this session (tooling guard). Postgres remains PENDING until the user
+runs the setup. File-store tests do NOT count as Postgres verification.
