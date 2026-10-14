@@ -1,63 +1,80 @@
 # Supabase setup - step by step
 
-Goal: a SEPARATE Supabase project, two DB roles (owner for migrations, strauss_app
-for the app under RLS), migrations applied, and the integration tests passing.
-Secrets are set locally in .env.local only - never pasted in chat, never in git.
+Goal: a SEPARATE Supabase project, two DB roles (owner=postgres for migrations,
+strauss_app for the app under RLS), migrations applied, integration tests passing.
+Secrets go in .env.local only - never pasted in chat, never committed. The scripts
+load .env.local automatically (via dotenv) and never print secret values.
 
 ## Step 1 - create a separate Supabase project
-1. Go to https://supabase.com and sign in.
-2. New project. Give it a dedicated name (e.g. strauss-car-advisor-dev).
-3. Choose a region close to you. Set a strong database password - save it in your
-   password manager (this is the postgres/owner password).
-4. Wait for the project to finish provisioning.
+1. https://supabase.com > New project. Dedicated name (e.g. strauss-car-advisor-dev).
+2. Pick a region close to you. Set a strong DB password - save it (postgres/owner).
+3. Wait for provisioning. Note your PROJECT-REF (the subdomain id, e.g. abcdefgh...).
 
-## Step 2 - get the two connection strings
-Project Settings > Database > Connection string > URI.
-- OWNER connection (runs migrations): the default 'postgres' user URI with your DB
-  password. Use the Session pooler URI (port 5432) or Direct connection.
-- APP connection (runs the app under RLS): same host/db but user strauss_app.
-  You will set its password in Step 4.
+## Step 2 - choose connection type and build the two URLs
+Open the dashboard Connect dialog. There are two relevant forms:
+
+### Direct connection (IPv6-first)
+  host: db.[PROJECT-REF].supabase.co   port: 5432
+  username is the PLAIN role name.
+  owner: postgresql://postgres:[OWNER_PW]@db.[PROJECT-REF].supabase.co:5432/postgres
+  app  : postgresql://strauss_app:[APP_PW]@db.[PROJECT-REF].supabase.co:5432/postgres
+  Use Direct if your network has IPv6 (or the IPv4 add-on is enabled).
+
+### Shared Pooler (Supavisor) - IPv4-friendly
+  host: aws-0-[REGION].pooler.supabase.com
+  port: 6543 = transaction mode (recommended for the app), 5432 = session mode.
+  username is NAMESPACED with the project ref: [role].[PROJECT-REF]
+  owner: postgresql://postgres.[PROJECT-REF]:[OWNER_PW]@aws-0-[REGION].pooler.supabase.com:5432/postgres
+  app  : postgresql://strauss_app.[PROJECT-REF]:[APP_PW]@aws-0-[REGION].pooler.supabase.com:6543/postgres
+  (Confirmed by Supabase docs: for role postgres the Supavisor username is
+   postgres.[PROJECT-REF]; the same pattern applies to strauss_app.)
+
+Which to use here:
+- Migrations (owner): use Direct 5432, or Shared Pooler SESSION mode (5432).
+  Avoid transaction mode for migrations.
+- App (strauss_app): Direct 5432, or Shared Pooler TRANSACTION mode (6543) is fine -
+  our repository wraps every operation in begin/commit and uses
+  set_config('app.owner_id', ..., true), which is transaction-scoped, so it works
+  in transaction mode. (We never rely on session-level SET.)
+- If you are unsure or on IPv4, use the Shared Pooler for both.
 
 ## Step 3 - set env vars locally (.env.local, not committed)
-Copy .env.example to .env.local and fill:
-  MIGRATION_DATABASE_URL = postgresql://postgres:[OWNER_PASSWORD]@[HOST]:5432/postgres
-  DATABASE_URL           = postgresql://strauss_app:[APP_PASSWORD]@[HOST]:5432/postgres
-Leave STRAUSS_ALLOW_FILE_STORE empty (file store is local-demo only).
-Do NOT send these to chat. .env.local is git-ignored.
+Copy .env.example to .env.local and fill (choose Direct OR Pooler consistently):
+  MIGRATION_DATABASE_URL = <owner URL from Step 2>
+  DATABASE_URL           = <strauss_app URL from Step 2>
+Leave STRAUSS_ALLOW_FILE_STORE empty. Do NOT send these to chat; .env.local is
+git-ignored. The scripts load .env.local via dotenv and print only presence booleans.
 
-## Step 4 - run migrations (as owner) then set the app-role password
-1. Apply all migrations with the owner connection:
-     the db:migrate npm script  (reads MIGRATION_DATABASE_URL)
-   This creates tables, constraints, RLS policies (incl. explicit WITH CHECK),
-   the strauss_app LOGIN role, grants, and the scenario-override / inquiries tables.
-2. Set the strauss_app password once (owner only). In Supabase SQL editor or psql,
-   connected as postgres, run:
-     alter role strauss_app with password '[APP_PASSWORD]';
-   Use the same [APP_PASSWORD] you put in DATABASE_URL.
+## Step 4 - run migrations (owner) then set the app-role password
+1. Apply migrations: run the db:migrate npm script. It reads MIGRATION_DATABASE_URL
+   from .env.local, prints { MIGRATION_DATABASE_URL: true, DATABASE_URL: true }
+   (presence only, no values), and applies 0001..0005 in order (tables, constraints,
+   RLS with explicit WITH CHECK, strauss_app LOGIN role + grants, overrides,
+   inquiries + unique index).
+2. Set the strauss_app password ONCE (owner only), in the Supabase SQL editor
+   connected as postgres:
+     alter role strauss_app with password '[APP_PW]';
+   Use the same [APP_PW] you put in DATABASE_URL. (The migration creates the role
+   as LOGIN but does not set a password - passwords never live in migrations.)
 
-## Step 5 - run the integration tests (as the app role)
+## Step 5 - run the integration tests (as strauss_app)
 Run the test npm script. With DATABASE_URL set, tests/integration/pg-rls.test.ts
-runs for real (otherwise it is skipped and NOT counted as Postgres verification).
-It checks, under the limited strauss_app role:
-  - save + restore of a case/baseline;
-  - RLS read isolation (another owner sees null);
-  - RLS at the DB level: a raw 'select * from cases' with NO ownership filter
-    returns 0 rows for another owner (the DB blocks it, not the WHERE clause);
-  - strauss_app is not BYPASSRLS and not SUPERUSER;
-  - RLS write isolation; single-baseline constraint; full compute (E-001 11032->11693);
-  - scenario overrides persist (migration 0003);
-  - updateFacts optimistic revision check -> conflict;
-  - openInquiry dedup + unique open-inquiry index (migration 0004);
-  - inquiries isolation across owners;
-  - concurrency: two parallel alternative upserts do not create a duplicate.
+runs for real under the limited role (otherwise skipped, NOT counted as Postgres
+verification). It checks: save/restore; RLS read isolation; the decisive raw
+'select * from cases' with NO ownership filter returning 0 rows for another owner;
+strauss_app is not BYPASSRLS/superuser; write isolation; single-baseline; full
+compute (E-001 11032->11693); scenario overrides (0003); updateFacts conflict;
+inquiry dedup + unique index (0004); inquiries isolation; concurrency.
 
 ## Step 6 - run the app against Postgres
-With DATABASE_URL set, start the app (the dev npm script). The service uses the
-Postgres repository automatically. If DATABASE_URL is missing in a deployed env,
-the app fails fast with a clear config error (no silent fallback to file storage).
+With DATABASE_URL set, start the app (dev npm script). The service auto-selects the
+Postgres repository. If DATABASE_URL is missing in a deployed env, the app fails
+fast with a clear config error (no silent fallback to file storage).
 
-## Notes
-- Migrations run as owner (MIGRATION_DATABASE_URL). The app runs as strauss_app
-  (DATABASE_URL), which is RLS-subject. Never point DATABASE_URL at postgres.
-- To reset locally: drop and recreate the public schema as owner, then re-run
-  migrations. Do this only on a dev project.
+## Troubleshooting
+- Auth failed on the pooler: check the username is [role].[PROJECT-REF], not bare.
+- Connection refused / timeout on Direct: likely IPv6-only network; use the Shared
+  Pooler instead.
+- 'permission denied for table ...' as strauss_app: expected if a grant is missing;
+  re-run db:migrate as owner (0002/0004 grant the needed tables).
+- Reset a dev DB: as owner, drop and recreate schema public, then re-run db:migrate.

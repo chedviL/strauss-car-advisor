@@ -6,12 +6,16 @@ import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { Client } from "pg";
+import { loadEnv, envPresence } from "../../src/server/web/load-env.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const migrationsDir = join(here, "../../supabase/migrations");
 
 async function main(): Promise<void> {
+  loadEnv();
   // המיגרציות רצות בתפקיד בעלים/אדמין (לא בתפקיד האפליקציה המוגבל).
+  const presence = envPresence(["MIGRATION_DATABASE_URL", "DATABASE_URL"]);
+  console.log("משתני סביבה (קיים/לא, ללא ערכים):", presence);
   const url = process.env.MIGRATION_DATABASE_URL ?? process.env.DATABASE_URL;
   if (!url) {
     console.error("MIGRATION_DATABASE_URL (או DATABASE_URL) לא מוגדר. ראו README.");
