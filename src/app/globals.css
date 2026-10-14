@@ -1,0 +1,62 @@
+/* src/app/globals.css - design tokens (re-skinnable) + RTL base */
+:root {
+  --color-bg: #f6f7f9;
+  --color-surface: #ffffff;
+  --color-text: #1a1d21;
+  --color-muted: #5b6472;
+  --color-primary: #0b5fff;
+  --color-primary-contrast: #ffffff;
+  --color-gain: #0a7d3c;
+  --color-loss: #b4232a;
+  --color-border: #e2e6 eb;
+  --color-border: #e2e6eb;
+  --radius-sm: 8px;
+  --radius-md: 14px;
+  --radius-lg: 22px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 16px;
+  --space-4: 24px;
+  --space-5: 36px;
+  --font-base: 1rem;
+  --font-lg: 1.35rem;
+  --font-xl: 2rem;
+  --shadow: 0 2px 14px rgba(16, 24, 40, 0.08);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: "Segoe UI", "Arial Hebrew", Arial, sans-serif;
+  font-size: var(--font-base);
+  line-height: 1.5;
+}
+
+a { color: var(--color-primary); }
+
+.btn {
+  font: inherit;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  cursor: pointer;
+}
+.btn-primary {
+  background: var(--color-primary);
+  color: var(--color-primary-contrast);
+  border-color: var(--color-primary);
+}
+.btn:focus-visible, a:focus-visible {
+  outline: 3px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}

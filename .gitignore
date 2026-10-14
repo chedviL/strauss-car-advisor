@@ -1,0 +1,29 @@
+# dependencies
+node_modules/
+
+# secrets - never commit real values
+.env
+.env.local
+.env.*.local
+
+# build artifacts
+.next/
+dist/
+tsconfig.tsbuildinfo
+*.log
+
+# local runtime state (demo case storage) - never commit
+data/state/
+data/uploads/
+
+# large/official source files - restored locally per README, not committed
+data/source/value-of-use-2026.csv
+data/source/import-validation-report.json
+
+# challenge input materials (official sources + master doc) - kept local only.
+# The app loads a local copy at import time; see README for restore steps.
+challenge-inputs/
+
+# temp test output
+test-results.json
+tr.json

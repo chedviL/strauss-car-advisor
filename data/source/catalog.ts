@@ -1,0 +1,29 @@
+// data/source/catalog.ts
+// קטלוג 20 הרכבים מגיליון "קטלוג רכבים" ב-Excel.
+// כולל "תאור דגם" ו"כינוי מסחרי" הנדרשים להכרעת vehicle_type_code (O14).
+// שווי השימוש בקטלוג משמש לאימות בלבד - לא כמפתח ולא כבסיס הכרעה.
+
+import type { CatalogVehicleRaw } from "../../src/server/repositories/catalog-import.js";
+
+export const CATALOG: CatalogVehicleRaw[] = [
+  { id: "CAR-01", group: "א", manufacturerCode: "00885", commercialName: "PICANTO", modelCode: "00643", modelDescription: "B351A", registrationYear: "2025", propulsionText: "בנזין", listPrice: 105900, catalogValueOfUse: 2690, companyCost: 2650, defaultParticipation: 150 },
+  { id: "CAR-02", group: "א", manufacturerCode: "00672", commercialName: "YARIS CROSS HSD", modelCode: "00130", modelDescription: "MXPJ10L-BHXNBW", registrationYear: "2025", propulsionText: "היברידי", listPrice: 154990, catalogValueOfUse: 3350, companyCost: 3400, defaultParticipation: 200 },
+  { id: "CAR-03", group: "א", manufacturerCode: "01014", commercialName: "BYD DOLPHIN", modelCode: "00012", modelDescription: "EM2E-1", registrationYear: "2025", propulsionText: "חשמלי", listPrice: 150990, catalogValueOfUse: 2590, companyCost: 3300, defaultParticipation: 200 },
+  { id: "CAR-04", group: "א", manufacturerCode: "00778", commercialName: "LEON", modelCode: "00618", modelDescription: "KL12TZ", registrationYear: "2025", propulsionText: "בנזין", listPrice: 152900, catalogValueOfUse: 3880, companyCost: 3450, defaultParticipation: 200 },
+  { id: "CAR-05", group: "ב", manufacturerCode: "00885", commercialName: "NIRO", modelCode: "00619", modelDescription: "CP81EG", registrationYear: "2025", propulsionText: "היברידי", listPrice: 139000, catalogValueOfUse: 2950, companyCost: 3600, defaultParticipation: 250 },
+  { id: "CAR-06", group: "ב", manufacturerCode: "00443", commercialName: "MG4", modelCode: "00032", modelDescription: "WH40", registrationYear: "2025", propulsionText: "חשמלי", listPrice: 150000, catalogValueOfUse: 2430, companyCost: 3550, defaultParticipation: 250 },
+  { id: "CAR-07", group: "ב", manufacturerCode: "00839", commercialName: "COROLLA", modelCode: "00295", modelDescription: "MZEA11L-DEXNBW", registrationYear: "2026", propulsionText: "בנזין", listPrice: 165990, catalogValueOfUse: 4120, companyCost: 3700, defaultParticipation: 250 },
+  { id: "CAR-08", group: "ב", manufacturerCode: "00253", commercialName: "KONA EV", modelCode: "00138", modelDescription: "H781A", registrationYear: "2026", propulsionText: "חשמלי", listPrice: 174990, catalogValueOfUse: 2960, companyCost: 3650, defaultParticipation: 250 },
+  { id: "CAR-09", group: "ג", manufacturerCode: "00413", commercialName: "COROLLA CROSS", modelCode: "00296", modelDescription: "ZVG12L-KHXGBW", registrationYear: "2025", propulsionText: "היברידי", listPrice: 182990, catalogValueOfUse: 4070, companyCost: 4300, defaultParticipation: 300 },
+  { id: "CAR-10", group: "ג", manufacturerCode: "01014", commercialName: "ATTO 3", modelCode: "00003", modelDescription: "SC2E-SC2E01", registrationYear: "2025", propulsionText: "חשמלי", listPrice: 177500, catalogValueOfUse: 3130, companyCost: 4100, defaultParticipation: 300 },
+  { id: "CAR-11", group: "ג", manufacturerCode: "00885", commercialName: "EV3", modelCode: "00675", modelDescription: "FC81B", registrationYear: "2025", propulsionText: "חשמלי", listPrice: 169900, catalogValueOfUse: 2930, companyCost: 4350, defaultParticipation: 300 },
+  { id: "CAR-12", group: "ג", manufacturerCode: "00253", commercialName: "TUCSON", modelCode: "00133", modelDescription: "JB81B", registrationYear: "2025", propulsionText: "בנזין", listPrice: 188497, catalogValueOfUse: 4790, companyCost: 4450, defaultParticipation: 400 },
+  { id: "CAR-13", group: "ג", manufacturerCode: "00588", commercialName: "MAZDA 3", modelCode: "00446", modelDescription: "BP", registrationYear: "2025", propulsionText: "בנזין", listPrice: 179900, catalogValueOfUse: 4570, companyCost: 4200, defaultParticipation: 350 },
+  { id: "CAR-14", group: "ד", manufacturerCode: "01327", commercialName: "MODEL 3", modelCode: "00730", modelDescription: "3E7F", registrationYear: "2025", propulsionText: "חשמלי", listPrice: 217813, catalogValueOfUse: 4150, companyCost: 5100, defaultParticipation: 500 },
+  { id: "CAR-15", group: "ד", manufacturerCode: "00676", commercialName: "OCTAVIA", modelCode: "01455", modelDescription: "NX-NX337D", registrationYear: "2025", propulsionText: "בנזין", listPrice: 202690, catalogValueOfUse: 5150, companyCost: 5000, defaultParticipation: 500 },
+  { id: "CAR-16", group: "ד", manufacturerCode: "00416", commercialName: "SPORTAGE HEV", modelCode: "00294", modelDescription: "PV81G", registrationYear: "2026", propulsionText: "פלאג-אין", listPrice: 229900, catalogValueOfUse: 4550, companyCost: 5150, defaultParticipation: 500 },
+  { id: "CAR-17", group: "ד", manufacturerCode: "01014", commercialName: "SEAL", modelCode: "00014", modelDescription: "H6CD", registrationYear: "2025", propulsionText: "חשמלי", listPrice: 250000, catalogValueOfUse: 4970, companyCost: 5200, defaultParticipation: 500 },
+  { id: "CAR-18", group: "ד", manufacturerCode: "00413", commercialName: "RAV4", modelCode: "00368", modelDescription: "AXAL52L-ANXXBW", registrationYear: "2025", propulsionText: "היברידי", listPrice: 199000, catalogValueOfUse: 4470, companyCost: 5200, defaultParticipation: 500 },
+  { id: "CAR-19", group: "משפחתי", manufacturerCode: "00885", commercialName: "CARNIVAL", modelCode: "00648", modelDescription: "NG5K3", registrationYear: "2025", propulsionText: "בנזין", listPrice: 319900, catalogValueOfUse: 8120, companyCost: 6000, defaultParticipation: 500 },
+  { id: "CAR-20", group: "משפחתי", manufacturerCode: "00481", commercialName: "SANTA FE", modelCode: "00533", modelDescription: "P2DG1", registrationYear: "2025", propulsionText: "בנזין", listPrice: 185000, catalogValueOfUse: 4700, companyCost: 5600, defaultParticipation: 500 },
+];

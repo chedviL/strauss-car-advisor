@@ -1,0 +1,194 @@
+// src/server/repositories/case-repository.ts
+// ממשק repository למצב התיק (אסינכרוני) + מימוש מבוסס קובץ (לדמו ולבדיקות).
+// אוכף בעלות (isolation) ואילוץ baseline יחיד - מקביל ל-RLS ולאילוצי המסד.
+// מימוש Supabase-Postgres (PgCaseRepository) מממש את אותו ממשק מול Postgres עם RLS.
+
+import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import type {
+  CaseFacts,
+  CaseRecord,
+  CaseState,
+  ComparisonRecord,
+  Scenario,
+  ScenarioRole,
+} from "../../domain/contracts/case.js";
+import type { RouteKind } from "../../domain/contracts/types.js";
+
+export interface CreateScenarioInput {
+  role: ScenarioRole;
+  route: RouteKind;
+  vehicleCode: string | null;
+  participation: number | null;
+  maintenanceAllowance: number;
+}
+
+export interface CaseRepository {
+  createCase(input: {
+    ownerId: string;
+    isDemo: boolean;
+    datasetId: string;
+    facts: CaseFacts;
+    baseline: CreateScenarioInput;
+  }): Promise<CaseState>;
+  /** טוען מצב תיק רק אם הוא בבעלות ownerId; אחרת null (בלי לחשוף קיום). */
+  getCaseState(caseId: string, ownerId: string): Promise<CaseState | null>;
+  listCasesByOwner(ownerId: string): Promise<CaseRecord[]>;
+  upsertAlternative(
+    caseId: string,
+    ownerId: string,
+    input: CreateScenarioInput,
+  ): Promise<Scenario>;
+  saveComparison(
+    caseId: string,
+    ownerId: string,
+    record: Omit<ComparisonRecord, "id" | "completedAt">,
+  ): Promise<ComparisonRecord>;
+}
+
+interface StoredCase {
+  case: CaseRecord;
+  facts: CaseFacts;
+  scenarios: Scenario[];
+  comparisons: ComparisonRecord[];
+}
+
+/** מימוש מבוסס קובץ: קובץ JSON לכל תיק תחת rootDir/<ownerId>/<caseId>.json. */
+export class FileCaseRepository implements CaseRepository {
+  constructor(private readonly rootDir: string) {
+    mkdirSync(rootDir, { recursive: true });
+  }
+
+  private ownerDir(ownerId: string): string {
+    const safe = ownerId.replace(/[^a-zA-Z0-9_-]/g, "_");
+    return join(this.rootDir, safe);
+  }
+  private casePath(ownerId: string, caseId: string): string {
+    return join(this.ownerDir(ownerId), `${caseId}.json`);
+  }
+  private read(ownerId: string, caseId: string): StoredCase | null {
+    const p = this.casePath(ownerId, caseId);
+    if (!existsSync(p)) return null;
+    return JSON.parse(readFileSync(p, "utf8")) as StoredCase;
+  }
+  private write(stored: StoredCase): void {
+    const dir = this.ownerDir(stored.case.ownerId);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      this.casePath(stored.case.ownerId, stored.case.id),
+      JSON.stringify(stored, null, 2),
+      "utf8",
+    );
+  }
+  private toState(stored: StoredCase): CaseState {
+    const latest =
+      stored.comparisons.length > 0
+        ? stored.comparisons[stored.comparisons.length - 1]!
+        : null;
+    return {
+      case: stored.case,
+      facts: stored.facts,
+      scenarios: stored.scenarios,
+      latestComparison: latest,
+    };
+  }
+
+  async createCase(input: {
+    ownerId: string;
+    isDemo: boolean;
+    datasetId: string;
+    facts: CaseFacts;
+    baseline: CreateScenarioInput;
+  }): Promise<CaseState> {
+    const now = new Date().toISOString();
+    const caseId = randomUUID();
+    if (input.baseline.role !== "baseline") {
+      throw new Error("baseline scenario must have role=baseline");
+    }
+    const baseline: Scenario = {
+      id: randomUUID(),
+      caseId,
+      role: "baseline",
+      route: input.baseline.route,
+      vehicleCode: input.baseline.vehicleCode,
+      participation: input.baseline.participation,
+      maintenanceAllowance: input.baseline.maintenanceAllowance,
+      revision: 0,
+    };
+    const stored: StoredCase = {
+      case: {
+        id: caseId, ownerId: input.ownerId, isDemo: input.isDemo,
+        datasetId: input.datasetId, status: "active", factsRevision: 0,
+        createdAt: now, updatedAt: now,
+      },
+      facts: input.facts,
+      scenarios: [baseline],
+      comparisons: [],
+    };
+    this.write(stored);
+    return this.toState(stored);
+  }
+
+  async getCaseState(caseId: string, ownerId: string): Promise<CaseState | null> {
+    const stored = this.read(ownerId, caseId);
+    if (!stored || stored.case.ownerId !== ownerId) return null;
+    return this.toState(stored);
+  }
+
+  async listCasesByOwner(ownerId: string): Promise<CaseRecord[]> {
+    const dir = this.ownerDir(ownerId);
+    if (!existsSync(dir)) return [];
+    const files = readdirSync(dir).filter((f) => f.endsWith(".json"));
+    const cases = files.map(
+      (f) => (JSON.parse(readFileSync(join(dir, f), "utf8")) as StoredCase).case,
+    );
+    return cases.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
+  async upsertAlternative(
+    caseId: string,
+    ownerId: string,
+    input: CreateScenarioInput,
+  ): Promise<Scenario> {
+    const stored = this.read(ownerId, caseId);
+    if (!stored || stored.case.ownerId !== ownerId) {
+      throw new Error("case not found for owner");
+    }
+    if (input.role !== "alternative") {
+      throw new Error("upsertAlternative requires role=alternative");
+    }
+    const existing = stored.scenarios.find((s) => s.role === "alternative");
+    const scenario: Scenario = {
+      id: existing ? existing.id : randomUUID(),
+      caseId, role: "alternative", route: input.route,
+      vehicleCode: input.vehicleCode, participation: input.participation,
+      maintenanceAllowance: input.maintenanceAllowance,
+      revision: existing ? existing.revision + 1 : 0,
+    };
+    stored.scenarios = stored.scenarios
+      .filter((s) => s.role !== "alternative")
+      .concat(scenario);
+    stored.case.updatedAt = new Date().toISOString();
+    this.write(stored);
+    return scenario;
+  }
+
+  async saveComparison(
+    caseId: string,
+    ownerId: string,
+    record: Omit<ComparisonRecord, "id" | "completedAt">,
+  ): Promise<ComparisonRecord> {
+    const stored = this.read(ownerId, caseId);
+    if (!stored || stored.case.ownerId !== ownerId) {
+      throw new Error("case not found for owner");
+    }
+    const full: ComparisonRecord = {
+      ...record, id: randomUUID(), completedAt: new Date().toISOString(),
+    };
+    stored.comparisons.push(full);
+    stored.case.updatedAt = new Date().toISOString();
+    this.write(stored);
+    return full;
+  }
+}
