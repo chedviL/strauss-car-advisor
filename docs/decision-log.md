@@ -79,3 +79,24 @@
 ### Still unverified
 - Postgres RLS/isolation/concurrency: pending DATABASE_URL (tests written, skipped).
 - Conversation (agent + model): not wired; O8 model choice open; marked unverified.
+
+## Conversation tool contracts (over existing services)
+
+| # | Decision | Rationale |
+|---|---|---|
+| D22 | Hypothetical change = scenario-level override (salary fields only). Shared facts + baseline unchanged. | O11 safe behavior: override never changes real eligibility; missing override inherits the current shared fact; removing override returns to inheritance (not zero). |
+| D23 | updateCase (shared facts) separated from manageScenarios (alternatives + hypothetical). Explicit closed Zod schemas; no arbitrary JSON paths; no group/mandatory-car override via simulation. | point 2 of flexibility guidance; prevents eligibility bypass. |
+| D24 | searchVehicles / compareScenarios compute eligibility + net in one batch over a consistent input snapshot, ranked by net delta, filtered by minNetDelta. No per-vehicle model call. Partial coverage never shown as best-of-all. | points 3+5. |
+| D25 | Unknown eligibility (missing occupation) returns missing_data, not ineligible. No separate explainIneligible tool - search/compare carry reasons + excluded. | point 4. |
+| D26 | openInquiry dedups by (case, type, context_fingerprint) among open inquiries; fingerprint built server-side. | point 4 (no duplicate rep inquiry). Pg: partial unique index uniq_open_inquiry (migration 0004). |
+| D27 | Tool identity (owner/case/role/requestId) injected via ToolContext from the server, never from the model. | design S4.1 / S8. |
+
+UI copy: fixed the נטo typo; comparison now reads 'נטו מחושב לפי כללי האתגר (לוחות 2025, שווי שימוש 2026)' and 'הנטו החודשי יגדל/יקטן ב-...'.
+
+### Tests added (local, FILE repo)
+scenario-flexibility.test.ts (10): override vs baseline, inheritance update, override removal, revision conflict, same-value no-bump, discover ranking + minNetDelta filter, partial coverage excluded, explicit multi + waiver, inquiry dedup + context change.
+tool-contracts.test.ts (8): closed schemas reject arbitrary fields, override cannot change group (group-ד vehicle stays excluded for group-ב even at salary 90000), uniform envelope success/conflict, search eligibility, inquiry dedup via tool.
+
+### Pending verification
+- Postgres: scenario overrides column (0003), inquiries + uniq_open_inquiry (0004), updateFacts revision check under RLS - tests written, SKIPPED until DATABASE_URL.
+- Conversation understanding (Hebrew, tool selection): requires a real model; mock tests do NOT prove it. The agent runtime (binding these tools to a model) is not yet built.

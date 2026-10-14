@@ -7,6 +7,9 @@ import { randomUUID } from "node:crypto";
 import { Pool, type PoolClient } from "pg";
 import type {
   CaseFacts,
+  InquiryRecord,
+  InquiryType,
+  ScenarioOverrides,
   CaseRecord,
   CaseState,
   ComparisonRecord,
@@ -15,6 +18,8 @@ import type {
 import type {
   CaseRepository,
   CreateScenarioInput,
+  FactsPatch,
+  UpdateFactsOutcome,
 } from "./case-repository.js";
 
 export class PgCaseRepository implements CaseRepository {
@@ -74,9 +79,9 @@ export class PgCaseRepository implements CaseRepository {
       );
       const b = input.baseline;
       await c.query(
-        `insert into scenarios (id, case_id, role, route, vehicle_code, participation, maintenance_allowance, revision)
-         values ($1,$2,'baseline',$3,$4,$5,$6,0)`,
-        [randomUUID(), caseId, b.route, b.vehicleCode, b.participation, b.maintenanceAllowance],
+        `insert into scenarios (id, case_id, role, route, vehicle_code, participation, maintenance_allowance, overrides, revision)
+         values ($1,$2,'baseline',$3,$4,$5,$6,$7,0)`,
+        [randomUUID(), caseId, b.route, b.vehicleCode, b.participation, b.maintenanceAllowance, JSON.stringify(b.overrides ?? {})],
       );
       return this.loadState(c, caseId);
     });
@@ -116,17 +121,17 @@ export class PgCaseRepository implements CaseRepository {
         const prev = existing.rows[0];
         const r = await c.query(
           `update scenarios set route=$2, vehicle_code=$3, participation=$4,
-             maintenance_allowance=$5, revision=revision+1
+             maintenance_allowance=$5, overrides=$6, revision=revision+1
            where id=$1 returning *`,
-          [prev.id, input.route, input.vehicleCode, input.participation, input.maintenanceAllowance],
+          [prev.id, input.route, input.vehicleCode, input.participation, input.maintenanceAllowance, JSON.stringify(input.overrides ?? {})],
         );
         await c.query("update cases set updated_at = now() where id = $1", [caseId]);
         return mapScenario(r.rows[0]);
       }
       const r = await c.query(
-        `insert into scenarios (id, case_id, role, route, vehicle_code, participation, maintenance_allowance, revision)
-         values ($1,$2,'alternative',$3,$4,$5,$6,0) returning *`,
-        [randomUUID(), caseId, input.route, input.vehicleCode, input.participation, input.maintenanceAllowance],
+        `insert into scenarios (id, case_id, role, route, vehicle_code, participation, maintenance_allowance, overrides, revision)
+         values ($1,$2,'alternative',$3,$4,$5,$6,$7,0) returning *`,
+        [randomUUID(), caseId, input.route, input.vehicleCode, input.participation, input.maintenanceAllowance, JSON.stringify(input.overrides ?? {})],
       );
       await c.query("update cases set updated_at = now() where id = $1", [caseId]);
       return mapScenario(r.rows[0]);
@@ -156,6 +161,85 @@ export class PgCaseRepository implements CaseRepository {
     });
   }
 
+  async updateFacts(
+    caseId: string,
+    ownerId: string,
+    patch: FactsPatch,
+    expectedRevision: number,
+  ): Promise<UpdateFactsOutcome> {
+    return this.withOwner(ownerId, async (c) => {
+      const cur = await c.query("select facts_revision from cases where id = $1", [caseId]);
+      if (cur.rowCount === 0) throw new Error("case not found for owner");
+      const currentRevision = cur.rows[0].facts_revision as number;
+      if (currentRevision !== expectedRevision) {
+        return { status: "conflict", currentRevision };
+      }
+      const cols: Record<string, string> = {
+        occupationCode: "occupation_code", reportedGroup: "reported_group",
+        baseSalary: "base_salary", commission: "commission", bonus: "bonus",
+        pensionRate: "pension_rate", trainingRate: "training_rate",
+        creditPoints: "credit_points", qualifyingChildren: "qualifying_children",
+      };
+      const sets: string[] = [];
+      const vals: unknown[] = [];
+      let i = 1;
+      for (const [k, v] of Object.entries(patch)) {
+        if (v === undefined) continue;
+        const col = cols[k];
+        if (!col) continue;
+        sets.push(`${col} = $${i++}`);
+        vals.push(v);
+      }
+      if (sets.length === 0) {
+        return { status: "ok", factsRevision: currentRevision };
+      }
+      vals.push(caseId);
+      // זיהוי שינוי סמנטי: בודקים אם לפחות שדה אחד שונה בפועל.
+      const changedCheck = await c.query(
+        `select 1 from case_facts where case_id = $${i} and (` +
+          Object.entries(patch)
+            .filter(([, v]) => v !== undefined)
+            .map(([k]) => `${cols[k]} is distinct from $${Object.keys(patch).filter((kk) => patch[kk as keyof FactsPatch] !== undefined).indexOf(k) + 1}`)
+            .join(" or ") +
+          ")",
+        vals,
+      );
+      if (changedCheck.rowCount === 0) {
+        return { status: "ok", factsRevision: currentRevision };
+      }
+      await c.query(`update case_facts set ${sets.join(", ")} where case_id = $${i}`, vals);
+      const upd = await c.query(
+        "update cases set facts_revision = facts_revision + 1, updated_at = now() where id = $1 returning facts_revision",
+        [caseId],
+      );
+      return { status: "ok", factsRevision: upd.rows[0].facts_revision as number };
+    });
+  }
+
+  async openInquiry(
+    caseId: string,
+    ownerId: string,
+    input: { type: InquiryType; scenarioId: string | null; contextFingerprint: string },
+  ): Promise<{ inquiry: InquiryRecord; deduped: boolean }> {
+    return this.withOwner(ownerId, async (c) => {
+      const owned = await c.query("select 1 from cases where id = $1", [caseId]);
+      if (owned.rowCount === 0) throw new Error("case not found for owner");
+      const existing = await c.query(
+        `select * from inquiries where case_id=$1 and type=$2 and context_fingerprint=$3 and status='open'`,
+        [caseId, input.type, input.contextFingerprint],
+      );
+      if (existing.rowCount && existing.rows[0]) {
+        return { inquiry: mapInquiry(existing.rows[0]), deduped: true };
+      }
+      const r = await c.query(
+        `insert into inquiries (case_id, scenario_id, type, context_fingerprint, status)
+         values ($1,$2,$3,$4,'open') returning *`,
+        [caseId, input.scenarioId, input.type, input.contextFingerprint],
+      );
+      return { inquiry: mapInquiry(r.rows[0]), deduped: false };
+    });
+  }
+
   private async loadState(c: PoolClient, caseId: string): Promise<CaseState> {
     const caseRow = await c.query("select * from cases where id = $1", [caseId]);
     const factsRow = await c.query("select * from case_facts where case_id = $1", [caseId]);
@@ -164,12 +248,17 @@ export class PgCaseRepository implements CaseRepository {
       "select * from comparisons where case_id = $1 order by completed_at desc limit 1",
       [caseId],
     );
+    const inqRows = await c.query(
+      "select * from inquiries where case_id = $1 and status = 'open'",
+      [caseId],
+    ).catch(() => ({ rows: [] as Record<string, unknown>[] }));
     return {
       case: mapCase(caseRow.rows[0]),
       facts: mapFacts(factsRow.rows[0]),
       scenarios: scenRows.rows.map(mapScenario),
       latestComparison:
         cmpRows.rowCount && cmpRows.rows[0] ? mapComparison(cmpRows.rows[0]) : null,
+      openInquiries: inqRows.rows.map(mapInquiry),
     };
   }
 }
@@ -217,6 +306,7 @@ function mapScenario(r: Record<string, unknown>): Scenario {
     vehicleCode: (r.vehicle_code as string) ?? null,
     participation: num(r.participation),
     maintenanceAllowance: Number(r.maintenance_allowance),
+    overrides: (r.overrides as ScenarioOverrides) ?? {},
     revision: r.revision as number,
   };
 }
@@ -231,5 +321,17 @@ function mapComparison(r: Record<string, unknown>): ComparisonRecord {
     inputSnapshot: r.input_snapshot as ComparisonRecord["inputSnapshot"],
     result: r.result as ComparisonRecord["result"],
     completedAt: (r.completed_at as Date).toISOString(),
+  };
+}
+
+function mapInquiry(r: Record<string, unknown>): InquiryRecord {
+  return {
+    id: r.id as string,
+    caseId: r.case_id as string,
+    type: r.type as InquiryType,
+    scenarioId: (r.scenario_id as string) ?? null,
+    contextFingerprint: r.context_fingerprint as string,
+    status: r.status as InquiryRecord["status"],
+    createdAt: (r.created_at as Date).toISOString(),
   };
 }

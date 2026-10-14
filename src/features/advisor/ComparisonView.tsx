@@ -82,10 +82,10 @@ export function ComparisonView({
           }}
         >
           <span aria-hidden="true">{gain ? "▲" : "▼"}</span>{" "}
-          {gain ? "תרוויח" : "תפסיד"} {shekel(Math.abs(delta))} בנטo החודשי
+          {gain ? "הנטו החודשי יגדל ב-" : "הנטו החודשי יקטן ב-"}{shekel(Math.abs(delta))}
         </div>
         <p style={{ color: "var(--color-muted)", marginTop: "var(--space-1)" }}>
-          מהיום ({shekel(baseNet)}) לחלופה ({shekel(altNet)}). ההפרש משקף שינוי בשווי
+          נטו מחושב לפי כללי האתגר (לוחות 2025, שווי שימוש 2026): מהיום ({shekel(baseNet)}) לחלופה ({shekel(altNet)}). ההפרש משקף שינוי בשווי
           השימוש, בניכויי המס והביטוח ובהשתתפות - לא העברת מזומן.
         </p>
 

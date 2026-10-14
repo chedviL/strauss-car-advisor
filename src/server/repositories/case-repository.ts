@@ -8,6 +8,9 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from 
 import { join } from "node:path";
 import type {
   CaseFacts,
+  InquiryRecord,
+  InquiryType,
+  ScenarioOverrides,
   CaseRecord,
   CaseState,
   ComparisonRecord,
@@ -22,7 +25,25 @@ export interface CreateScenarioInput {
   vehicleCode: string | null;
   participation: number | null;
   maintenanceAllowance: number;
+  overrides?: ScenarioOverrides;
 }
+
+/** עדכון עובדות חלקי: רק שדות שנכללים משתנים. clear מפורש != אפס. */
+export type FactsPatch = Partial<{
+  occupationCode: string | null;
+  reportedGroup: string | null;
+  baseSalary: number | null;
+  commission: number | null;
+  bonus: number | null;
+  pensionRate: number | null;
+  trainingRate: number | null;
+  creditPoints: number | null;
+  qualifyingChildren: number | null;
+}>;
+
+export type UpdateFactsOutcome =
+  | { status: "ok"; factsRevision: number }
+  | { status: "conflict"; currentRevision: number };
 
 export interface CaseRepository {
   createCase(input: {
@@ -45,6 +66,19 @@ export interface CaseRepository {
     ownerId: string,
     record: Omit<ComparisonRecord, "id" | "completedAt">,
   ): Promise<ComparisonRecord>;
+  /** עדכון עובדות עם בדיקת גרסה (optimistic). מעלה facts_revision אם היה שינוי סמנטי. */
+  updateFacts(
+    caseId: string,
+    ownerId: string,
+    patch: FactsPatch,
+    expectedRevision: number,
+  ): Promise<UpdateFactsOutcome>;
+  /** פותח פנייה לנציג עם dedup לפי (type, contextFingerprint) בפניות פתוחות. */
+  openInquiry(
+    caseId: string,
+    ownerId: string,
+    input: { type: InquiryType; scenarioId: string | null; contextFingerprint: string },
+  ): Promise<{ inquiry: InquiryRecord; deduped: boolean }>;
 }
 
 interface StoredCase {
@@ -52,6 +86,7 @@ interface StoredCase {
   facts: CaseFacts;
   scenarios: Scenario[];
   comparisons: ComparisonRecord[];
+  inquiries?: InquiryRecord[];
 }
 
 /** מימוש מבוסס קובץ: קובץ JSON לכל תיק תחת rootDir/<ownerId>/<caseId>.json. */
@@ -91,6 +126,7 @@ export class FileCaseRepository implements CaseRepository {
       facts: stored.facts,
       scenarios: stored.scenarios,
       latestComparison: latest,
+      openInquiries: (stored.inquiries ?? []).filter((q) => q.status === "open"),
     };
   }
 
@@ -114,6 +150,7 @@ export class FileCaseRepository implements CaseRepository {
       vehicleCode: input.baseline.vehicleCode,
       participation: input.baseline.participation,
       maintenanceAllowance: input.baseline.maintenanceAllowance,
+      overrides: input.baseline.overrides ?? {},
       revision: 0,
     };
     const stored: StoredCase = {
@@ -125,6 +162,7 @@ export class FileCaseRepository implements CaseRepository {
       facts: input.facts,
       scenarios: [baseline],
       comparisons: [],
+      inquiries: [],
     };
     this.write(stored);
     return this.toState(stored);
@@ -164,6 +202,7 @@ export class FileCaseRepository implements CaseRepository {
       caseId, role: "alternative", route: input.route,
       vehicleCode: input.vehicleCode, participation: input.participation,
       maintenanceAllowance: input.maintenanceAllowance,
+      overrides: input.overrides ?? {},
       revision: existing ? existing.revision + 1 : 0,
     };
     stored.scenarios = stored.scenarios
@@ -190,5 +229,64 @@ export class FileCaseRepository implements CaseRepository {
     stored.case.updatedAt = new Date().toISOString();
     this.write(stored);
     return full;
+  }
+
+  async updateFacts(
+    caseId: string,
+    ownerId: string,
+    patch: FactsPatch,
+    expectedRevision: number,
+  ): Promise<UpdateFactsOutcome> {
+    const stored = this.read(ownerId, caseId);
+    if (!stored || stored.case.ownerId !== ownerId) {
+      throw new Error("case not found for owner");
+    }
+    if (stored.case.factsRevision !== expectedRevision) {
+      return { status: "conflict", currentRevision: stored.case.factsRevision };
+    }
+    let changed = false;
+    const facts = stored.facts as unknown as Record<string, unknown>;
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === undefined) continue; // שדה שלא נכלל ב-patch אינו משתנה
+      if (facts[k] !== v) {
+        facts[k] = v;
+        changed = true;
+      }
+    }
+    // תיקון חוזר לאותו ערך ללא שינוי סמנטי אינו יוצר גרסה חדשה.
+    if (!changed) {
+      return { status: "ok", factsRevision: stored.case.factsRevision };
+    }
+    stored.case.factsRevision += 1;
+    stored.case.updatedAt = new Date().toISOString();
+    this.write(stored);
+    return { status: "ok", factsRevision: stored.case.factsRevision };
+  }
+
+  async openInquiry(
+    caseId: string,
+    ownerId: string,
+    input: { type: InquiryType; scenarioId: string | null; contextFingerprint: string },
+  ): Promise<{ inquiry: InquiryRecord; deduped: boolean }> {
+    const stored = this.read(ownerId, caseId);
+    if (!stored || stored.case.ownerId !== ownerId) {
+      throw new Error("case not found for owner");
+    }
+    stored.inquiries = stored.inquiries ?? [];
+    // dedup: פנייה פתוחה קיימת מאותו type ו-contextFingerprint מוחזרת כקיימת.
+    const existing = stored.inquiries.find(
+      (q) => q.status === "open" && q.type === input.type &&
+        q.contextFingerprint === input.contextFingerprint,
+    );
+    if (existing) return { inquiry: existing, deduped: true };
+    const inquiry: InquiryRecord = {
+      id: randomUUID(), caseId, type: input.type,
+      scenarioId: input.scenarioId, contextFingerprint: input.contextFingerprint,
+      status: "open", createdAt: new Date().toISOString(),
+    };
+    stored.inquiries.push(inquiry);
+    stored.case.updatedAt = new Date().toISOString();
+    this.write(stored);
+    return { inquiry, deduped: false };
   }
 }

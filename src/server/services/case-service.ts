@@ -16,7 +16,12 @@ import type {
 import type {
   CaseRepository,
   CreateScenarioInput,
+  FactsPatch,
+  UpdateFactsOutcome,
 } from "../repositories/case-repository.js";
+import type { ResolvedVehicle } from "../repositories/catalog-import.js";
+import { validateEligibility, type Occupation } from "../../domain/eligibility/engine.js";
+import type { RouteKind } from "../../domain/contracts/types.js";
 import { getActiveDataset, type ActiveDataset } from "./dataset-provider.js";
 import {
   SAMPLE_EMPLOYEES,
@@ -44,9 +49,11 @@ export function resolveScenarioInput(
     return v;
   };
 
-  const baseSalary = req(facts.baseSalary, "baseSalary");
-  const commission = req(facts.commission, "commission");
-  const bonus = req(facts.bonus, "bonus");
+  // ירושה: שדה ללא override יורש את העובדה המשותפת; override מחליף ערך בתרחיש בלבד.
+  const ov = scenario.overrides ?? {};
+  const baseSalary = req(ov.baseSalary ?? facts.baseSalary, "baseSalary");
+  const commission = req(ov.commission ?? facts.commission, "commission");
+  const bonus = req(ov.bonus ?? facts.bonus, "bonus");
   const pensionRate = req(facts.pensionRate, "pensionRate");
   const trainingRate = req(facts.trainingRate, "trainingRate");
   const creditPoints = req(facts.creditPoints, "creditPoints");
@@ -194,4 +201,257 @@ export class CaseService {
     });
     return { status: "ok", comparison };
   }
+
+  /** פתיחת פנייה לנציג. השרת בונה את ה-contextFingerprint; dedup לפניות פתוחות. */
+  async openInquiry(
+    caseId: string,
+    ownerId: string,
+    type: import("../../domain/contracts/case.js").InquiryType,
+    scenarioId: string | null,
+    contextParts: Record<string, string | number | null>,
+  ) {
+    const fp = Object.entries(contextParts)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([k, v]) => `${k}=${v ?? ""}`)
+      .join("|");
+    return await this.repo.openInquiry(caseId, ownerId, {
+      type, scenarioId, contextFingerprint: fp,
+    });
+  }
+
+  /** עדכון עובדות משותפות עם בדיקת גרסה. לתיקון עובדה אמיתית (לא סימולציה). */
+  async updateFacts(
+    caseId: string,
+    ownerId: string,
+    patch: FactsPatch,
+    expectedRevision: number,
+  ): Promise<UpdateFactsOutcome> {
+    return await this.repo.updateFacts(caseId, ownerId, patch, expectedRevision);
+  }
+
+  /**
+   * חיפוש רכבים עם סטטוס זכאות וסיבות. מסנן רק לפי שדות שקיימים במקור מאומת.
+   * אין המצאת מושבים/טווח; פילטר לא-נתמך מוחזר כ-unsupportedFilters.
+   */
+  searchVehicles(
+    occupation: Occupation,
+    filters?: VehicleSearchFilters,
+  ): VehicleSearchResult {
+    const dataset = getActiveDataset();
+    const supported = new Set(["propulsion", "group", "route"]);
+    const unsupportedFilters = filters
+      ? Object.keys(filters).filter((k) => !supported.has(k))
+      : [];
+    const all = [...dataset.vehiclesByCode.values()];
+    const candidates = all
+      .filter((v) => {
+        if (filters?.propulsion !== undefined && v.propulsion !== filters.propulsion) return false;
+        if (filters?.group !== undefined && v.group !== filters.group) return false;
+        return true;
+      })
+      .map((v) => {
+        const targetGroup = v.group === "משפחתי" ? undefined : v.group;
+        const route: RouteKind = v.group === "משפחתי" ? "family" : "company_car";
+        const elig = validateEligibility(
+          { occupation, route, targetGroup, qualifyingChildren: undefined },
+          dataset.rules,
+        );
+        return {
+          vehicleCode: v.id,
+          group: v.group,
+          propulsion: v.propulsion,
+          valueOfUse: v.valueOfUse,
+          companyCost: String(v.companyCost),
+          eligibility: elig.status,
+          reasons: elig.reasons,
+        };
+      });
+    return { candidates, unsupportedFilters };
+  }
+
+  /**
+   * השוואה גמישה בקוד, באצווה אחת:
+   * - explicit: רשימת חלופות (רכבים/ויתור) מול baseline.
+   * - discover: סורק את הקטלוג (ואופציה ויתור), ממיין לפי הפרש נטו, מסנן לפי minNetDelta.
+   * baseline מחושב פעם אחת. אין קריאת מודל פר-רכב. אין נטו כשחסר קלט.
+   */
+  async compareScenarios(
+    caseId: string,
+    ownerId: string,
+    request: CompareRequest,
+  ): Promise<CompareResult> {
+    const state = await this.repo.getCaseState(caseId, ownerId);
+    if (!state) throw new Error("תיק לא נמצא לבעלים");
+    const dataset = getActiveDataset();
+    const baselineScenario = state.scenarios.find((s) => s.role === "baseline");
+    if (!baselineScenario) throw new Error("אין baseline לתיק");
+
+    const baseCalc = computeScenario(state.facts, baselineScenario, dataset);
+    if (baseCalc.status !== "ok") {
+      return { status: "missing_data", missingFields: baseCalc.missingFields, baseline: null, comparisons: [], excluded: [], incomplete: [] };
+    }
+    const baselineNet = Number(baseCalc.result.netDisplay);
+
+    // בניית רשימת חלופות מועמדות.
+    let candidateInputs: CandidateSpec[];
+    if (request.mode === "explicit") {
+      candidateInputs = request.candidates;
+    } else {
+      candidateInputs = [...dataset.vehiclesByCode.values()]
+        .filter((v) => v.group !== "משפחתי")
+        .map<CandidateSpec>((v) => ({
+          label: v.id,
+          route: "company_car",
+          vehicleCode: v.id,
+          participation: v.defaultParticipation,
+          maintenanceAllowance: 0,
+        }));
+      if (request.includeWaiver) {
+        candidateInputs.push({
+          label: "ויתור",
+          route: "waiver",
+          vehicleCode: null,
+          participation: 0,
+          maintenanceAllowance: request.waiverMaintenance ?? 0,
+        });
+      }
+    }
+
+    const occupation = request.occupation;
+    const comparisons: CompareRow[] = [];
+    const excluded: ExcludedRow[] = [];
+    const incomplete: IncompleteRow[] = [];
+
+    for (const cand of candidateInputs) {
+      const scenario = {
+        id: "cand:" + cand.label, caseId, role: "alternative" as const,
+        route: cand.route, vehicleCode: cand.vehicleCode,
+        participation: cand.participation, maintenanceAllowance: cand.maintenanceAllowance,
+        overrides: cand.overrides ?? {},
+        revision: 0,
+      };
+      // זכאות בקוד.
+      if (occupation) {
+        const targetGroup = cand.route === "company_car" && cand.vehicleCode
+          ? dataset.vehiclesByCode.get(cand.vehicleCode)?.group
+          : undefined;
+        const elig = validateEligibility(
+          { occupation, route: cand.route, targetGroup, qualifyingChildren: state.facts.qualifyingChildren ?? undefined },
+          dataset.rules,
+        );
+        if (elig.status === "ineligible") {
+          excluded.push({ label: cand.label, reasons: elig.reasons });
+          continue;
+        }
+      }
+      const calc = computeScenario(state.facts, scenario, dataset);
+      if (calc.status !== "ok") {
+        incomplete.push({ label: cand.label, missingFields: calc.missingFields });
+        continue;
+      }
+      const net = Number(calc.result.netDisplay);
+      comparisons.push({
+        label: cand.label,
+        route: cand.route,
+        vehicleCode: cand.vehicleCode,
+        net,
+        netDelta: net - baselineNet,
+        result: calc.result,
+      });
+    }
+
+    // דירוג לפי הפרש נטו יורד; סינון לפי minNetDelta אם נדרש.
+    comparisons.sort((a, b) => b.netDelta - a.netDelta);
+    const filtered =
+      request.minNetDelta !== undefined
+        ? comparisons.filter((c) => c.netDelta >= request.minNetDelta!)
+        : comparisons;
+
+    return {
+      status: "ok",
+      baseline: { net: baselineNet, result: baseCalc.result },
+      comparisons: filtered,
+      excluded,
+      incomplete,
+      coverage: {
+        requested: candidateInputs.length,
+        computed: comparisons.length,
+        excluded: excluded.length,
+        incomplete: incomplete.length,
+      },
+    };
+  }
 }
+
+// --- types for search/compare ---
+export interface VehicleSearchFilters {
+  propulsion?: 0 | 1 | 2 | 3;
+  group?: string;
+  route?: RouteKind;
+  [key: string]: unknown;
+}
+export interface VehicleSearchResult {
+  candidates: Array<{
+    vehicleCode: string;
+    group: string;
+    propulsion: number;
+    valueOfUse: string;
+    companyCost: string;
+    eligibility: string;
+    reasons: string[];
+  }>;
+  unsupportedFilters: string[];
+}
+
+export interface CandidateSpec {
+  label: string;
+  route: RouteKind;
+  vehicleCode: string | null;
+  participation: number | null;
+  maintenanceAllowance: number;
+  overrides?: import("../../domain/contracts/case.js").ScenarioOverrides;
+}
+
+export type CompareRequest =
+  | {
+      mode: "explicit";
+      candidates: CandidateSpec[];
+      occupation?: Occupation;
+      minNetDelta?: number;
+    }
+  | {
+      mode: "discover";
+      includeWaiver?: boolean;
+      waiverMaintenance?: number;
+      occupation?: Occupation;
+      minNetDelta?: number;
+    };
+
+export interface CompareRow {
+  label: string;
+  route: RouteKind;
+  vehicleCode: string | null;
+  net: number;
+  netDelta: number;
+  result: ScenarioResult;
+}
+export interface ExcludedRow { label: string; reasons: string[]; }
+export interface IncompleteRow { label: string; missingFields: string[]; }
+
+export type CompareResult =
+  | {
+      status: "ok";
+      baseline: { net: number; result: ScenarioResult };
+      comparisons: CompareRow[];
+      excluded: ExcludedRow[];
+      incomplete: IncompleteRow[];
+      coverage: { requested: number; computed: number; excluded: number; incomplete: number };
+    }
+  | {
+      status: "missing_data";
+      missingFields: string[];
+      baseline: null;
+      comparisons: never[];
+      excluded: never[];
+      incomplete: never[];
+    };

@@ -18,6 +18,17 @@ export interface CaseFacts {
   qualifyingChildren: number | null;
 }
 
+/**
+ * override היפותטי ברמת התרחיש. שדה ללא override יורש את העובדה המשותפת.
+ * מותר רק לשדות שכר מוגדרים - לא קבוצת זכאות ולא עקיפת רכב חובה.
+ * null מפורש אינו אפס; הסרת override מתבצעת ע"י השמטת המפתח (חזרה לירושה).
+ */
+export type ScenarioOverrides = Partial<{
+  baseSalary: number;
+  commission: number;
+  bonus: number;
+}>;
+
 export interface Scenario {
   id: string;
   caseId: string;
@@ -26,6 +37,8 @@ export interface Scenario {
   vehicleCode: string | null;
   participation: number | null;
   maintenanceAllowance: number;
+  /** override היפותטי לשדות שכר. ריק = ירושה מלאה מהעובדות המשותפות. */
+  overrides: ScenarioOverrides;
   revision: number;
 }
 
@@ -59,9 +72,24 @@ export interface ComparisonRecord {
   completedAt: string;
 }
 
+export type InquiryType =
+  | "employee_participation"
+  | "occupation_eligibility_clarification";
+
+export interface InquiryRecord {
+  id: string;
+  caseId: string;
+  type: InquiryType;
+  scenarioId: string | null;
+  contextFingerprint: string;
+  status: "open" | "answered" | "cancelled";
+  createdAt: string;
+}
+
 export interface CaseState {
   case: CaseRecord;
   facts: CaseFacts;
   scenarios: Scenario[];
   latestComparison: ComparisonRecord | null;
+  openInquiries: InquiryRecord[];
 }

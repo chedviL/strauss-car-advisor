@@ -16,8 +16,8 @@ export interface EligibilityQuery {
   occupation: Occupation;
   route: RouteKind;
   /** קבוצת הרכב הנבחר (למסלול רגיל). */
-  targetGroup?: string;
-  qualifyingChildren?: number;
+  targetGroup?: string | undefined;
+  qualifyingChildren?: number | undefined;
 }
 
 export type EligibilityStatus = "eligible" | "ineligible" | "missing";
