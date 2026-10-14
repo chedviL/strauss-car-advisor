@@ -4,8 +4,8 @@
 // בתיקים/השוואות קיימים. מחזיר את ה-UUID האמיתי של ה-dataset.
 
 import { createHash } from "node:crypto";
-import { Pool, type PoolClient } from "pg";
-import { sslFor } from "./pg-ssl.js";
+import { type Pool, type PoolClient } from "pg";
+import { getPool } from "./pg-pool.js";
 import type { RuleSet } from "../../domain/contracts/types.js";
 import type { ResolvedVehicle } from "./catalog-import.js";
 
@@ -35,10 +35,11 @@ export function datasetContentHash(seed: DatasetSeed): string {
 export class DatasetRepository {
   private readonly pool: Pool;
   constructor(connectionString: string) {
-    this.pool = new Pool({ connectionString, max: 3, ...sslFor(connectionString) });
+    this.pool = getPool(connectionString);
   }
+  // ה-pool משותף; close() הוא no-op.
   async close(): Promise<void> {
-    await this.pool.end();
+    /* shared pool - do not end here */
   }
 
   /**
@@ -100,6 +101,27 @@ export class DatasetRepository {
     }
   }
 
+  /**
+   * חיפוש read-only של dataset לפי content_hash של גרסת הכללים (ללא פענוח CSV).
+   * מזהה את ה-dataset הפעיל התואם לכללים הנוכחיים. מחזיר את העדכני ביותר אם יש כמה.
+   */
+  async findDatasetIdByRuleSetHash(ruleSetHash: string): Promise<string | null> {
+    const client = await this.pool.connect();
+    try {
+      const r = await client.query(
+        `select d.id from datasets d
+           join rule_sets r on r.id = d.rule_set_id
+         where r.content_hash = $1
+         order by d.imported_at desc
+         limit 1`,
+        [ruleSetHash],
+      );
+      return r.rowCount && r.rows[0] ? (r.rows[0].id as string) : null;
+    } finally {
+      client.release();
+    }
+  }
+
   /** חיפוש read-only של dataset לפי content hash (עובד בתפקיד האפליקציה). */
   async findDatasetIdByContentHash(contentHash: string): Promise<string | null> {
     const client = await this.pool.connect();
@@ -109,6 +131,35 @@ export class DatasetRepository {
         [contentHash],
       );
       return r.rowCount && r.rows[0] ? (r.rows[0].id as string) : null;
+    } finally {
+      client.release();
+    }
+  }
+
+  /** טוען את רכבי ה-dataset מהמסד (20 שורות) - ללא פענוח CSV בזמן ריצה. */
+  async loadDatasetVehicles(datasetId: string): Promise<ResolvedVehicle[]> {
+    const client = await this.pool.connect();
+    try {
+      const r = await client.query(
+        `select catalog_code, grp, manufacturer_code, model_code, registration_year,
+                vehicle_type_code, value_of_use, propulsion, company_cost,
+                default_participation, type_resolution_source
+         from vehicles where dataset_id = $1 order by catalog_code`,
+        [datasetId],
+      );
+      return r.rows.map((v) => ({
+        id: v.catalog_code as string,
+        group: v.grp as string,
+        manufacturerCode: v.manufacturer_code as string,
+        modelCode: v.model_code as string,
+        registrationYear: v.registration_year as string,
+        vehicleTypeCode: v.vehicle_type_code as string,
+        valueOfUse: String(v.value_of_use),
+        propulsion: Number(v.propulsion) as 0 | 1 | 2 | 3,
+        companyCost: Number(v.company_cost),
+        defaultParticipation: Number(v.default_participation),
+        typeResolutionSource: v.type_resolution_source as string,
+      }));
     } finally {
       client.release();
     }

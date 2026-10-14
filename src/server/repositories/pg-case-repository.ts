@@ -4,8 +4,8 @@
 // במיגרציה 0001 מסננות כל שאילתה. owner_id מוזרק מהשרת בלבד.
 
 import { randomUUID } from "node:crypto";
-import { Pool, type PoolClient } from "pg";
-import { sslFor } from "./pg-ssl.js";
+import { type Pool, type PoolClient } from "pg";
+import { getPool } from "./pg-pool.js";
 import type {
   CaseFacts,
   InquiryRecord,
@@ -27,11 +27,12 @@ export class PgCaseRepository implements CaseRepository {
   private readonly pool: Pool;
 
   constructor(connectionString: string) {
-    this.pool = new Pool({ connectionString, max: 5, ...sslFor(connectionString) });
+    this.pool = getPool(connectionString);
   }
 
+  // ה-pool משותף ו-per-process; close() הוא no-op (לא סוגרים pool משותף).
   async close(): Promise<void> {
-    await this.pool.end();
+    /* shared pool - do not end here */
   }
 
   private async withOwner<T>(

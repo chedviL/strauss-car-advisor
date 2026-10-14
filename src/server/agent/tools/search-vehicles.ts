@@ -26,7 +26,7 @@ export async function searchVehicles(
     // זכאות לא ידועה - מחזירים חוסר, לא "לא זכאי".
     return missing(["occupationCode"], "לא ניתן לקבוע זכאות ללא עיסוק מאומת");
   }
-  const result = service.searchVehicles(occupation, {
+  const result = await service.searchVehicles(occupation, {
     ...(input.propulsion !== undefined ? { propulsion: Number(input.propulsion) as 0 | 1 | 2 | 3 } : {}),
     ...(input.group !== undefined ? { group: input.group } : {}),
   });

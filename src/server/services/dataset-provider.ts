@@ -28,7 +28,9 @@ export interface ActiveDataset {
   rawRulesJson: string;
   appliedDefaults: string[];
   vehiclesByCode: Map<string, ResolvedVehicle>;
-  valueOfUse: ValueOfUseIndex;
+  /** אינדקס ה-CSV המלא - קיים רק במסלול הקבצים; במסלול ה-DB אינו נדרש. */
+  valueOfUse?: ValueOfUseIndex;
+  datasetId?: string;
 }
 
 let cached: ActiveDataset | null = null;
@@ -61,6 +63,11 @@ export function getActiveDataset(): ActiveDataset {
 
 /** בונה את ה-seed ל-DatasetRepository מתוך ה-dataset המחושב. */
 export function buildDatasetSeed(ds: ActiveDataset): DatasetSeed {
+  if (!ds.valueOfUse) {
+    throw new Error(
+      "buildDatasetSeed דורש dataset מגובה-CSV (valueOfUse). השתמש ב-getActiveDataset() בלבד למסלול היבוא.",
+    );
+  }
   return {
     rules: ds.rules,
     rawRulesJson: ds.rawRulesJson,
@@ -95,13 +102,56 @@ export async function ensureActiveDatasetId(ownerConnectionString: string): Prom
  */
 export async function findActiveDatasetId(connectionString: string): Promise<string | null> {
   if (datasetUuidCache) return datasetUuidCache;
-  const ds = getActiveDataset();
-  const hash = datasetContentHash(buildDatasetSeed(ds));
+  // ללא פענוח CSV: מזהים לפי content_hash של הכללים (קובץ JSON קטן בלבד).
+  const { rules } = loadRulesOnly();
   const repo = new DatasetRepository(connectionString);
   try {
-    const id = await repo.findDatasetIdByContentHash(hash);
+    const id = await repo.findDatasetIdByRuleSetHash(rules.contentHash);
     if (id) datasetUuidCache = id;
     return id;
+  } finally {
+    await repo.close();
+  }
+}
+
+// ===== מסלול מהיר מול Postgres: ללא פענוח CSV בזמן ריצה =====
+
+import { DatasetRepository as _DatasetRepo } from "../repositories/dataset-repository.js";
+
+let dbDatasetCache: ActiveDataset | null = null;
+
+function loadRulesOnly(): { rules: RuleSet; appliedDefaults: string[]; rawRulesJson: string } {
+  const rawRulesJson = readFileSync(join(dataDir, "strauss-rules.json"), "utf8");
+  const { rules, appliedDefaults } = parseRules(rawRulesJson);
+  return { rules, appliedDefaults, rawRulesJson };
+}
+
+/**
+ * dataset פעיל מגובה-מסד: כללים מה-JSON הקטן + 20 רכבים מ-Postgres (שאילתה זעירה).
+ * אינו מפרסר את ה-CSV בן ה-19MB. נדרש dataset מיובא (import:dataset).
+ */
+export async function getActiveDatasetFromDb(connectionString: string): Promise<ActiveDataset> {
+  if (dbDatasetCache) return dbDatasetCache;
+  const { rules, appliedDefaults, rawRulesJson } = loadRulesOnly();
+  const repo = new _DatasetRepo(connectionString);
+  try {
+    const datasetId = await findActiveDatasetId(connectionString);
+    if (!datasetId) {
+      throw new Error("ה-dataset הפעיל טרם יובא למסד. הרץ: npm run import:dataset.");
+    }
+    const vehicles = await repo.loadDatasetVehicles(datasetId);
+    if (vehicles.length === 0) {
+      throw new Error("ל-dataset אין רכבים במסד. הרץ מחדש: npm run import:dataset.");
+    }
+    dbDatasetCache = {
+      contentId: rules.contentHash.slice(0, 16),
+      rules,
+      rawRulesJson,
+      appliedDefaults,
+      vehiclesByCode: new Map(vehicles.map((v) => [v.id, v])),
+      datasetId,
+    };
+    return dbDatasetCache;
   } finally {
     await repo.close();
   }

@@ -22,7 +22,7 @@ import type {
 import type { ResolvedVehicle } from "../repositories/catalog-import.js";
 import { validateEligibility, type Occupation } from "../../domain/eligibility/engine.js";
 import type { RouteKind } from "../../domain/contracts/types.js";
-import { getActiveDataset, findActiveDatasetId, type ActiveDataset } from "./dataset-provider.js";
+import { getActiveDataset, getActiveDatasetFromDb, findActiveDatasetId, type ActiveDataset } from "./dataset-provider.js";
 import {
   SAMPLE_EMPLOYEES,
   type SampleEmployee,
@@ -114,6 +114,15 @@ export function computeScenario(
 export class CaseService {
   constructor(private readonly repo: CaseRepository) {}
 
+  /** dataset פעיל: מגובה-מסד (ללא פענוח CSV) כש-DATABASE_URL מוגדר, אחרת מקבצים. */
+  private async getDataset(): Promise<ActiveDataset> {
+    const appConn = process.env.DATABASE_URL;
+    if (appConn && appConn.trim() !== "") {
+      return await getActiveDatasetFromDb(appConn);
+    }
+    return getActiveDataset();
+  }
+
   listSampleEmployees(): SampleEmployee[] {
     return SAMPLE_EMPLOYEES;
   }
@@ -126,7 +135,7 @@ export class CaseService {
   ): Promise<CaseState> {
     const emp = SAMPLE_EMPLOYEES.find((e) => e.id === employeeId);
     if (!emp) throw new Error("עובד לדוגמה לא נמצא");
-    const dataset = getActiveDataset();
+    const dataset = await this.getDataset();
     const facts: CaseFacts = {
       occupationCode: emp.facts.occupationCode,
       reportedGroup: emp.facts.reportedGroup,
@@ -161,6 +170,7 @@ export class CaseService {
    * - אחרת (אחסון קבצים מקומי) -> contentId (hash) שמספיק לקבצים.
    */
   private async resolveDatasetId(dataset: ActiveDataset): Promise<string> {
+    if (dataset.datasetId) return dataset.datasetId;
     const appConn = process.env.DATABASE_URL;
     if (appConn && appConn.trim() !== "") {
       const id = await findActiveDatasetId(appConn);
@@ -197,7 +207,7 @@ export class CaseService {
   ): Promise<{ status: "ok"; comparison: ComparisonRecord } | { status: "missing_data"; missingFields: string[] } | { status: "no_alternative" }> {
     const state = await this.repo.getCaseState(caseId, ownerId);
     if (!state) throw new Error("תיק לא נמצא לבעלים");
-    const dataset = getActiveDataset();
+    const dataset = await this.getDataset();
     const baseline = state.scenarios.find((s) => s.role === "baseline");
     const alternative = state.scenarios.find((s) => s.role === "alternative");
     if (!baseline) throw new Error("אין baseline לתיק");
@@ -258,11 +268,11 @@ export class CaseService {
    * חיפוש רכבים עם סטטוס זכאות וסיבות. מסנן רק לפי שדות שקיימים במקור מאומת.
    * אין המצאת מושבים/טווח; פילטר לא-נתמך מוחזר כ-unsupportedFilters.
    */
-  searchVehicles(
+  async searchVehicles(
     occupation: Occupation,
     filters?: VehicleSearchFilters,
-  ): VehicleSearchResult {
-    const dataset = getActiveDataset();
+  ): Promise<VehicleSearchResult> {
+    const dataset = await this.getDataset();
     const supported = new Set(["propulsion", "group", "route"]);
     const unsupportedFilters = filters
       ? Object.keys(filters).filter((k) => !supported.has(k))
@@ -307,7 +317,7 @@ export class CaseService {
   ): Promise<CompareResult> {
     const state = await this.repo.getCaseState(caseId, ownerId);
     if (!state) throw new Error("תיק לא נמצא לבעלים");
-    const dataset = getActiveDataset();
+    const dataset = await this.getDataset();
     const baselineScenario = state.scenarios.find((s) => s.role === "baseline");
     if (!baselineScenario) throw new Error("אין baseline לתיק");
 
