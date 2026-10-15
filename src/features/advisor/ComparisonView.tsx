@@ -8,6 +8,7 @@ import { resetDemo } from "../../app/actions.js";
 import type { CaseState } from "../../domain/contracts/case.js";
 import type { NetBreakdown, ScenarioResult } from "../../domain/contracts/types.js";
 import type { SampleEmployee } from "../../../data/source/sample-employees.js";
+import { ChatPanel } from "./ChatPanel.js";
 
 function shekel(s: string | number): string {
   const n = typeof s === "string" ? Number(s) : s;
@@ -50,8 +51,8 @@ export function ComparisonView({
         {employee && (
           <p style={{ color: "var(--color-muted)" }}>{employee.question}</p>
         )}
-        <div style={{ fontSize: "0.85rem", color: "var(--color-muted)", marginTop: "var(--space-3)" }}>
-          השיחה החופשית תתחבר בשלב הבא לאותם שירותים. כעת מוצג חישוב מלא ושמור.
+        <div style={{ marginTop: "var(--space-3)" }}>
+          <ChatPanel />
         </div>
         <button
           className="btn"
