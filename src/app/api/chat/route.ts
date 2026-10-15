@@ -55,8 +55,14 @@ export async function POST(req: Request): Promise<Response> {
       // כשהתור מסתיים, שומרים את הודעת העוזר לשחזור.
       onFinish: ({ responseMessage }) => {
         if (responseMessage) {
+          // responseMessage.id עשוי להיות ריק; בלי מזהה ייחודי כל ההודעות
+          // מתנגשות על (case_id, "") והאינדקס מפיל אותן. יוצרים מזהה ודאי.
+          const cid =
+            responseMessage.id && responseMessage.id.trim() !== ""
+              ? responseMessage.id
+              : "asst-" + randomUUID();
           void service.appendMessages(ctx.caseId, owner, [
-            { role: "assistant", clientMessageId: responseMessage.id, content: responseMessage.parts },
+            { role: "assistant", clientMessageId: cid, content: responseMessage.parts },
           ]).catch(() => {});
         }
       },

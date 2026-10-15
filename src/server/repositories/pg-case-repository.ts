@@ -329,12 +329,16 @@ export class PgCaseRepository implements CaseRepository {
       );
       let seq = (maxRow.rows[0].m as number) + 1;
       for (const m of messages) {
+        // מזהה ריק/"" מנורמל ל-null: ב-Postgres כמה NULL מותרים באינדקס ייחודי,
+        // אך "" מתנגש וגורם ל-do-nothing להפיל הודעות (באג שהתגלה בשחזור).
+        const cid =
+          m.clientMessageId && m.clientMessageId.trim() !== "" ? m.clientMessageId : null;
         // dedup לפי client_message_id (אם קיים) כדי לא לשכפל בשליחה חוזרת.
         await c.query(
           `insert into messages (case_id, role, seq, client_message_id, content)
            values ($1,$2,$3,$4,$5)
            on conflict (case_id, client_message_id) do nothing`,
-          [caseId, m.role, seq, m.clientMessageId, JSON.stringify(m.content)],
+          [caseId, m.role, seq, cid, JSON.stringify(m.content)],
         );
         seq += 1;
       }
