@@ -80,10 +80,46 @@ export async function compareScenarios(
   if (result.status === "missing_data") {
     return missing(result.missingFields, "חסרים נתונים ל-baseline; אין להציג נטו עד השלמתם");
   }
+
+  // --- תמצית למודל (לא הפלט המלא). התוצאה המלאה שמורה במסד לפי compareRunId. ---
+  // explicit: מחזירים את כל החלופות שהתבקשו. discover: מתחילים ב-5 מובילות.
+  const topN = input.mode === "discover" ? 5 : result.comparisons.length;
+  const shown = result.comparisons.slice(0, topN);
+  const summary = {
+    compareRunId: result.compareRunId,
+    factsRevision: result.factsRevision,
+    ruleSetHash: result.ruleSetHash,
+    fresh: true, // נבנתה כעת מול תמונת קלט עקבית
+    ranking: "net_delta_desc",
+    mode: input.mode,
+    currentNet: result.baseline.net, // נטו נוכחי - פעם אחת
+    alternatives: shown.map((c) => ({
+      // מזהה יציב להתייחסות בהמשך (vehicleCode או label לוויתור)
+      ref: c.vehicleCode ?? c.label,
+      vehicle: c.vehicleCode ?? c.label,
+      route: c.route,
+      net: c.net,
+      netDelta: c.netDelta,
+      // סיבות השינוי המרכזיות (הנחות/שווי שימוש/חשמלי) - תמצית, לא breakdown מלא
+      keyReasons: c.result.assumptions.slice(0, 3),
+    })),
+    counts: {
+      requested: result.coverage.requested,
+      computed: result.coverage.computed,
+      returnedInSummary: shown.length,
+      excluded: result.coverage.excluded,
+      incomplete: result.coverage.incomplete,
+    },
+    // הבחנה מפורשת בין הקטגוריות
+    excluded: result.excluded.map((e) => ({ ref: e.label, reasons: e.reasons })), // לא מתאים (זכאות)
+    incomplete: result.incomplete.map((i) => ({ ref: i.label, missingFields: i.missingFields })), // לא ניתן לחשב
+    notInSummary: Math.max(0, result.coverage.computed - shown.length), // חושבו אך לא נכללו בתמצית
+    hint: "לפירוט מלא/חלופה שאינה בתמצית/'למה דווקא זה' - קרא readComparison עם compareRunId.",
+  };
   const partial = result.coverage.excluded + result.coverage.incomplete > 0;
-  return ok(result, {
+  return ok(summary, {
     ...(partial
-      ? { message: "כיסוי חלקי: חלק מהחלופות נפסלו או חסרות נתונים; הדירוג אינו מייצג את כל האפשרויות" }
+      ? { message: "כיסוי חלקי: חלק מהחלופות נפסלו (לא מתאים) או חסרות נתונים (לא ניתן לחשב); אין להציג כ'הטוב מכל האפשרויות'" }
       : {}),
   });
 }

@@ -363,6 +363,11 @@ export class CaseService {
     return await this.repo.loadMessages(caseId, ownerId);
   }
 
+  /** שליפת תוצאת השוואה שמורה לפי מזהה (לפירוט לפי דרישה, בלי חישוב מחדש). */
+  async loadCompareRun(caseId: string, ownerId: string, runId: string) {
+    return await this.repo.loadCompareRun(caseId, ownerId, runId);
+  }
+
   /** עדכון עובדות משותפות עם בדיקת גרסה. לתיקון עובדה אמיתית (לא סימולציה). */
   async updateFacts(
     caseId: string,
@@ -511,7 +516,7 @@ export class CaseService {
         ? comparisons.filter((c) => c.netDelta >= request.minNetDelta!)
         : comparisons;
 
-    return {
+    const result: CompareResult = {
       status: "ok",
       baseline: { net: baselineNet, result: baseCalc.result },
       comparisons: filtered,
@@ -524,6 +529,15 @@ export class CaseService {
         incomplete: incomplete.length,
       },
     };
+    // שומרים את התוצאה המלאה לשליפה בהמשך לפי מזהה (פירוט/כולן/שישי).
+    const compareRunId = await this.repo.saveCompareRun(caseId, ownerId, {
+      factsRevision: state.case.factsRevision,
+      ruleSetHash: dataset.rules.contentHash,
+      mode: request.mode,
+      ranking: "net_delta_desc",
+      result,
+    });
+    return { ...result, compareRunId, factsRevision: state.case.factsRevision, ruleSetHash: dataset.rules.contentHash };
   }
 }
 
@@ -590,6 +604,9 @@ export type CompareResult =
       excluded: ExcludedRow[];
       incomplete: IncompleteRow[];
       coverage: { requested: number; computed: number; excluded: number; incomplete: number };
+      compareRunId?: string;
+      factsRevision?: number;
+      ruleSetHash?: string;
     }
   | {
       status: "missing_data";

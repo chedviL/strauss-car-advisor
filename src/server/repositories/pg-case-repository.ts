@@ -22,6 +22,7 @@ import type {
   FactsPatch,
   UpdateFactsOutcome,
   StoredMessage,
+  StoredCompareRun,
 } from "./case-repository.js";
 
 export class PgCaseRepository implements CaseRepository {
@@ -354,6 +355,41 @@ export class PgCaseRepository implements CaseRepository {
         content: m.content,
         createdAt: iso(m.created_at),
       }));
+    });
+  }
+
+  async saveCompareRun(
+    caseId: string,
+    ownerId: string,
+    run: { factsRevision: number; ruleSetHash: string; mode: string; ranking: string; result: unknown },
+  ): Promise<string> {
+    return this.withOwner(ownerId, async (c) => {
+      const r = await c.query(
+        `insert into compare_runs (case_id, facts_revision, rule_set_hash, mode, ranking, result)
+         values ($1,$2,$3,$4,$5,$6) returning id`,
+        [caseId, run.factsRevision, run.ruleSetHash, run.mode, run.ranking, JSON.stringify(run.result)],
+      );
+      return r.rows[0].id as string;
+    });
+  }
+
+  async loadCompareRun(caseId: string, ownerId: string, runId: string): Promise<StoredCompareRun | null> {
+    return this.withOwner(ownerId, async (c) => {
+      const r = await c.query(
+        "select * from compare_runs where id = $1 and case_id = $2",
+        [runId, caseId],
+      );
+      if (r.rowCount === 0) return null;
+      const row = r.rows[0];
+      return {
+        id: row.id as string,
+        factsRevision: row.facts_revision as number,
+        ruleSetHash: row.rule_set_hash as string,
+        mode: row.mode as string,
+        ranking: row.ranking as string,
+        result: row.result,
+        createdAt: iso(row.created_at),
+      };
     });
   }
 

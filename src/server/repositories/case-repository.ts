@@ -55,6 +55,16 @@ export type UpdateFactsOutcome =
   | { status: "ok"; factsRevision: number }
   | { status: "conflict"; currentRevision: number };
 
+export interface StoredCompareRun {
+  id: string;
+  factsRevision: number;
+  ruleSetHash: string;
+  mode: string;
+  ranking: string;
+  result: unknown;
+  createdAt: string;
+}
+
 export interface StoredMessage {
   id: string;
   role: string;
@@ -122,6 +132,14 @@ export interface CaseRepository {
   ): Promise<void>;
   /** טוען את הודעות השיחה של התיק לפי סדר. */
   loadMessages(caseId: string, ownerId: string): Promise<StoredMessage[]>;
+  /** שומר תוצאת השוואה גמישה מלאה; מחזיר מזהה לשליפה בהמשך. */
+  saveCompareRun(
+    caseId: string,
+    ownerId: string,
+    run: { factsRevision: number; ruleSetHash: string; mode: string; ranking: string; result: unknown },
+  ): Promise<string>;
+  /** שולף תוצאת השוואה שמורה לפי מזהה (אם בבעלות). */
+  loadCompareRun(caseId: string, ownerId: string, runId: string): Promise<StoredCompareRun | null>;
 }
 
 interface StoredCase {
@@ -131,6 +149,7 @@ interface StoredCase {
   comparisons: ComparisonRecord[];
   inquiries?: InquiryRecord[];
   messages?: StoredMessage[];
+  compareRuns?: StoredCompareRun[];
 }
 
 /** מימוש מבוסס קובץ: קובץ JSON לכל תיק תחת rootDir/<ownerId>/<caseId>.json. */
@@ -404,5 +423,25 @@ export class FileCaseRepository implements CaseRepository {
     const stored = this.read(ownerId, caseId);
     if (!stored || stored.case.ownerId !== ownerId) return [];
     return [...(stored.messages ?? [])].sort((a, b) => a.seq - b.seq);
+  }
+
+  async saveCompareRun(
+    caseId: string,
+    ownerId: string,
+    run: { factsRevision: number; ruleSetHash: string; mode: string; ranking: string; result: unknown },
+  ): Promise<string> {
+    const stored = this.read(ownerId, caseId);
+    if (!stored || stored.case.ownerId !== ownerId) throw new Error("case not found for owner");
+    stored.compareRuns = stored.compareRuns ?? [];
+    const id = randomUUID();
+    stored.compareRuns.push({ id, ...run, createdAt: new Date().toISOString() });
+    this.write(stored);
+    return id;
+  }
+
+  async loadCompareRun(caseId: string, ownerId: string, runId: string): Promise<StoredCompareRun | null> {
+    const stored = this.read(ownerId, caseId);
+    if (!stored || stored.case.ownerId !== ownerId) return null;
+    return (stored.compareRuns ?? []).find((r) => r.id === runId) ?? null;
   }
 }

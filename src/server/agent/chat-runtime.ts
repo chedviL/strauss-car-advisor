@@ -17,6 +17,7 @@ import { manageScenariosInput, manageScenarios } from "./tools/manage-scenarios.
 import { searchVehiclesInput, searchVehicles } from "./tools/search-vehicles.js";
 import { compareScenariosInput, compareScenarios } from "./tools/compare-scenarios.js";
 import { openInquiryInput, openInquiry } from "./tools/open-inquiry.js";
+import { readComparisonInput, readComparison } from "./tools/read-comparison.js";
 
 const SYSTEM = `את/ה היועץ/ת של שטראוס לרכב ולנטו. מנהל/ת שיחה טבעית, חמה וברורה בעברית.
 

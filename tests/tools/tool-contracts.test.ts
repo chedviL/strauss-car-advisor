@@ -59,8 +59,8 @@ describe("גבולות סימולציה: override אינו משנה זכאות �
     });
     expect(res.status).toBe("success");
     if (res.status === "success") {
-      const data = res.data as { excluded: Array<{ label: string }> };
-      expect(data.excluded.some((e) => e.label === "SEAL-ד")).toBe(true);
+      const data = res.data as { excluded: Array<{ ref: string }> };
+      expect(data.excluded.some((e) => e.ref === "SEAL-ד")).toBe(true);
     }
   });
 });
