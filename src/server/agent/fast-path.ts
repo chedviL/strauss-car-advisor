@@ -157,6 +157,30 @@ const SYSTEM = `את/ה היועץ/ת של שטראוס. החזר/י *תוכני
   רכבי חברה גם בלי עיסוק. אל תאמר/י "בלי עיסוק אי אפשר לקבוע זכאות" - זה שגוי.
 - העיסוק נדרש רק להחלטות ויתור/רכב-חובה. אם צריך את זה - בקש/י עיסוק, לא "חוסם זכאות כללי".
 
+## זיהוי רכב לפי שם (חובה)
+- כשהעובד/ת מזכיר/ה רכב בשם ("Atto 3", "דולפין", "קורולה") - קרא/י search_vehicles תחילה
+  לאמת את הזיהוי ולקבל את vehicleCode המדויק. אל תנחש/י קוד על סמך שם בלבד.
+- שני רכבים יכולים לחלוק יצרן (לדוגמה ATTO 3 ו-BYD DOLPHIN שניהם BYD) - אך הם קודים, קבוצות
+  ושווי שימוש שונים לחלוטין. זיהוי שגוי ישנה את הנתונים, הקבוצה והמספרים.
+- אחרי שמזוהה הרכב בשם → vehicleCode → לפי קוד זה בלבד compare/set_current_vehicle.
+
+## שכר: ברוטו מול נטו
+- "אני מקבל/ת X ₪" ללא הגדרה ברורה אינו בהכרח ברוטו. שאל/י במפורש "ברוטו או נטו?" לפני שמירת
+  שכר לחישוב. אל תנחש/י ואל תניח/י ברוטו כברירת מחדל.
+
+## חוסר-נתונים: שאלה אחת, לא רשימה
+- כשחסרים נתונים לחישוב, שאל/י על השדה *הכי חשוב* לפעולה המבוקשת - שאלה אחת ממוקדת.
+  אל תקריא/י את כל missingFields כרשימה. עד שהנתונים מגיעים, אפשר להסביר מסלולים ולבדוק
+  רכבים; ציין/י שאין עדיין תוצאת נטו.
+- "מה אם ניחש?" / "אפשר להעריך?": סימולציה עם הנחות מפורשות *מותרת*, אבל רק אחרי שהעובד/ת
+  בחר/ה בכך. הסבר/י מה מניחים (לדוגמה "אניח 6% פנסיה ו-2.75 נק' זיכוי") - וסמן/י את
+  התוצאה כ"לפי הנחות". אין להציע ניחוש כבסיס לחישוב מלא ללא הסכמה מפורשת.
+
+## תלוש שכר
+- לשאלה "תלוש יעזור?" ענה/י לפי המצב האמיתי: אין כרגע אפשרות להעלות קובץ/תמונה.
+  הכווין/י במקום: "פתח/י את התלוש ובדוק/י שורת 'שכר בסיס' לברוטו ו'שורת ניכויים' לפנסיה
+  וקרן ההשתלמות. נקודות הזיכוי ב-106 מס הכנסה." אל תדחה/י מסמך שעשוי לספק את המידע החסר.
+
 סדר: עדכון עובדה/רכב-נוכחי/סימולציה לפני compare. בקשה משולבת = רשימת פעולות בסדר.
 ברכה/עמימות = actions ריק + reply (clarify=true אם עמום).
 
@@ -241,7 +265,7 @@ export async function executeFastPlan(
     const result = await service.compareScenarios(caseId, ownerId, buildCompareRequest(spec));
     if (result.status === "ok") {
       did.compared = true; compareRunId = result.compareRunId;
-      const top = result.comparisons.slice(0, 5).map((c) => ({ ref: c.vehicleCode ?? c.label, net: c.net, netDelta: c.netDelta }));
+      const top = result.comparisons.slice(0, 5).map((c) => ({ ref: c.vehicleCode ?? c.label, name: c.name, net: c.net, netDelta: c.netDelta }));
       actionResults.push({ type: "compare", summary: { currentNet: result.baseline.net, top, computed: result.coverage.computed } });
       return true;
     }
@@ -360,29 +384,23 @@ export async function executeFastPlan(
     await service.setPendingRequest(caseId, ownerId, null).catch(() => {});
   }
 
-  // ברירת מחדל: משתמשים בתשובת המודל כפי שהיא (סגנון טבעי, בלי לקרוא את ניהול
-  // הנתונים הפנימי). טקסט שנוצר בקוד נשמר רק למקרי כשל/קונפליקט, שם דיוק על
-  // "מה נשמר ומה לא" מונע אי-הבנה.
+  // ברירת מחדל: תשובת המודל כפי שהיא (סגנון טבעי). חשוב: חוסר-מידע (partialFailure)
+  // אינו דורס את תשובת המודל. השדות החסרים כבר בתמונת-המצב, והמודל אמור לשאול
+  // את השאלה הרלוונטית בשפה טבעית - לא להקריא רשימת missingFields. דריסה קורית רק
+  // ל-conflict (דיוק "לא נשמר" מונע אי-הבנה) או כשהמודל לא נתן reply שמיש בכלל.
   let reply = object.reply;
   if (conflict) {
     reply = "העובדות השתנו בינתיים ממקור אחר; לא עדכנתי. אפשר לנסות שוב.";
-  } else if (partialFailure) {
-    // חוסר-מידע: שואלים על מה שחסר, לא הודעת מבוי-סתום. (ה-partialFailure כבר מנוסח
-    // כ"כדי לחשב חסר: X" כשרלוונטי.) מצרפים שאלת-המשך קצרה מתשובת המודל אם יש.
+  } else if ((!reply || reply.trim() === "") && partialFailure) {
+    // גיבוי מינימלי בלבד: המודל לא נתן טקסט. לא רשימת שדות - שאלה אחת ממוקדת.
     reply = partialFailure;
   }
 
-  // needsFollowup רק אם יש תוצאה אמיתית לנסח עליה ולא היה כשל.
+  // needsFollowup רק אם יש תוצאה אמיתית לנסח עליה ולא היה כשל חישובי.
   const needsFollowup = (object.needsFollowup === true || autoCompared) && actionResults.length > 0 && !partialFailure;
 
-  let reply2 = reply;
-  if (conflict || partialFailure) {
-    // reply כבר הוחלף למעלה בטקסט הכשל.
-    reply2 = reply;
-  }
-
   return {
-    reply: reply2,
+    reply,
     needsFollowup,
     actionResults,
     did,

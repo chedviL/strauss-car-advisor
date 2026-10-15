@@ -96,7 +96,7 @@ export async function compareScenarios(
     alternatives: shown.map((c) => ({
       // מזהה יציב להתייחסות בהמשך (vehicleCode או label לוויתור)
       ref: c.vehicleCode ?? c.label,
-      vehicle: c.vehicleCode ?? c.label,
+      vehicle: c.name,
       route: c.route,
       net: c.net,
       netDelta: c.netDelta,

@@ -138,13 +138,14 @@ export class DatasetRepository {
       const r = await client.query(
         `select catalog_code, grp, manufacturer_code, model_code, registration_year,
                 vehicle_type_code, value_of_use, propulsion, company_cost,
-                default_participation, type_resolution_source
+                default_participation, type_resolution_source, commercial_name
          from vehicles where dataset_id = $1 order by catalog_code`,
         [datasetId],
       );
       return r.rows.map((v) => ({
         id: v.catalog_code as string,
         group: v.grp as string,
+        commercialName: (v.commercial_name as string) ?? "",
         manufacturerCode: v.manufacturer_code as string,
         modelCode: v.model_code as string,
         registrationYear: v.registration_year as string,
@@ -166,12 +167,12 @@ export class DatasetRepository {
     await client.query(
       `insert into vehicles
          (dataset_id, catalog_code, grp, manufacturer_code, model_code, registration_year,
-          vehicle_type_code, value_of_use, propulsion, company_cost, default_participation, type_resolution_source)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+          vehicle_type_code, value_of_use, propulsion, company_cost, default_participation, type_resolution_source, commercial_name)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
        on conflict (dataset_id, catalog_code) do nothing`,
       [
         datasetId, v.id, v.group, v.manufacturerCode, v.modelCode, v.registrationYear,
-        v.vehicleTypeCode, v.valueOfUse, v.propulsion, v.companyCost, v.defaultParticipation, v.typeResolutionSource,
+        v.vehicleTypeCode, v.valueOfUse, v.propulsion, v.companyCost, v.defaultParticipation, v.typeResolutionSource, v.commercialName,
       ],
     );
   }

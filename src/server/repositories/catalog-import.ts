@@ -24,6 +24,7 @@ export interface CatalogVehicleRaw {
 export interface ResolvedVehicle {
   id: string;
   group: string;
+  commercialName: string; // כינוי מסחרי מהקטלוג - לזיהוי הרכב בשם מול הקוד (ATTO 3 = CAR-10)
   manufacturerCode: string;
   modelCode: string;
   registrationYear: string;
@@ -121,6 +122,7 @@ export function resolveVehicle(
     vehicle: {
       id: v.id,
       group: v.group,
+      commercialName: v.commercialName,
       manufacturerCode: v.manufacturerCode,
       modelCode: v.modelCode,
       registrationYear: v.registrationYear,

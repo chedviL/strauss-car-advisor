@@ -433,6 +433,7 @@ export class CaseService {
         );
         return {
           vehicleCode: v.id,
+          name: v.commercialName,
           group: v.group,
           propulsion: v.propulsion,
           valueOfUse: v.valueOfUse,
@@ -527,6 +528,7 @@ export class CaseService {
       const net = Number(calc.result.netDisplay);
       comparisons.push({
         label: cand.label,
+        name: cand.vehicleCode ? (dataset.vehiclesByCode.get(cand.vehicleCode)?.commercialName ?? cand.label) : cand.label,
         route: cand.route,
         vehicleCode: cand.vehicleCode,
         net,
@@ -606,6 +608,7 @@ export interface VehicleSearchFilters {
 export interface VehicleSearchResult {
   candidates: Array<{
     vehicleCode: string;
+    name: string;
     group: string;
     propulsion: number;
     valueOfUse: string;
@@ -642,6 +645,7 @@ export type CompareRequest =
 
 export interface CompareRow {
   label: string;
+  name: string;
   route: RouteKind;
   vehicleCode: string | null;
   net: number;

@@ -103,3 +103,31 @@ describe("התאמת כל 20 רכבי הקטלוג", () => {
     }
   });
 });
+
+describe("RT-4: זיהוי רכב-בשם קשור לרשומה המזוהה (באג החלפת הרכבים)", () => {
+  // ATTO 3 ו-BYD DOLPHIN חולקים קוד יצרן 01014. בלי שם מזוהה המודל ניחש קוד שגוי.
+  it("ל-ResolvedVehicle יש כינוי מסחרי נכון לכל רכב (CAR-10=ATTO 3, CAR-03=BYD DOLPHIN)", () => {
+    const { resolved } = importCatalog(CATALOG, index);
+    const atto = resolved.find((v) => v.id === "CAR-10")!;
+    const dolphin = resolved.find((v) => v.id === "CAR-03")!;
+    expect(atto.commercialName).toBe("ATTO 3");
+    expect(dolphin.commercialName).toBe("BYD DOLPHIN");
+    // הרשומה המזוהה: שם, קבוצה ושווי שימוש מגיעים יחד מאותה רשומה.
+    expect(atto.group).toBe("ג");
+    expect(atto.valueOfUse).toBe("3130");
+    expect(dolphin.group).toBe("א");
+    expect(dolphin.valueOfUse).toBe("2590");
+  });
+
+  it("שני רכבי BYD נפרדים אינם מתמזגים (שם+קבוצה+שווי שונים)", () => {
+    const { resolved } = importCatalog(CATALOG, index);
+    const byd = resolved.filter((v) => v.manufacturerCode === "01014");
+    // CAR-03 Dolphin, CAR-10 ATTO 3, CAR-17 SEAL - שלושתם 01014, שלושה שמות שונים.
+    const names = new Set(byd.map((v) => v.commercialName));
+    expect(byd.length).toBeGreaterThanOrEqual(3);
+    expect(names.has("ATTO 3")).toBe(true);
+    expect(names.has("BYD DOLPHIN")).toBe(true);
+    // אין שם ריק - אחרת המודל שוב ינחש
+    for (const v of byd) expect(v.commercialName.trim().length).toBeGreaterThan(0);
+  });
+});
