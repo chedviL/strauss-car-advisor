@@ -322,6 +322,15 @@ export class CaseService {
     });
   }
 
+  /** רישום תשובת נציג על פנייה (ערך מובנה + תחולה). לשימוש מסך הנציג/הדמיה. */
+  async answerInquiry(
+    inquiryId: string,
+    ownerId: string,
+    answer: { value: number | null; note: string | null; effectiveFrom: string | null },
+  ) {
+    return await this.repo.answerInquiry(inquiryId, ownerId, answer);
+  }
+
   /** עדכון עובדות משותפות עם בדיקת גרסה. לתיקון עובדה אמיתית (לא סימולציה). */
   async updateFacts(
     caseId: string,

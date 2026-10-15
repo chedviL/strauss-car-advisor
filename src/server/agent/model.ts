@@ -13,7 +13,8 @@ export const BUDGET = {
   // מגבלת צעדים (סבבי כלים) לכל תור שיחה.
   maxSteps: 6,
   // תקרת טוקני פלט לכל קריאה.
-  maxOutputTokens: 1024,
+  // כולל טוקני thinking (1536) + תשובה. חייב להיות גדול מתקציב ה-thinking.
+  maxOutputTokens: 3072,
   // אומדן תמחור (USD per token). עדכני לנקודת הפתיחה; אכיפה היא אומדן, לא תקרת חיוב קשיחה.
   // (יש לעדכן אם התמחור הרשמי שונה; הערך משמש רק להערכת צריכה מצטברת.)
   usdPerInputToken: 3 / 1_000_000,
@@ -21,6 +22,13 @@ export const BUDGET = {
   // תקציב מצטבר מוערך לקבוצת ריצות אוטומטיות.
   maxEstimatedUsd: 1.0,
 };
+
+export type Effort = "low" | "medium" | "high" | "xhigh";
+/** רמת ה-effort (adaptive thinking). ברירת מחדל medium; ניתן להחלפה ב-MODEL_EFFORT. */
+export function getEffort(): Effort {
+  const e = (process.env.MODEL_EFFORT ?? "medium").trim();
+  return (["low", "medium", "high", "xhigh"].includes(e) ? e : "medium") as Effort;
+}
 
 export function getModelId(): string {
   const id = process.env.MODEL_ID;

@@ -84,6 +84,14 @@ export interface InquiryRecord {
   contextFingerprint: string;
   status: "open" | "answered" | "cancelled";
   createdAt: string;
+  /** תשובת נציג (אם נענתה): ערך מספרי מובנה (למשל השתתפות ₪). */
+  answerValue: number | null;
+  /** הערה חופשית קצרה מהנציג. */
+  answerNote: string | null;
+  /** תחולה (ISO date) אם רלוונטי. */
+  effectiveFrom: string | null;
+  /** מתי נענתה (ISO) או null. */
+  answeredAt: string | null;
 }
 
 export interface CaseState {

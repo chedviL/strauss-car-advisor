@@ -296,6 +296,24 @@ export class PgCaseRepository implements CaseRepository {
     });
   }
 
+  async answerInquiry(
+    inquiryId: string,
+    ownerId: string,
+    answer: { value: number | null; note: string | null; effectiveFrom: string | null },
+  ): Promise<InquiryRecord> {
+    return this.withOwner(ownerId, async (c) => {
+      const r = await c.query(
+        `update inquiries
+            set status = 'answered', answer_value = $2, answer_note = $3,
+                effective_from = $4, answered_at = now()
+          where id = $1 returning *`,
+        [inquiryId, answer.value, answer.note, answer.effectiveFrom],
+      );
+      if (r.rowCount === 0) throw new Error("inquiry not found for owner");
+      return mapInquiry(r.rows[0]);
+    });
+  }
+
   /**
    * טוען את כל מצב התיק ב-round-trip יחיד (במקום 5 שאילתות רצופות).
    * כל טבלה נאספת כ-JSON; מקצץ עלות רשת מהותית מול pooler מרוחק.
@@ -313,7 +331,7 @@ export class PgCaseRepository implements CaseRepository {
          (select to_jsonb(x) from (select * from case_facts where case_id = $1) x) as facts,
          coalesce((select jsonb_agg(to_jsonb(x)) from (select * from scenarios where case_id = $1) x), '[]'::jsonb) as scenarios,
          (select to_jsonb(x) from (select * from comparisons where case_id = $1 order by completed_at desc limit 1) x) as latest_comparison,
-         coalesce((select jsonb_agg(to_jsonb(x)) from (select * from inquiries where case_id = $1 and status = 'open') x), '[]'::jsonb) as open_inquiries`,
+         coalesce((select jsonb_agg(to_jsonb(x)) from (select * from inquiries where case_id = $1 and status in ('open','answered') order by created_at) x), '[]'::jsonb) as open_inquiries`,
       [caseId],
     );
     const row = r.rows[0];
@@ -404,5 +422,9 @@ function mapInquiry(r: Record<string, unknown>): InquiryRecord {
     contextFingerprint: r.context_fingerprint as string,
     status: r.status as InquiryRecord["status"],
     createdAt: iso(r.created_at),
+    answerValue: num(r.answer_value),
+    answerNote: (r.answer_note as string) ?? null,
+    effectiveFrom: r.effective_from ? iso(r.effective_from).slice(0, 10) : null,
+    answeredAt: r.answered_at ? iso(r.answered_at) : null,
   };
 }

@@ -99,6 +99,12 @@ export interface CaseRepository {
     ownerId: string,
     input: { type: InquiryType; scenarioId: string | null; contextFingerprint: string },
   ): Promise<{ inquiry: InquiryRecord; deduped: boolean }>;
+  /** רישום תשובת נציג על פנייה (ערך מובנה + תחולה). מעביר ל-answered. */
+  answerInquiry(
+    inquiryId: string,
+    ownerId: string,
+    answer: { value: number | null; note: string | null; effectiveFrom: string | null },
+  ): Promise<InquiryRecord>;
 }
 
 interface StoredCase {
@@ -146,7 +152,7 @@ export class FileCaseRepository implements CaseRepository {
       facts: stored.facts,
       scenarios: stored.scenarios,
       latestComparison: latest,
-      openInquiries: (stored.inquiries ?? []).filter((q) => q.status === "open"),
+      openInquiries: (stored.inquiries ?? []).filter((q) => q.status === "open" || q.status === "answered"),
     };
   }
 
@@ -323,10 +329,36 @@ export class FileCaseRepository implements CaseRepository {
       id: randomUUID(), caseId, type: input.type,
       scenarioId: input.scenarioId, contextFingerprint: input.contextFingerprint,
       status: "open", createdAt: new Date().toISOString(),
+      answerValue: null, answerNote: null, effectiveFrom: null, answeredAt: null,
     };
     stored.inquiries.push(inquiry);
     stored.case.updatedAt = new Date().toISOString();
     this.write(stored);
     return { inquiry, deduped: false };
+  }
+
+  async answerInquiry(
+    inquiryId: string,
+    ownerId: string,
+    answer: { value: number | null; note: string | null; effectiveFrom: string | null },
+  ): Promise<InquiryRecord> {
+    // מאתר את התיק המכיל את הפנייה (בסביבת הקבצים אין אינדקס גלובלי).
+    const dir = this.ownerDir(ownerId);
+    if (!existsSync(dir)) throw new Error("inquiry not found for owner");
+    for (const f of readdirSync(dir).filter((x) => x.endsWith(".json"))) {
+      const stored = JSON.parse(readFileSync(join(dir, f), "utf8")) as StoredCase;
+      const inq = (stored.inquiries ?? []).find((q) => q.id === inquiryId);
+      if (inq) {
+        inq.status = "answered";
+        inq.answerValue = answer.value;
+        inq.answerNote = answer.note;
+        inq.effectiveFrom = answer.effectiveFrom;
+        inq.answeredAt = new Date().toISOString();
+        stored.case.updatedAt = new Date().toISOString();
+        this.write(stored);
+        return inq;
+      }
+    }
+    throw new Error("inquiry not found for owner");
   }
 }
