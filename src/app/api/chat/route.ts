@@ -9,7 +9,7 @@ import { getOrCreateVisitOwner } from "../../../server/web/visit.js";
 import { streamChat, stripReasoning, type ChatBudgetState } from "../../../server/agent/chat-runtime.js";
 import type { ToolContext } from "../../../server/agent/tool-contracts.js";
 import { fastPathEnabled } from "../../../server/agent/model.js";
-import { runFastPlan } from "../../../server/agent/fast-path.js";
+import { runFastPlan, narrateResult } from "../../../server/agent/fast-path.js";
 import { randomUUID } from "node:crypto";
 
 export const runtime = "nodejs";
@@ -58,16 +58,11 @@ export async function POST(req: Request): Promise<Response> {
       .filter((p) => p.type === "text").map((p) => p.text).join(" ");
     try {
       const fp = await runFastPlan(service, ctx.caseId, owner, state, userText);
-      // handoff: הבקשה דורשת יכולת מחוץ לרשימה הסגורה (חיפוש/פירוט/פנייה).
-      // עדכוני עובדות (אם היו) כבר בוצעו ולא יאבדו; טוענים מצב ועוברים למסלול המלא.
-      if (fp.handoff) {
-        if (fp.did.facts || fp.did.simulation || fp.did.clearedSimulation) {
-          const refreshed = await service.getCaseState(ctx.caseId, owner);
-          if (refreshed) state = refreshed;
-        }
-        throw new Error("handoff-to-full");
-      }
-      const reply = fp.reply;
+      // תלוי-תוצאה: ממשיכים למודל עם התוצאה בפועל (לא מתחילים שוב את ההבנה).
+      // זו קריאת-המשך קצרה שמנסחת הסבר מבוסס-תוצאה; הכרטיס כבר נשמר.
+      const reply = fp.needsFollowup
+        ? await narrateResult(userText, fp.actionResults)
+        : fp.reply;
       const asstId = "asst-" + randomUUID();
       const stream = createUIMessageStream({
         execute: ({ writer }) => {
@@ -88,8 +83,8 @@ export async function POST(req: Request): Promise<Response> {
       });
       return createUIMessageStreamResponse({ stream });
     } catch {
-      // handoff או כשל במסלול המהיר -> נופלים למסלול הכלים המלא.
-      // (עדכוני עובדות שכבר בוצעו נשמרו; ה-state עודכן למעלה אם צריך.)
+      // כשל במסלול המהיר -> נופלים בבטחה למסלול הכלים המלא (הבנה מלאה).
+      // (עדכוני עובדות שכבר בוצעו נשמרו במסד.)
     }
   }
 

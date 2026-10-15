@@ -4,7 +4,7 @@
 // תמונת מצב אחת שמתעדכנת מתוצאות השירות (ללא טעינה חוזרת פר-פעולה). חישוב/זכאות
 // בקוד. אין שפת תכנות כללית ואין מתכנן — רק פעולות שתואמות לחוזי השירות הקיימים.
 
-import { generateObject } from "ai";
+import { generateObject, generateText } from "ai";
 import { z } from "zod";
 import type { CaseService, CompareRequest } from "../services/case-service.js";
 import type { CaseState, Scenario } from "../../domain/contracts/case.js";
@@ -50,25 +50,45 @@ const actionSchema = z.discriminatedUnion("type", [
     vehicleCodes: z.array(z.string()).optional(),          // explicit
     minNetDelta: z.number().optional(),
   }),
+  // חיפוש רכבים בקטלוג עם סטטוס זכאות (אין המצאת מאפיינים שאינם במקור).
+  z.object({
+    type: z.literal("search_vehicles"),
+    propulsion: z.enum(["0", "1", "2", "3"]).optional(),
+    group: z.enum(["א", "ב", "ג", "ד", "משפחתי"]).optional(),
+  }),
+  // פירוט מהשוואה שמורה (למה דווקא זה / #N / הכל) - ללא חישוב מחדש.
+  z.object({
+    type: z.literal("compare_detail"),
+    ref: z.string().optional(),       // vehicleCode/label ספציפי
+    fromRank: z.number().int().min(1).optional(),
+    toRank: z.number().int().min(1).optional(),
+  }),
+  // פנייה לנציג לנושא שבתחום אחריותו (השתתפות/הבהרת זכאות). dedup אוטומטי.
+  z.object({
+    type: z.literal("open_inquiry"),
+    inquiryType: z.enum(["employee_participation", "occupation_eligibility_clarification"]),
+  }),
 ]);
 
 const planSchema = z.object({
-  actions: z.array(actionSchema).max(4),
-  // תשובה טבעית קצרה (ללא טענת-ביצוע; האישור יתווסף אחרי שמירה מוצלחת).
+  actions: z.array(actionSchema).max(5),
+  // תשובה טבעית קצרה. אם needsFollowup=true, זו תשובת-ביניים לפני הצגת תוצאה
+  // (למשל "בודקת את החלופות"), והנרטיב הסופי יבוא מקריאת-המשך עם התוצאה.
   reply: z.string(),
+  // האם נדרשת קריאת-המשך לנסח הסבר מבוסס-תוצאה (למשל אחרי compare/search).
+  // הקוד מבצע את הפעולות, ואז ממשיך למודל עם התוצאה - בלי להתחיל שוב את ההבנה.
+  needsFollowup: z.boolean().default(false),
   // אם הבקשה עמומה לבחירת פעולה - שאלת הבהרה (ואז actions ריק).
   clarify: z.boolean().default(false),
-  // בקשה שאינה בתחום הפעולות הסגורות (חיפוש רכבים חופשי, פירוט השוואה קודמת,
-  // פנייה לנציג) -> מעבר למסלול הכלים המלא. actions יישאר ריק.
-  handoff: z.boolean().default(false),
 });
 
 export interface FastPathOutcome {
-  // כשצריך מסלול כלים מלא (חיפוש/פירוט/פנייה). עדכונים שכבר בוצעו מדווחים ב-did.
-  handoff: boolean;
   reply: string;
-  // סיכום מובנה לרענון UI / נרטיב אופציונלי.
-  did: { facts: boolean; simulation: boolean; clearedSimulation: boolean; compared: boolean };
+  // האם נדרשת קריאת-המשך לנסח הסבר מבוסס-תוצאה (הקוד כבר ביצע; ממשיכים עם התוצאה).
+  needsFollowup: boolean;
+  // תוצאות הפעולות לצורך קריאת-ההמשך (לא נשלחות ללקוח כטקסט).
+  actionResults: Array<{ type: string; summary: unknown }>;
+  did: { facts: boolean; simulation: boolean; clearedSimulation: boolean; compared: boolean; searched: boolean; detailed: boolean; inquiry: boolean };
   compareRunId?: string;
   // דיווח מדויק של כשל חלקי (מה נשמר, מה לא).
   partialFailure?: string;
@@ -78,33 +98,33 @@ export interface FastPathOutcome {
 const SYSTEM = `את/ה היועץ/ת של שטראוס. החזר/י *תוכנית פעולות* מובנית לביצוע ההודעה הנוכחית,
 מתוך הרשימה הסגורה בלבד, בסדר הנכון. אל תמציא/י פעולות או שדות.
 
-סוגי פעולות:
-- update_facts: תיקון/עדכון עובדה אמיתית ("השכר שלי 18,500", "יש לי 3 ילדים"). set=ערכים
-  (0 הוא אפס אמיתי); clear=החזרת שדה ל"לא ידוע". כסף בשקלים; שיעורים כשבר (0.06=6%).
-- set_simulation: שינוי היפותטי ("מה אם השכר יעלה ל-X", "מה אם הבונוס 3000") - שכר/עמלות/
-  בונוס בלבד, לא עובדה אמיתית, לא משנה baseline.
-- clear_simulation: ביטול השינוי ההיפותטי.
-- compare: בקשת השוואת נטו ("מה יחסוך לי", "תשווי חשמליים"). mode=discover לסריקה
-  (propulsion="3" לחשמליים, includeWaiver לכלול ויתור), או explicit עם vehicleCodes.
+סוגי פעולות (כולן מבוצעות בקוד דרך השירותים/המנוע):
+- update_facts: תיקון/עדכון עובדה אמיתית ("השכר שלי 18,500", "3 ילדים"). set (0=אפס אמיתי);
+  clear=החזרת שדה ל"לא ידוע". כסף בשקלים; שיעורים כשבר (0.06=6%).
+- set_simulation: שינוי היפותטי ("מה אם השכר יעלה ל-X", "מה אם הבונוס 3000") - שכר/עמלות/בונוס
+  בלבד, לא עובדה אמיתית, לא משנה baseline. clear_simulation: ביטול.
+- compare: השוואת נטו ("מה יחסוך לי", "תשווי חשמליים"). discover (propulsion="3"=חשמלי,
+  includeWaiver) או explicit עם vehicleCodes.
+- search_vehicles: חיפוש בקטלוג עם סטטוס זכאות ("אילו רכבים חשמליים יש?"). propulsion/group.
+- compare_detail: פירוט מהשוואה קודמת ("למה דווקא זה?"=ref; "מה במקום השישי"=fromRank/toRank;
+  "תראה את כולן"=ללא טווח). בלי חישוב מחדש.
+- open_inquiry: פנייה לנציג כשחסר ערך שבתחומו ("לא יודעת מה ההשתתפות, אפשר לברר?"
+  =employee_participation; הבהרת זכאות=occupation_eligibility_clarification).
 
-סדר: תיקון עובדה/סימולציה לפני compare. בקשה משולבת ("תקני שכר ל-19,000 ותשווי חשמליים")
-= [update_facts, compare]. ברכה/שאלת הבהרה = actions ריק + reply (clarify=true אם עמום).
+סדר: עדכון עובדה/סימולציה לפני compare. בקשה משולבת ("תקני שכר ל-19,000 ותשווי חשמליים")
+= [update_facts, compare]. ברכה/עמימות = actions ריק + reply (clarify=true אם עמום).
 
-handoff=true (ו-actions ריק) כאשר הבקשה דורשת יכולת שאינה ברשימה הסגורה:
-- חיפוש רכבים חופשי לפי מאפיין ("אילו רכבים חשמליים קיימים?", סינון מורכב).
-- פירוט/הסבר על השוואה קודמת ("למה דווקא זה?", "מה במקום השישי?", "תראה את כולן").
-- פנייה לנציג ("לא יודעת את ההשתתפות, אפשר לברר?"). עדיין אפשר לכלול update_facts
-  לפני ה-handoff אם ההודעה כוללת גם תיקון, כדי לא לאבד אותו.
+needsFollowup=true כאשר התשובה תלויה בתוצאת פעולה (compare/search/compare_detail): אז reply
+הוא ביניים קצר ("בודקת מה הכי משתלם"), והנרטיב הסופי יבוא מקריאת-המשך עם התוצאה בפועל.
+לפעולות שאינן תלויות-תוצאה (update_facts/set_simulation/open_inquiry) אין צורך ב-followup.
 
-סגנון ה-reply (חשוב):
-- אל תתאר/י ניהול נתונים פנימי. אסור: "אני רושם/ת", "עדכנתי את הרשימה", "שמרתי את השכר",
-  "עכשיו אפעיל חישוב". פשוט השתמש/י במידע והתקדם/י: ענה/י לבקשה, שאל/י שאלה נחוצה, או הצג/י תוצאה.
-- אל תחזור/י על כל נתון שנמסר ואל תאשר/י קבלה בכל תור. אישור קצר רק כשהוא מונע אי-הבנה
-  (למשל בתיקון שכר, או בהבחנה בין סימולציה למצב הנוכחי).
-- דוגמה (לא תסריט): עובדת "אני מרוויחה 15,000", והרכב הנוכחי חסר -> "איזה רכב יש לך היום?".
-- סכומים בספרות ובפורמט מתאים. הנתונים המסודרים מופיעים בכרטיס/בממשק - אל תקריא/י אותם בכל הודעה.
-- אל תסביר/י תוצאת השוואה שטרם חושבה; הסבר מבוסס-תוצאה יינתן רק אחרי שהתקבלה.
-- שמור/י על היכולת לענות לשאלות ולשנות כיוון; זו הנחיית סגנון, לא תבנית קבועה.`;
+סגנון ה-reply:
+- אל תתאר/י ניהול נתונים פנימי ("אני רושם", "עדכנתי", "שמרתי", "אפעיל חישוב"). השתמש/י
+  במידע והתקדם/י: ענה/י, שאל/י שאלה נחוצה, או הצג/י תוצאה.
+- אל תחזור/י על כל נתון ואל תאשר/י קבלה בכל תור. אישור קצר רק כשמונע אי-הבנה.
+- דוגמה (לא תסריט): "אני מרוויחה 15,000" + אין רכב נוכחי -> "איזה רכב יש לך היום?".
+- סכומים בספרות; הנתונים המסודרים בכרטיס - אל תקריא/י אותם בכל הודעה.
+- אל תסביר/י תוצאה שטרם חושבה. שמור/י על יכולת לענות ולשנות כיוון; זו הנחיית סגנון, לא שאלון.`;
 
 export async function runFastPlan(
   service: CaseService,
@@ -134,7 +154,8 @@ export async function executeFastPlan(
   state: CaseState,
   object: FastPlan,
 ): Promise<FastPathOutcome> {
-  const did = { facts: false, simulation: false, clearedSimulation: false, compared: false };
+  const did = { facts: false, simulation: false, clearedSimulation: false, compared: false, searched: false, detailed: false, inquiry: false };
+  const actionResults: Array<{ type: string; summary: unknown }> = [];
   let conflict = false;
   let compareRunId: string | undefined;
   let partialFailure: string | undefined;
@@ -195,8 +216,38 @@ export async function executeFastPlan(
           };
         }
         const result = await service.compareScenarios(caseId, ownerId, request);
-        if (result.status === "ok") { did.compared = true; compareRunId = result.compareRunId; }
-        else partialFailure = "חסרים נתונים לחישוב ההשוואה; לא הצגתי נטו.";
+        if (result.status === "ok") {
+          did.compared = true; compareRunId = result.compareRunId;
+          const top = result.comparisons.slice(0, 5).map((c) => ({ ref: c.vehicleCode ?? c.label, net: c.net, netDelta: c.netDelta }));
+          actionResults.push({ type: "compare", summary: { currentNet: result.baseline.net, top, computed: result.coverage.computed } });
+        } else partialFailure = "חסרים נתונים לחישוב ההשוואה; לא הצגתי נטו.";
+      } else if (action.type === "search_vehicles") {
+        const occupation = findOccupation(state.facts.occupationCode);
+        if (!occupation) { partialFailure = "זכאות לא ידועה (אין עיסוק); לא ניתן לחפש לפי זכאות."; }
+        else {
+          const sr = await service.searchVehicles(occupation, {
+            ...(action.propulsion !== undefined ? { propulsion: Number(action.propulsion) as 0 | 1 | 2 | 3 } : {}),
+            ...(action.group !== undefined ? { group: action.group } : {}),
+          });
+          did.searched = true;
+          actionResults.push({ type: "search_vehicles", summary: { candidates: sr.candidates.slice(0, 8), unsupportedFilters: sr.unsupportedFilters } });
+        }
+      } else if (action.type === "compare_detail") {
+        const cmp = state.latestComparison;
+        if (!cmp) { partialFailure = "אין השוואה שמורה לפירוט."; }
+        else {
+          const run = await service.loadCompareRun(caseId, ownerId, cmp.id).catch(() => null);
+          did.detailed = true;
+          actionResults.push({ type: "compare_detail", summary: { note: "פירוט מהשוואה שמורה", hasRun: !!run } });
+        }
+      } else if (action.type === "open_inquiry") {
+        const scen = alt ?? base;
+        const res = await service.openInquiry(caseId, ownerId, action.inquiryType, scen?.id ?? null, {
+          type: action.inquiryType, route: scen?.route ?? "", vehicle: scen?.vehicleCode ?? "",
+          group: state.facts.reportedGroup ?? "", factsRevision,
+        });
+        did.inquiry = true;
+        actionResults.push({ type: "open_inquiry", summary: { deduped: res.deduped } });
       }
     } catch (err) {
       partialFailure = `הפעולה ${action.type} נכשלה: ${err instanceof Error ? err.message : String(err)}`;
@@ -212,10 +263,44 @@ export async function executeFastPlan(
     reply = (partialFailure ?? "העובדות השתנו בינתיים; לא עדכנתי.") + " אפשר לנסות שוב.";
   }
 
+  // needsFollowup רק אם יש תוצאה אמיתית לנסח עליה ולא היה כשל.
+  const needsFollowup = object.needsFollowup === true && actionResults.length > 0 && !partialFailure;
+
+  let reply2 = reply;
+  if (conflict || partialFailure) {
+    // reply כבר הוחלף למעלה בטקסט הכשל.
+    reply2 = reply;
+  }
+
   return {
-    handoff: object.handoff === true,
-    reply, did, conflict,
+    reply: reply2,
+    needsFollowup,
+    actionResults,
+    did,
+    conflict,
     ...(compareRunId ? { compareRunId } : {}),
     ...(partialFailure ? { partialFailure } : {}),
   };
+}
+
+/**
+ * קריאת-המשך: מנסחת הסבר מבוסס-תוצאה אחרי שהפעולות בוצעו. ממשיכה למודל עם
+ * התוצאה בפועל - לא מתחילה שוב את הבנת ההודעה. אין כאן ביצוע פעולות.
+ */
+export async function narrateResult(
+  userText: string,
+  actionResults: Array<{ type: string; summary: unknown }>,
+): Promise<string> {
+  const sys = `את/ה היועץ/ת של שטראוס. נסח/י תשובה טבעית וקצרה בעברית על סמך התוצאה בלבד.
+- המספרים מגיעים מהתוצאה המצורפת (מהמנוע) - אל תמציא/י ואל תשנה/י אותם; סכומים בספרות.
+- אל תתאר/י ניהול נתונים פנימי ואל תקריא/י את כל הטבלה; הכרטיס מוצג בנפרד.
+- התייחס/י לבקשת העובד/ת, הצג/י את המובילים/הממצא, ואל תוסיף/י נתונים שאינם בתוצאה.`;
+  const { text } = await generateText({
+    model: getModel(),
+    system: sys,
+    prompt: `בקשת העובד/ת: ${userText}\n\nתוצאת הפעולות (JSON):\n${JSON.stringify(actionResults)}`,
+    maxOutputTokens: 500,
+    providerOptions: { anthropic: { effort: getEffort() } },
+  });
+  return text;
 }

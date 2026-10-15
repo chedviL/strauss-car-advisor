@@ -31,7 +31,7 @@ const st = (id: string) => service.getCaseState(id, OWNER);
 describe("fast-plan executor (ללא מודל)", () => {
   it("תיקון + השוואה בתוכנית אחת: שכר נשמר, גרסה לא כפולה, כרטיס מחושב על המעודכן", async () => {
     const c = await newCase();
-    const plan: FastPlan = { clarify:false, handoff:false, reply:"ok", actions:[
+    const plan: FastPlan = { clarify:false, needsFollowup:false, reply:"ok", actions:[
       { type:"update_facts", set:{ baseSalary:19000 } },
       { type:"compare", mode:"discover", propulsion:"3" },
     ]};
@@ -45,7 +45,7 @@ describe("fast-plan executor (ללא מודל)", () => {
 
   it("סימולציות base/commission/bonus כולל אפס מפורש; baseline לא משתנה", async () => {
     const c = await newCase();
-    const plan: FastPlan = { clarify:false, handoff:false, reply:"ok", actions:[
+    const plan: FastPlan = { clarify:false, needsFollowup:false, reply:"ok", actions:[
       { type:"set_simulation", overrides:{ baseSalary:25000, commission:0, bonus:3000 } },
     ]};
     await executeFastPlan(service, c.case.id, OWNER, (await st(c.case.id))!, plan);
@@ -59,8 +59,8 @@ describe("fast-plan executor (ללא מודל)", () => {
 
   it("הסרת override מחזירה לירושה", async () => {
     const c = await newCase();
-    await executeFastPlan(service, c.case.id, OWNER, (await st(c.case.id))!, { clarify:false, handoff:false, reply:"", actions:[{ type:"set_simulation", overrides:{ baseSalary:30000 } }] });
-    await executeFastPlan(service, c.case.id, OWNER, (await st(c.case.id))!, { clarify:false, handoff:false, reply:"", actions:[{ type:"clear_simulation" }] });
+    await executeFastPlan(service, c.case.id, OWNER, (await st(c.case.id))!, { clarify:false, needsFollowup:false, reply:"", actions:[{ type:"set_simulation", overrides:{ baseSalary:30000 } }] });
+    await executeFastPlan(service, c.case.id, OWNER, (await st(c.case.id))!, { clarify:false, needsFollowup:false, reply:"", actions:[{ type:"clear_simulation" }] });
     const s = (await st(c.case.id))!;
     const alt = s.scenarios.find((x) => x.role === "alternative")!;
     expect(Object.keys(alt.overrides)).toHaveLength(0);
@@ -68,7 +68,7 @@ describe("fast-plan executor (ללא מודל)", () => {
 
   it("מספרים בכרטיס == פלט המנוע (עד האגורה)", async () => {
     const c = await newCase();
-    await executeFastPlan(service, c.case.id, OWNER, (await st(c.case.id))!, { clarify:false, handoff:false, reply:"", actions:[{ type:"compare", mode:"explicit", vehicleCodes:["CAR-10"] }] });
+    await executeFastPlan(service, c.case.id, OWNER, (await st(c.case.id))!, { clarify:false, needsFollowup:false, reply:"", actions:[{ type:"compare", mode:"explicit", vehicleCodes:["CAR-10"] }] });
     const s = (await st(c.case.id))!;
     const alt = s.scenarios.find((x) => x.role === "alternative")!;
     const direct = computeScenario(s.facts, alt, getActiveDataset());
@@ -83,10 +83,42 @@ describe("fast-plan executor (ללא מודל)", () => {
     await service.updateFacts(c.case.id, OWNER, { bonus:500 }, 0); // rev -> 1
     const stale = (await st(c.case.id))!;
     const faked = { ...stale, case: { ...stale.case, factsRevision: 0 } }; // גרסה ישנה
-    const r = await executeFastPlan(service, c.case.id, OWNER, faked, { clarify:false, handoff:false, reply:"ok", actions:[{ type:"update_facts", set:{ baseSalary:21000 } }] });
+    const r = await executeFastPlan(service, c.case.id, OWNER, faked, { clarify:false, needsFollowup:false, reply:"ok", actions:[{ type:"update_facts", set:{ baseSalary:21000 } }] });
     const s = (await st(c.case.id))!;
     expect(r.conflict).toBe(true);
     expect(s.facts.baseSalary).toBe(14200); // לא נשמר שכר שגוי
     expect(r.partialFailure ?? r.reply).toBeTruthy();
+  });
+
+  it("search_vehicles: מחזיר תוצאות + needsFollowup (תלוי-תוצאה)", async () => {
+    const c = await newCase();
+    const r = await executeFastPlan(service, c.case.id, OWNER, (await st(c.case.id))!, { clarify:false, needsFollowup:true, reply:"בודקת", actions:[{ type:"search_vehicles", propulsion:"3" }] });
+    expect(r.did.searched).toBe(true);
+    expect(r.needsFollowup).toBe(true);
+    expect(r.actionResults.some((a) => a.type === "search_vehicles")).toBe(true);
+  });
+
+  it("compare_detail: דורש השוואה שמורה; בלי השוואה -> כשל חלקי מדווח", async () => {
+    const c = await newCase();
+    const r = await executeFastPlan(service, c.case.id, OWNER, (await st(c.case.id))!, { clarify:false, needsFollowup:false, reply:"", actions:[{ type:"compare_detail" }] });
+    expect(r.did.detailed).toBe(false);
+    expect(r.partialFailure).toBeTruthy();
+  });
+
+  it("open_inquiry: נפתחת פנייה לנציג (לא תלוי-תוצאה, בלי followup)", async () => {
+    const c = await newCase();
+    const r = await executeFastPlan(service, c.case.id, OWNER, (await st(c.case.id))!, { clarify:false, needsFollowup:false, reply:"אפנה לנציג", actions:[{ type:"open_inquiry", inquiryType:"employee_participation" }] });
+    expect(r.did.inquiry).toBe(true);
+    const s = (await st(c.case.id))!;
+    expect(s.openInquiries.some((q) => q.type === "employee_participation")).toBe(true);
+  });
+
+  it("compare -> needsFollowup=true ו-actionResults כולל את התוצאה", async () => {
+    const c = await newCase();
+    const r = await executeFastPlan(service, c.case.id, OWNER, (await st(c.case.id))!, { clarify:false, needsFollowup:true, reply:"בודקת", actions:[{ type:"compare", mode:"discover", propulsion:"3" }] });
+    expect(r.did.compared).toBe(true);
+    expect(r.needsFollowup).toBe(true);
+    const compareResult = r.actionResults.find((a) => a.type === "compare");
+    expect(compareResult).toBeTruthy();
   });
 });
