@@ -121,4 +121,26 @@ describe("fast-plan executor (ללא מודל)", () => {
     const compareResult = r.actionResults.find((a) => a.type === "compare");
     expect(compareResult).toBeTruthy();
   });
+
+  it("set_current_vehicle: הרכב הנוכחי מתעדכן ב-baseline, לא כחלופה", async () => {
+    const c = await newCase(); // baseline מתחיל כ-CAR-09
+    const r = await executeFastPlan(service, c.case.id, OWNER, (await st(c.case.id))!, { clarify:false, needsFollowup:false, reply:"", actions:[{ type:"set_current_vehicle", vehicleCode:"CAR-10" }] });
+    expect(r.did.currentVehicle).toBe(true);
+    const s = (await st(c.case.id))!;
+    const base = s.scenarios.find((x) => x.role === "baseline")!;
+    expect(base.vehicleCode).toBe("CAR-10"); // baseline עודכן
+    const alt = s.scenarios.find((x) => x.role === "alternative");
+    expect(alt).toBeUndefined(); // לא נוצרה חלופה
+  });
+
+  it("search_vehicles עובד לפי קבוצה שנמסרה גם בלי עיסוק (זכאות מקבוצה)", async () => {
+    // תיק עם קבוצה ג אבל ללא occupationCode
+    const ds = getActiveDataset();
+    const repo = new FileCaseRepository(dir);
+    const noOcc = { ...facts, occupationCode: null };
+    const created = await repo.createCase({ ownerId: OWNER, isDemo:true, datasetId: ds.contentId, facts: noOcc, baseline:{ role:"baseline", route:"company_car", vehicleCode:"CAR-09", participation:300, maintenanceAllowance:0 } });
+    const r = await executeFastPlan(service, created.case.id, OWNER, (await st(created.case.id))!, { clarify:false, needsFollowup:true, reply:"בודקת", actions:[{ type:"search_vehicles", propulsion:"3" }] });
+    expect(r.did.searched).toBe(true); // לא נחסם בגלל חוסר עיסוק
+    expect(r.partialFailure).toBeUndefined();
+  });
 });

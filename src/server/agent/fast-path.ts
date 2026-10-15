@@ -12,6 +12,21 @@ import type { FactsPatch } from "../repositories/case-repository.js";
 import { getModel, getEffort } from "./model.js";
 import { buildContext } from "./context.js";
 import { findOccupation } from "../../../data/source/occupations.js";
+import type { Occupation } from "../../domain/eligibility/engine.js";
+
+/**
+ * זכאות לרכב חברה נקבעת לפי קבוצת הזכאות. אם העיסוק ידוע -> משתמשים בו (כולל
+ * דגלי ויתור/רכב-חובה). אחרת, אם נמסרה קבוצה -> בונים זכאות לפי קבוצה (לרכב חברה
+ * בלבד; ויתור דורש עיסוק מאומת). null רק אם אין עיסוק ואין קבוצה.
+ */
+function occupationOrGroup(occCode: string | null, group: string | null): Occupation | undefined {
+  const occ = findOccupation(occCode);
+  if (occ) return occ;
+  if (group) {
+    return { code: "reported", name: "לפי קבוצה שנמסרה", group, carMandatory: false, waiverAllowed: false, maintenanceAllowance: 0 };
+  }
+  return undefined;
+}
 
 // --- רשימת פעולות סגורה ---
 const salaryFields = z.object({
@@ -41,6 +56,9 @@ const actionSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("set_simulation"), overrides: salaryFields }),
   // הסרת ה-override (חזרה לירושה).
   z.object({ type: z.literal("clear_simulation") }),
+  // הרכב הנוכחי של העובד/ת ("יש לי Atto 3") - מתעדכן ב-baseline (המצב הקיים),
+  // לא כרכב יעד להשוואה. vehicleCode מהקטלוג (אם זוהה).
+  z.object({ type: z.literal("set_current_vehicle"), vehicleCode: z.string() }),
   // השוואה - מבוצעת בקוד (מנוע). discover או רשימת רכבים מפורשת.
   z.object({
     type: z.literal("compare"),
@@ -88,7 +106,7 @@ export interface FastPathOutcome {
   needsFollowup: boolean;
   // תוצאות הפעולות לצורך קריאת-ההמשך (לא נשלחות ללקוח כטקסט).
   actionResults: Array<{ type: string; summary: unknown }>;
-  did: { facts: boolean; simulation: boolean; clearedSimulation: boolean; compared: boolean; searched: boolean; detailed: boolean; inquiry: boolean };
+  did: { facts: boolean; simulation: boolean; clearedSimulation: boolean; currentVehicle: boolean; compared: boolean; searched: boolean; detailed: boolean; inquiry: boolean };
   compareRunId?: string;
   // דיווח מדויק של כשל חלקי (מה נשמר, מה לא).
   partialFailure?: string;
@@ -108,11 +126,26 @@ const SYSTEM = `את/ה היועץ/ת של שטראוס. החזר/י *תוכני
 - search_vehicles: חיפוש בקטלוג עם סטטוס זכאות ("אילו רכבים חשמליים יש?"). propulsion/group.
 - compare_detail: פירוט מהשוואה קודמת ("למה דווקא זה?"=ref; "מה במקום השישי"=fromRank/toRank;
   "תראה את כולן"=ללא טווח). בלי חישוב מחדש.
+- set_current_vehicle: הרכב הנוכחי של העובד/ת ("יש לי Atto 3", "אני נוסע/ת היום בטויוטה")
+  -> מתעדכן כמצב הקיים (baseline), לא כרכב יעד להשוואה. vehicleCode מהקטלוג.
 - open_inquiry: פנייה לנציג כשחסר ערך שבתחומו ("לא יודעת מה ההשתתפות, אפשר לברר?"
   =employee_participation; הבהרת זכאות=occupation_eligibility_clarification).
 
-סדר: עדכון עובדה/סימולציה לפני compare. בקשה משולבת ("תקני שכר ל-19,000 ותשווי חשמליים")
-= [update_facts, compare]. ברכה/עמימות = actions ריק + reply (clarify=true אם עמום).
+## מטרה לפני איסוף (חשוב)
+- הבחן/י בין *מידע שנמסר* (שכר/קבוצה/רכב נוכחי) לבין *מה שהעובד/ת רוצה לברר* (המטרה).
+- אם המטרה עדיין לא ידועה (למשל רק הציג/ה את עצמו/ה או מסר/ה פרט) - שאל/י בקצרה מה היעד:
+  "מה היית רוצה לבדוק - מעבר לרכב אחר, השפעת שכר, ויתור על רכב?". אל תתחיל/י לאסוף שכר/
+  עיסוק/השתתפות לפני שברור מה רוצים לחשב.
+- שאל/י רק על מה שחסר *לפעולה המבוקשת*, לא על כל שדה חסר בתיק. ברכה/שם -> ברך/י והצע/י עזרה,
+  בלי לדרוש נתונים.
+
+## זכאות
+- זכאות לרכב חברה נקבעת לפי *קבוצת הזכאות*. אם נמסרה קבוצה (למשל "ג") - אפשר לחפש/להשוות
+  רכבי חברה גם בלי עיסוק. אל תאמר/י "בלי עיסוק אי אפשר לקבוע זכאות" - זה שגוי.
+- העיסוק נדרש רק להחלטות ויתור/רכב-חובה. אם צריך את זה - בקש/י עיסוק, לא "חוסם זכאות כללי".
+
+סדר: עדכון עובדה/רכב-נוכחי/סימולציה לפני compare. בקשה משולבת = רשימת פעולות בסדר.
+ברכה/עמימות = actions ריק + reply (clarify=true אם עמום).
 
 needsFollowup=true כאשר התשובה תלויה בתוצאת פעולה (compare/search/compare_detail): אז reply
 הוא ביניים קצר ("בודקת מה הכי משתלם"), והנרטיב הסופי יבוא מקריאת-המשך עם התוצאה בפועל.
@@ -154,7 +187,7 @@ export async function executeFastPlan(
   state: CaseState,
   object: FastPlan,
 ): Promise<FastPathOutcome> {
-  const did = { facts: false, simulation: false, clearedSimulation: false, compared: false, searched: false, detailed: false, inquiry: false };
+  const did = { facts: false, simulation: false, clearedSimulation: false, currentVehicle: false, compared: false, searched: false, detailed: false, inquiry: false };
   const actionResults: Array<{ type: string; summary: unknown }> = [];
   let conflict = false;
   let compareRunId: string | undefined;
@@ -197,8 +230,17 @@ export async function executeFastPlan(
           });
           did.clearedSimulation = true;
         }
+      } else if (action.type === "set_current_vehicle") {
+        // הרכב הנוכחי -> baseline (לא רכב יעד). route=company_car כברירת מחדל.
+        await service.updateBaselineVehicle(caseId, ownerId, {
+          route: base?.route ?? "company_car",
+          vehicleCode: action.vehicleCode,
+          participation: base?.participation ?? null,
+          maintenanceAllowance: base?.maintenanceAllowance ?? 0,
+        });
+        did.currentVehicle = true;
       } else if (action.type === "compare") {
-        const occupation = findOccupation(state.facts.occupationCode);
+        const occupation = occupationOrGroup(state.facts.occupationCode, state.facts.reportedGroup);
         let request: CompareRequest;
         if (action.mode === "explicit" && action.vehicleCodes && action.vehicleCodes.length > 0) {
           request = {
@@ -222,8 +264,8 @@ export async function executeFastPlan(
           actionResults.push({ type: "compare", summary: { currentNet: result.baseline.net, top, computed: result.coverage.computed } });
         } else partialFailure = "חסרים נתונים לחישוב ההשוואה; לא הצגתי נטו.";
       } else if (action.type === "search_vehicles") {
-        const occupation = findOccupation(state.facts.occupationCode);
-        if (!occupation) { partialFailure = "זכאות לא ידועה (אין עיסוק); לא ניתן לחפש לפי זכאות."; }
+        const occupation = occupationOrGroup(state.facts.occupationCode, state.facts.reportedGroup);
+        if (!occupation) { partialFailure = "כדי לחפש לפי זכאות צריך לדעת את קבוצת הזכאות (או העיסוק)."; }
         else {
           const sr = await service.searchVehicles(occupation, {
             ...(action.propulsion !== undefined ? { propulsion: Number(action.propulsion) as 0 | 1 | 2 | 3 } : {}),

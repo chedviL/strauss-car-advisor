@@ -78,7 +78,7 @@ export function buildContext(state: CaseState): string {
     `  עיסוק=${f.occupationCode ?? "חסר"} | קבוצה מדווחת=${f.reportedGroup ?? "חסר"}`,
     `  שכר=${money(f.baseSalary)} עמלות=${money(f.commission)} בונוס=${money(f.bonus)}`,
     `  פנסיה=${f.pensionRate ?? "חסר"} קה"ש=${f.trainingRate ?? "חסר"} נק'זיכוי=${f.creditPoints ?? "חסר"} ילדים=${f.qualifyingChildren ?? "חסר"}`,
-    missing.length > 0 ? `  חוסרים: ${missing.join(", ")}` : `  אין חוסרים בעובדות.`,
+    missing.length > 0 ? `  שדות שעדיין לא נמסרו (נדרשים רק כשמחשבים נטו, לא רשימת שאלות חובה): ${missing.join(", ")}` : `  כל העובדות הדרושות לחישוב קיימות.`,
     eligLine,
     `## מצב וחלופות (מזהים לשימוש בכלים)`,
     ...(state.scenarios.length > 0 ? state.scenarios.map(scenarioLine) : ["  (אין תרחישים)"]),

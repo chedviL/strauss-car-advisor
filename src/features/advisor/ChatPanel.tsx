@@ -1,7 +1,7 @@
 // src/features/advisor/ChatPanel.tsx
 "use client";
 // פאנל שיחה חי מול המודל (claude-sonnet-5-5) דרך /api/chat.
-// מציג הודעת משתמש מיד, מצב התקדמות אמיתי בזמן המתנה, וצ'יפים של שלבי כלים.
+// מציג הודעת משתמש מיד וחיווי המתנה מוצרי קצר (ללא שמות כלים פנימיים).
 // המספרים/הזכאות אינם נקבעים כאן - הם מגיעים מהכלים/המנוע דרך המודל.
 
 import { useEffect, useRef, useState } from "react";
@@ -9,15 +9,6 @@ import { useRouter } from "next/navigation";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 
-// תרגום שמות כלים לתוויות עבריות קצרות (צ'יפים של "שלבי עבודה").
-const TOOL_LABEL: Record<string, string> = {
-  readCaseState: "קריאת מצב התיק",
-  updateCase: "עדכון עובדות",
-  manageScenarios: "ניהול חלופה",
-  searchVehicles: "חיפוש רכבים",
-  compareScenarios: "חישוב השוואה",
-  openInquiry: "פנייה לנציג",
-};
 
 export interface ChatPanelProps {
   initialMessages?: Array<{ id: string; role: string; parts: unknown }>;
@@ -75,7 +66,7 @@ export function ChatPanel({ initialMessages = [] }: ChatPanelProps) {
         ))}
         {busy && (
           <div style={{ color: "var(--color-muted)", fontSize: "0.85rem" }} aria-live="polite">
-            {status === "submitted" ? "חושב…" : "מנסח תשובה…"}
+            חושב…
           </div>
         )}
         {error && (
@@ -109,9 +100,6 @@ export function ChatPanel({ initialMessages = [] }: ChatPanelProps) {
 function MessageBubble({ role, parts }: { role: string; parts: Array<Record<string, unknown>> }) {
   const isUser = role === "user";
   const textParts = parts.filter((p) => p.type === "text").map((p) => p.text as string);
-  const toolSteps = parts
-    .filter((p) => typeof p.type === "string" && (p.type as string).startsWith("tool-"))
-    .map((p) => (p.type as string).replace(/^tool-/, ""));
 
   return (
     <div style={{ display: "flex", justifyContent: isUser ? "flex-start" : "flex-end" }}>
@@ -126,22 +114,6 @@ function MessageBubble({ role, parts }: { role: string; parts: Array<Record<stri
           lineHeight: 1.5,
         }}
       >
-        {!isUser && toolSteps.length > 0 && (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 6 }}>
-            {toolSteps.map((t, i) => (
-              <span
-                key={i}
-                style={{
-                  fontSize: "0.72rem", color: "var(--color-muted)",
-                  border: "1px solid var(--color-border)", borderRadius: 999,
-                  padding: "1px 8px",
-                }}
-              >
-                {TOOL_LABEL[t] ?? t}
-              </span>
-            ))}
-          </div>
-        )}
         {isUser ? textParts.join("") : <Markdown text={textParts.join("")} />}
       </div>
     </div>

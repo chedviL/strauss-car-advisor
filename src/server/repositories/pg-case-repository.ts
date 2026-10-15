@@ -16,6 +16,7 @@ import type {
   ComparisonRecord,
   Scenario,
 } from "../../domain/contracts/case.js";
+import type { RouteKind } from "../../domain/contracts/types.js";
 import type {
   CaseRepository,
   CreateScenarioInput,
@@ -163,6 +164,24 @@ export class PgCaseRepository implements CaseRepository {
          values ($1,$2,'alternative',$3,$4,$5,$6,$7,0) returning *`,
         [randomUUID(), caseId, input.route, input.vehicleCode, input.participation, input.maintenanceAllowance, JSON.stringify(input.overrides ?? {})],
       );
+      await c.query("update cases set updated_at = now() where id = $1", [caseId]);
+      return mapScenario(r.rows[0]);
+    });
+  }
+
+  async updateBaselineVehicle(
+    caseId: string,
+    ownerId: string,
+    input: { route: RouteKind; vehicleCode: string | null; participation: number | null; maintenanceAllowance: number },
+  ): Promise<Scenario> {
+    return this.withOwner(ownerId, async (c) => {
+      const r = await c.query(
+        `update scenarios set route=$2, vehicle_code=$3, participation=$4,
+           maintenance_allowance=$5, revision=revision+1
+         where case_id=$1 and role='baseline' returning *`,
+        [caseId, input.route, input.vehicleCode, input.participation, input.maintenanceAllowance],
+      );
+      if (r.rowCount === 0) throw new Error("no baseline to update");
       await c.query("update cases set updated_at = now() where id = $1", [caseId]);
       return mapScenario(r.rows[0]);
     });

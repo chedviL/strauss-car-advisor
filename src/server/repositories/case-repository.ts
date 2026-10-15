@@ -90,6 +90,12 @@ export interface CaseRepository {
     ownerId: string,
     input: CreateScenarioInput,
   ): Promise<Scenario>;
+  /** מעדכן את רכב ה-baseline (המצב הנוכחי) - route/vehicle/participation/maintenance. */
+  updateBaselineVehicle(
+    caseId: string,
+    ownerId: string,
+    input: { route: import("../../domain/contracts/types.js").RouteKind; vehicleCode: string | null; participation: number | null; maintenanceAllowance: number },
+  ): Promise<Scenario>;
   saveComparison(
     caseId: string,
     ownerId: string,
@@ -274,6 +280,26 @@ export class FileCaseRepository implements CaseRepository {
     stored.case.updatedAt = new Date().toISOString();
     this.write(stored);
     return scenario;
+  }
+
+  async updateBaselineVehicle(
+    caseId: string,
+    ownerId: string,
+    input: { route: import("../../domain/contracts/types.js").RouteKind; vehicleCode: string | null; participation: number | null; maintenanceAllowance: number },
+  ): Promise<Scenario> {
+    const stored = this.read(ownerId, caseId);
+    if (!stored || stored.case.ownerId !== ownerId) throw new Error("case not found for owner");
+    const existing = stored.scenarios.find((s) => s.role === "baseline");
+    if (!existing) throw new Error("no baseline to update");
+    const updated: Scenario = {
+      ...existing, route: input.route, vehicleCode: input.vehicleCode,
+      participation: input.participation, maintenanceAllowance: input.maintenanceAllowance,
+      revision: existing.revision + 1,
+    };
+    stored.scenarios = stored.scenarios.filter((s) => s.role !== "baseline").concat(updated);
+    stored.case.updatedAt = new Date().toISOString();
+    this.write(stored);
+    return updated;
   }
 
   async saveComparison(

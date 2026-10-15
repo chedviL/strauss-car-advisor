@@ -289,6 +289,15 @@ export class CaseService {
     });
   }
 
+  /** עדכון רכב ה-baseline (המצב הנוכחי של העובד/ת). */
+  async updateBaselineVehicle(
+    caseId: string,
+    ownerId: string,
+    input: { route: RouteKind; vehicleCode: string | null; participation: number | null; maintenanceAllowance: number },
+  ): Promise<Scenario> {
+    return await this.repo.updateBaselineVehicle(caseId, ownerId, input);
+  }
+
   /** מחשב baseline מול alternative, שומר השוואה immutable, ומחזיר אותה. */
   async computeAndSaveComparison(
     caseId: string,
