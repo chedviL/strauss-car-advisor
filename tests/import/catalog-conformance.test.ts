@@ -5,7 +5,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
   parseValueOfUseCsv,
   lookupValueOfUse,
@@ -69,7 +69,7 @@ describe("RT-2: הכרעת קוד סוג רכב בקטלוג עם provenance", (
     expect(r.ok).toBe(true);
     if (r.ok) {
       expect(r.vehicle.vehicleTypeCode).toBe("1");
-      expect(r.vehicle.valueOfUse).toBe("3130");
+      expect(Number(r.vehicle.valueOfUse)).toBe(3130);
       expect(r.vehicle.typeResolutionSource).toContain("תאור דגם");
     }
   });
@@ -129,5 +129,61 @@ describe("RT-4: זיהוי רכב-בשם קשור לרשומה המזוהה (ב�
     expect(names.has("BYD DOLPHIN")).toBe(true);
     // אין שם ריק - אחרת המודל שוב ינחש
     for (const v of byd) expect(v.commercialName.trim().length).toBeGreaterThan(0);
+  });
+});
+
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join as pathJoin } from "node:path";
+import { FileCaseRepository } from "../../src/server/repositories/case-repository.js";
+import { CaseService } from "../../src/server/services/case-service.js";
+
+describe("RT-5: זיהוי רכב לפי שם + אכיפת זכאות מקבוצה", () => {
+  let dir: string; let service: CaseService;
+  beforeAll(() => { dir = mkdtempSync(pathJoin(tmpdir(), "strauss-rt5-")); service = new CaseService(new FileCaseRepository(dir)); });
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  const groupA: import("../../src/domain/eligibility/engine.js").Occupation = {
+    code: "clerk", name: "פקיד/ה", group: "א", carMandatory: false, waiverAllowed: false, maintenanceAllowance: 0,
+  };
+  const groupG: import("../../src/domain/eligibility/engine.js").Occupation = {
+    code: "product_manager", name: "מנהל/ת מוצר", group: "ג", carMandatory: false, waiverAllowed: false, maintenanceAllowance: 0,
+  };
+
+  it("ATTO 3 נמצא לפי שם ומזוהה כ-CAR-10 / קבוצה ג / 3130", async () => {
+    const r = await service.lookupVehicleByName("atto 3", groupG);
+    expect(r.status).toBe("found");
+    if (r.status === "found") {
+      expect(r.vehicle.id).toBe("CAR-10");
+      expect(r.vehicle.commercialName).toBe("ATTO 3");
+      expect(r.vehicle.group).toBe("ג");
+      expect(Number(r.vehicle.valueOfUse)).toBe(3130);
+      expect(r.eligibility).toBe("eligible");
+    }
+  });
+
+  it("ATTO 3 — קבוצה א׳ מקבלת ineligible (לא זכאית לרכב קבוצה ג)", async () => {
+    const r = await service.lookupVehicleByName("atto 3", groupA);
+    expect(r.status).toBe("found");
+    if (r.status === "found") {
+      expect(r.vehicle.id).toBe("CAR-10");
+      expect(r.eligibility).toBe("ineligible"); // קבוצה א אינה זכאית לרכב קבוצה ג
+    }
+  });
+
+  it("BYD Dolphin נמצא לפי שם כ-CAR-03 / קבוצה א / 2590 — לא מתבלבל עם ATTO 3", async () => {
+    const r = await service.lookupVehicleByName("dolphin", groupA);
+    expect(r.status).toBe("found");
+    if (r.status === "found") {
+      expect(r.vehicle.id).toBe("CAR-03");
+      expect(r.vehicle.commercialName).toBe("BYD DOLPHIN");
+      expect(r.vehicle.group).toBe("א");
+      expect(Number(r.vehicle.valueOfUse)).toBe(2590);
+    }
+  });
+
+  it("שם לא קיים מחזיר not_found", async () => {
+    const r = await service.lookupVehicleByName("פיאט 500", groupG);
+    expect(r.status).toBe("not_found");
   });
 });

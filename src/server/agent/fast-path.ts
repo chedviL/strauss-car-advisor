@@ -85,6 +85,8 @@ const actionSchema = z.discriminatedUnion("type", [
     type: z.literal("search_vehicles"),
     propulsion: z.enum(["0", "1", "2", "3"]).optional(),
     group: z.enum(["א", "ב", "ג", "ד", "משפחתי"]).optional(),
+    /** שם מסחרי לזיהוי רכב (Atto 3, Dolphin) - מחזיר vehicleCode מאומת */
+    name: z.string().optional(),
   }),
   // פירוט מהשוואה שמורה (למה דווקא זה / #N / הכל) - ללא חישוב מחדש.
   z.object({
@@ -134,7 +136,8 @@ const SYSTEM = `את/ה היועץ/ת של שטראוס. החזר/י *תוכני
   בלבד, לא עובדה אמיתית, לא משנה baseline. clear_simulation: ביטול.
 - compare: השוואת נטו ("מה יחסוך לי", "תשווי חשמליים"). discover (propulsion="3"=חשמלי,
   includeWaiver) או explicit עם vehicleCodes.
-- search_vehicles: חיפוש בקטלוג עם סטטוס זכאות ("אילו רכבים חשמליים יש?"). propulsion/group.
+- search_vehicles: חיפוש בקטלוג עם סטטוס זכאות. name=שם מסחרי (Atto 3, Dolphin) לזיהוי רכב
+  -> מחזיר vehicleCode מאומת; propulsion/group לסינון רשימה. אין לנחש vehicleCode — הכנס/י name ותקבל/י קוד.
 - compare_detail: פירוט מהשוואה קודמת ("למה דווקא זה?"=ref; "תראה את כולן"=topN גדול;
   "תראה את כולן"=ללא טווח). בלי חישוב מחדש.
 - set_current_vehicle: הרכב הנוכחי של העובד/ת ("יש לי Atto 3", "אני נוסע/ת היום בטויוטה")
@@ -178,8 +181,10 @@ const SYSTEM = `את/ה היועץ/ת של שטראוס. החזר/י *תוכני
 
 ## תלוש שכר
 - לשאלה "תלוש יעזור?" ענה/י לפי המצב האמיתי: אין כרגע אפשרות להעלות קובץ/תמונה.
-  הכווין/י במקום: "פתח/י את התלוש ובדוק/י שורת 'שכר בסיס' לברוטו ו'שורת ניכויים' לפנסיה
-  וקרן ההשתלמות. נקודות הזיכוי ב-106 מס הכנסה." אל תדחה/י מסמך שעשוי לספק את המידע החסר.
+  הכווין/י: "בדוק/י בתלוש את שורת שכר הבסיס (ברוטו) ואת שיעור ההפרשה לפנסיה ולקרן
+  ההשתלמות — בתלושים רבים מופיע אחוז ההפרשה, לא רק הסכום. נקודות הזיכוי עשויות
+  להופיע גם בתלוש וגם בטופס 106 שמגיע בשנה הבאה."
+  אל תניח/י שכל תלוש בנוי אותו הדבר ואל תדחה/י מסמך שעשוי לספק את המידע החסר.
 
 סדר: עדכון עובדה/רכב-נוכחי/סימולציה לפני compare. בקשה משולבת = רשימת פעולות בסדר.
 ברכה/עמימות = actions ריק + reply (clarify=true אם עמום).
@@ -331,8 +336,14 @@ export async function executeFastPlan(
         }
       } else if (action.type === "search_vehicles") {
         const occupation = occupationOrGroup(state.facts.occupationCode, state.facts.reportedGroup);
-        if (!occupation) { partialFailure = "כדי לחפש לפי זכאות צריך לדעת את קבוצת הזכאות (או העיסוק)."; }
-        else {
+        // זיהוי לפי שם: מחזיר vehicleCode מאומת או שגיאת עמימות/אי-מציאה — אין ניחוש.
+        if (action.name) {
+          const nr = await service.lookupVehicleByName(action.name, occupation ?? undefined);
+          did.searched = true;
+          actionResults.push({ type: "search_vehicles", summary: nr });
+        } else if (!occupation) {
+          partialFailure = "כדי לחפש לפי זכאות צריך לדעת את קבוצת הזכאות (או העיסוק).";
+        } else {
           const sr = await service.searchVehicles(occupation, {
             ...(action.propulsion !== undefined ? { propulsion: Number(action.propulsion) as 0 | 1 | 2 | 3 } : {}),
             ...(action.group !== undefined ? { group: action.group } : {}),
@@ -391,9 +402,15 @@ export async function executeFastPlan(
   let reply = object.reply;
   if (conflict) {
     reply = "העובדות השתנו בינתיים ממקור אחר; לא עדכנתי. אפשר לנסות שוב.";
-  } else if ((!reply || reply.trim() === "") && partialFailure) {
-    // גיבוי מינימלי בלבד: המודל לא נתן טקסט. לא רשימת שדות - שאלה אחת ממוקדת.
-    reply = partialFailure;
+  } else if (partialFailure) {
+    // כשל בביצוע (compare נעצר על מידע חסר):
+    // - אם המודל ייצר תשובת-ביניים (needsFollowup=true, "בודקת..."), היא מניחה הצלחה שלא הייתה.
+    //   במקרה זה נשתמש ב-partialFailure כדי לא להציג הצלחה דמיונית.
+    // - אם המודל כבר ייצר שאלה/הודעה ממוקדת (needsFollowup=false), נשמור אותה — היא מדויקת יותר.
+    if (!reply || reply.trim() === "" || object.needsFollowup === true) {
+      reply = partialFailure;
+    }
+    // else: keep model reply (it already asks the right question)
   }
 
   // needsFollowup רק אם יש תוצאה אמיתית לנסח עליה ולא היה כשל חישובי.

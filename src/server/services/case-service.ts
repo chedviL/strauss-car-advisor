@@ -446,6 +446,44 @@ export class CaseService {
   }
 
   /**
+   * זיהוי רכב לפי שם מסחרי (חלקי, case-insensitive) מול קטלוג מאומת.
+   * מחזיר רשומה אחת מזוהה, רשימת מועמדים על עמימות, או "לא נמצא".
+   * זכאות מחושבת לפי occupation שנמסר.
+   */
+  async lookupVehicleByName(
+    nameQuery: string,
+    occupation?: Occupation,
+  ): Promise<
+    | { status: "found"; vehicle: { id: string; commercialName: string; group: string; propulsion: number; valueOfUse: string }; eligibility: string; reasons: string[] }
+    | { status: "ambiguous"; matches: Array<{ id: string; commercialName: string; group: string }> }
+    | { status: "not_found" }
+  > {
+    const dataset = await this.getDataset();
+    const norm = (s: string) => s.replace(/[-\s]+/g, "").toLowerCase();
+    const q = norm(nameQuery);
+    if (!q) return { status: "not_found" };
+    const all = [...dataset.vehiclesByCode.values()];
+    const matches = all.filter((v) => norm(v.commercialName).includes(q));
+    if (matches.length === 0) return { status: "not_found" };
+    if (matches.length > 1) {
+      return { status: "ambiguous", matches: matches.map((v) => ({ id: v.id, commercialName: v.commercialName, group: v.group })) };
+    }
+    const v = matches[0]!;
+    const elig = occupation
+      ? validateEligibility(
+          { occupation, route: "company_car", targetGroup: v.group, qualifyingChildren: undefined },
+          dataset.rules,
+        )
+      : { status: "unknown" as const, reasons: [] };
+    return {
+      status: "found",
+      vehicle: { id: v.id, commercialName: v.commercialName, group: v.group, propulsion: v.propulsion, valueOfUse: v.valueOfUse },
+      eligibility: elig.status,
+      reasons: elig.reasons,
+    };
+  }
+
+  /**
    * השוואה גמישה בקוד, באצווה אחת:
    * - explicit: רשימת חלופות (רכבים/ויתור) מול baseline.
    * - discover: סורק את הקטלוג (ואופציה ויתור), ממיין לפי הפרש נטו, מסנן לפי minNetDelta.
