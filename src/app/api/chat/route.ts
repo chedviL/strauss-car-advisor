@@ -71,10 +71,14 @@ export async function POST(req: Request): Promise<Response> {
       const asstId = "asst-" + randomUUID();
       const stream = createUIMessageStream({
         execute: ({ writer }) => {
+          // מעטפת הודעה: start/finish נדרשים כדי שה-client (useChat) ייצור את
+          // הודעת העוזר ויצרף אליה את הטקסט. בלעדיהם שום דבר לא מופיע.
           const id = "t-" + randomUUID();
+          writer.write({ type: "start" });
           writer.write({ type: "text-start", id });
           writer.write({ type: "text-delta", id, delta: reply });
           writer.write({ type: "text-end", id });
+          writer.write({ type: "finish" });
         },
         onFinish: () => {
           void service.appendMessages(ctx.caseId, owner, [
