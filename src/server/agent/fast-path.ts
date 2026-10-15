@@ -44,13 +44,17 @@ const fastSchema = z.object({
 
 export type FastPathResult =
   | { kind: "handled"; reply: string; updatedFacts: boolean; simulation: boolean; conflict: boolean }
-  | { kind: "needs_tools" };
+  // needsTools: ממשיכים למסלול המלא, אבל עדכוני העובדות כבר הוחלו כאן (לא מאבדים
+  // ולא מבצעים פעמיים). conflict=true אם בדיקת הגרסה נכשלה (אז לא הוחל כלום).
+  | { kind: "needs_tools"; appliedFactUpdates: boolean; conflict: boolean };
 
 const FAST_SYSTEM = `את/ה היועץ/ת של שטראוס. זהו מסלול מהיר לטיפול בהודעות פשוטות של
 איסוף/תיקון עובדות או סימולציה היפותטית. החזר/י פלט מובנה:
 
 - needsTools=true אם הבקשה דורשת תוצאה חיצונית (חיפוש רכבים, השוואת נטו, פנייה לנציג,
-  שליפת פירוט). במקרה כזה אל תמלא/י עדכונים - נטפל במסלול המלא.
+  שליפת פירוט). חשוב: גם כאשר needsTools=true, מלא/י factUpdates אם ההודעה כוללת גם
+  תיקון/עדכון עובדה (למשל "תקני את השכר ל-19,000 ותשווי חשמליים") - העדכון יישמר כאן
+  לפני החישוב, לא יאבד ולא יבוצע פעמיים.
 - factUpdates: עדכון עובדות אמיתיות שהעובד/ת מסר/ה או תיקן/ה (למשל "השכר שלי 18,500").
   כסף בשקלים; שיעורים כשבר (0.06=6%). רק שדות שנמסרו במפורש.
 - simulationSalaryOverride: שינוי היפותטי ("מה אם השכר יעלה ל-X") - שכר בלבד, לא עובדה אמיתית.
@@ -75,14 +79,14 @@ export async function tryFastPath(
     providerOptions: { anthropic: { effort: getEffort() } },
   });
 
-  if (object.needsTools) return { kind: "needs_tools" };
-
+  // עדכוני עובדות מוחלים תמיד (גם כש-needsTools), כדי שבקשה משולבת
+  // ("תקני שכר ל-19,000 ותשווי חשמליים") תשמור את התיקון לפני החישוב - ללא
+  // אובדן וללא ביצוע כפול במסלול המלא.
   let updatedFacts = false;
   let simulation = false;
   let conflict = false;
   const notes: string[] = [];
 
-  // עדכון עובדות אמיתיות - עם בדיקת גרסה. אישור רק אחרי שמירה מוצלחת.
   if (object.factUpdates && Object.keys(object.factUpdates).length > 0) {
     const patch: FactsPatch = {};
     for (const [k, v] of Object.entries(object.factUpdates)) {
@@ -95,6 +99,11 @@ export async function tryFastPath(
     } else {
       updatedFacts = true;
     }
+  }
+
+  // דורש כלים: עדכוני העובדות כבר הוחלו כאן; המסלול המלא ימשיך רק את עבודת הכלים.
+  if (object.needsTools) {
+    return { kind: "needs_tools", appliedFactUpdates: updatedFacts, conflict };
   }
 
   // סימולציה היפותטית - override ברמת התרחיש (לא משנה עובדה אמיתית).

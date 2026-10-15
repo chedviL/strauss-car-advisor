@@ -76,7 +76,13 @@ export async function POST(req: Request): Promise<Response> {
         });
         return createUIMessageStreamResponse({ stream });
       }
-      // fp.kind === "needs_tools" -> נופלים למסלול המלא למטה.
+      // needs_tools: עדכוני העובדות (אם היו) כבר הוחלו במסלול המהיר. טוענים מצב
+      // מעודכן כדי שהמסלול המלא יחשב על פי הנתונים החדשים (בלי לאבד/לכפול).
+      if (fp.appliedFactUpdates) {
+        const refreshed = await service.getCaseState(ctx.caseId, owner);
+        if (refreshed) state = refreshed;
+      }
+      // נופלים למסלול המלא למטה (רק עבודת הכלים נותרה).
     } catch {
       // כשל במסלול המהיר -> נופלים בבטחה למסלול המלא.
     }

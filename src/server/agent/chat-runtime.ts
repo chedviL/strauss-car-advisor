@@ -95,6 +95,7 @@ function buildTools(service: CaseService, ctx: ToolContext) {
     manageScenarios: tool({
       description:
         "ניהול החלופה להשוואה: set_alternative קובע מסלול (company_car/family/waiver), רכב, השתתפות ואחזקה; " +
+        "update_overrides מחיל שינוי היפותטי של שכר על החלופה הקיימת בלי לדרוש רכב/מסלול (לסימולציית שכר טהורה כמו 'מה אם השכר יעלה'); " +
         "overrides הוא שינוי היפותטי של שכר ברמת התרחיש בלבד ('מה אם השכר יעלה') — אינו משנה את העובדה האמיתית. " +
         "clear_overrides מסיר את השינוי ההיפותטי (חזרה לירושה מהעובדות; לא אפס). " +
         "participation/maintenance בשקלים; participation=null פירושו 'לא נמסר' (המנוע עשוי להשתמש בברירת מחדל). " +

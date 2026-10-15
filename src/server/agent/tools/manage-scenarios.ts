@@ -16,7 +16,7 @@ const salaryOverride = z.object({
 });
 
 export const manageScenariosInput = z.object({
-  operation: z.enum(["set_alternative", "clear_overrides"]),
+  operation: z.enum(["set_alternative", "update_overrides", "clear_overrides"]),
   route: z.enum(["company_car", "family", "waiver"]).optional(),
   vehicleCode: z.string().min(1).nullable().optional(),
   participation: z.number().finite().nonnegative().nullable().optional(),
@@ -52,6 +52,36 @@ export async function manageScenarios(
       { message: Object.keys(scenario.overrides).length > 0 ? "נשמר תרחיש היפותטי (override ברמת התרחיש; השכר הנוכחי לא השתנה)" : "נשמרה חלופה" },
     );
   }
+  // update_overrides: החלת/עדכון override שכר על החלופה הקיימת, בלי לדרוש
+  // route/vehicle. לסימולציית שכר טהורה ("מה אם השכר יעלה ל-X") כשטרם נבחר רכב,
+  // יורש מה-baseline. מיזוג עם override קיים (לא דורס שדות אחרים).
+  if (input.operation === "update_overrides") {
+    const state = await service.getCaseState(ctx.caseId, ctx.ownerId);
+    if (!state) return missing(["case"], "התיק לא נמצא");
+    const alt = state.scenarios.find((s) => s.role === "alternative");
+    const base = state.scenarios.find((s) => s.role === "baseline");
+    const inherit = alt ?? base;
+    if (!inherit) return missing(["scenario"], "אין תרחיש בסיס לירושה");
+    const merged: ScenarioOverrides = { ...(alt?.overrides ?? {}) };
+    if (input.overrides) {
+      for (const [k, v] of Object.entries(input.overrides)) {
+        if (v !== undefined) (merged as Record<string, number>)[k] = v;
+      }
+    }
+    const scenario = await service.pickAlternative(ctx.caseId, ctx.ownerId, {
+      role: "alternative",
+      route: alt?.route ?? inherit.route,
+      vehicleCode: alt?.vehicleCode ?? inherit.vehicleCode,
+      participation: alt?.participation ?? inherit.participation,
+      maintenanceAllowance: alt?.maintenanceAllowance ?? inherit.maintenanceAllowance,
+      overrides: merged,
+    });
+    return ok(
+      { scenarioId: scenario.id, overrides: scenario.overrides },
+      { message: "נשמר תרחיש היפותטי (override שכר ברמת התרחיש; הנתונים האמיתיים לא השתנו)" },
+    );
+  }
+
   // clear_overrides: הסרת ה-override מהחלופה הקיימת -> חזרה לירושה מלאה.
   const state = await service.getCaseState(ctx.caseId, ctx.ownerId);
   if (!state) return missing(["case"], "התיק לא נמצא");
