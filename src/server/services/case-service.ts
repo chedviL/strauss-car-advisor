@@ -33,6 +33,8 @@ export interface ResolveResult {
   status: "ok" | "missing_data";
   input?: CompleteInput;
   missingFields?: string[];
+  /** הנחות מתועדות (למשל השתתפות שנלקחה מברירת מחדל של הכללים). */
+  assumptions?: string[];
 }
 
 /** מרכיב CompleteInput מעובדות התיק, התרחיש וה-dataset. אין undefined כאפס. */
@@ -42,6 +44,7 @@ export function resolveScenarioInput(
   dataset: ActiveDataset,
 ): ResolveResult {
   const missing: string[] = [];
+  const assumptions: string[] = [];
   const req = (v: number | null, name: string): number => {
     if (v === null || v === undefined) {
       missing.push(name);
@@ -78,8 +81,31 @@ export function resolveScenarioInput(
     }
   }
 
+  // --- השתתפות: הבחנה בין ערך מאומת (כולל אפס מפורש), ברירת מחדל מותרת
+  //     לפי הכללים/הקטלוג, לבין מידע חסר. אין להפוך חוסר לאפס בשקט. ---
+  let participation = 0;
+  if (scenario.route === "waiver") {
+    // בוויתור אין השתתפות ברכב; אפס מובנה, ללא הנחה.
+    participation = 0;
+  } else if (scenario.participation !== null && scenario.participation !== undefined) {
+    // ערך מאומת שנמסר (כולל 0 מפורש).
+    participation = scenario.participation;
+  } else {
+    // אין ערך שנמסר: אם לקטלוג יש ברירת מחדל מותרת - משתמשים ומתעדים הנחה.
+    const v = scenario.vehicleCode ? dataset.vehiclesByCode.get(scenario.vehicleCode) : undefined;
+    if (v && v.defaultParticipation !== null && v.defaultParticipation !== undefined) {
+      participation = v.defaultParticipation;
+      assumptions.push(
+        `השתתפות ברכב לא נמסרה; נלקחה ברירת המחדל של הדגם (${v.defaultParticipation} ₪).`,
+      );
+    } else {
+      // אין ערך ואין ברירת מחדל מותרת - חסר נדרש.
+      missing.push("participation");
+    }
+  }
+
   if (missing.length > 0) {
-    return { status: "missing_data", missingFields: missing };
+    return { status: "missing_data", missingFields: missing, assumptions };
   }
 
   const input: CompleteInput = {
@@ -93,11 +119,11 @@ export function resolveScenarioInput(
     creditPoints,
     valueOfUse,
     isElectric,
-    participation: scenario.participation ?? 0,
+    participation,
     companyCarCost,
     maintenanceAllowance: scenario.maintenanceAllowance,
   };
-  return { status: "ok", input };
+  return { status: "ok", input, assumptions };
 }
 
 export function computeScenario(
@@ -109,7 +135,10 @@ export function computeScenario(
   if (resolved.status !== "ok" || !resolved.input) {
     return { status: "missing_data", missingFields: resolved.missingFields ?? [] };
   }
-  return { status: "ok", result: calculateScenario(resolved.input, dataset.rules) };
+  const result = calculateScenario(resolved.input, dataset.rules);
+  // משלבים הנחות מהפתרון (למשל ברירת מחדל של השתתפות) עם הנחות המנוע.
+  const assumptions = [...(resolved.assumptions ?? []), ...result.assumptions];
+  return { status: "ok", result: { ...result, assumptions } };
 }
 
 export class CaseService {

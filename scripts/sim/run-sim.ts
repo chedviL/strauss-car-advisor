@@ -128,15 +128,17 @@ async function runOnce(verify: boolean): Promise<Record<string, StageTiming>> {
     const comp0 = Date.now();
     const cmp = await service.computeAndSaveComparison(caseId, OWNER);
     const compMs = Date.now() - comp0;
-    let provisional = false;
-    if (cmp.status === "missing_data") {
-      provisional = true;
+    // CAR-10 הוא רכב עם ברירת מחדל של השתתפות בקטלוג: חוסר נפתר כהנחה מתועדת
+    // (לא כאפס שקט ולא כ-provisional). פנייה לנציג לאימות ההשתתפות האמיתית.
+    let documentedAssumption = false;
+    if (cmp.status === "ok") {
+      documentedAssumption = cmp.comparison.result.alternative.assumptions.some((a) => a.includes("השתתפות"));
       await service.openInquiry(caseId, OWNER, "employee_participation", null, { field: "participation", vehicle: "CAR-10" });
     }
-    return { search, toolMs, compMs, provisional };
+    return { search, toolMs, compMs, documentedAssumption };
   });
   stages["ב.חלופה-חשמלית"] = { loadState: 0, tool: b.value.toolMs, compute: b.value.compMs, write: 0, total: b.ms, dbCalls: b.calls };
-  if (verify) check("ב: חוסר השתתפות -> תוצאה זמנית (provisional)", b.value.provisional, b.value.provisional ? "" : "ציפינו ל-missing_data");
+  if (verify) check("ב: השתתפות חסרה עם ברירת מחדל -> הנחה מתועדת (לא אפס שקט)", b.value.documentedAssumption);
 
   // שלב ג: תיקון שכר ל-15,000 -> עדכון עם בדיקת גרסה; חישוב מחדש
   const c = await measured(async () => {
