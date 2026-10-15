@@ -19,34 +19,7 @@ export function OpeningScreen({ employees }: { employees: SampleEmployee[] }) {
         דברו איתי בחופשיות. אבדוק זכאות, אשלוף שווי שימוש ואחשב את ההפרש בנטו.
       </p>
 
-      <div
-        style={{
-          maxWidth: 640,
-          margin: "var(--space-4) auto 0",
-          background: "var(--color-surface)",
-          border: "1px solid var(--color-border)",
-          borderRadius: "var(--radius-lg)",
-          boxShadow: "var(--shadow)",
-          padding: "var(--space-3)",
-        }}
-      >
-        <label htmlFor="chat" style={{ display: "block", textAlign: "start", color: "var(--color-muted)", fontSize: "0.9rem" }}>
-          כתבו כאן
-        </label>
-        <textarea
-          id="chat"
-          rows={2}
-          placeholder="לדוגמה: אם אעבור לרכב חשמלי, כמה זה ישנה לי בנטו?"
-          style={{
-            width: "100%", border: "none", resize: "vertical",
-            font: "inherit", outline: "none", marginTop: "var(--space-1)",
-          }}
-          disabled
-        />
-        <div style={{ textAlign: "start", fontSize: "0.8rem", color: "var(--color-muted)" }}>
-          השיחה החופשית תתחבר בשלב הבא. בינתיים, בחרו עובד לדוגמה כדי לראות חישוב מלא.
-        </div>
-      </div>
+
 
       {/* שאלות לדוגמה - בעדינות, לא כפתורים גדולים */}
       <div style={{ maxWidth: 640, margin: "var(--space-2) auto 0", textAlign: "start" }}>

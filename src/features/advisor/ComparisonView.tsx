@@ -8,7 +8,6 @@ import { resetDemo } from "../../app/actions.js";
 import type { CaseState } from "../../domain/contracts/case.js";
 import type { NetBreakdown, ScenarioResult } from "../../domain/contracts/types.js";
 import type { SampleEmployee } from "../../../data/source/sample-employees.js";
-import { ChatPanel } from "./ChatPanel.js";
 
 function shekel(s: string | number): string {
   const n = typeof s === "string" ? Number(s) : s;
@@ -33,8 +32,8 @@ export function ComparisonView({
   const alternative = state.scenarios.find((s) => s.role === "alternative")!;
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1.3fr", gap: "var(--space-4)" }}>
-      {/* צד השיחה (placeholder לחיבור הסוכן בשלב הבא) */}
+    <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
+      {/* כותרת התיק */}
       <aside
         style={{
           background: "var(--color-surface)",
@@ -51,9 +50,6 @@ export function ComparisonView({
         {employee && (
           <p style={{ color: "var(--color-muted)" }}>{employee.question}</p>
         )}
-        <div style={{ marginTop: "var(--space-3)" }}>
-          <ChatPanel />
-        </div>
         <button
           className="btn"
           style={{ marginTop: "var(--space-3)" }}

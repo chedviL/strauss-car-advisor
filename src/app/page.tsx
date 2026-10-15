@@ -6,6 +6,7 @@ import { cookies } from "next/headers";
 import { ComparisonView } from "../features/advisor/ComparisonView.js";
 import { OpeningScreen } from "../features/advisor/OpeningScreen.js";
 import { DemoBadge } from "../features/advisor/DemoBadge.js";
+import { ChatPanel } from "../features/advisor/ChatPanel.js";
 import type { CaseState } from "../domain/contracts/case.js";
 import type { SampleEmployee } from "../../data/source/sample-employees.js";
 
@@ -32,11 +33,23 @@ export default async function Page() {
       <TopBar />
       <DemoBadge />
       <div style={{ maxWidth: 1100, margin: "0 auto", padding: "var(--space-4)" }}>
-        {state && state.latestComparison ? (
-          <ComparisonView state={state} employee={employee} />
-        ) : (
-          <OpeningScreen employees={caseService().listSampleEmployees()} />
-        )}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1.1fr", gap: "var(--space-4)", alignItems: "start" }}>
+          {/* צד שמאל: תוכן (כרטיס השוואה כשמוכן, אחרת מסך פתיחה) */}
+          <div>
+            {state && state.latestComparison ? (
+              <ComparisonView state={state} employee={employee} />
+            ) : (
+              <OpeningScreen employees={caseService().listSampleEmployees()} />
+            )}
+          </div>
+          {/* צד ימין: השיחה - מופע יציב שאינו מתחלף במעבר (שומר על ההיסטוריה) */}
+          <div style={{ position: "sticky", top: "var(--space-3)" }}>
+            <div style={{ fontSize: "0.8rem", color: "var(--color-muted)", marginBottom: "var(--space-2)" }}>
+              דברו איתי כאן. אבדוק זכאות, אשלוף שווי שימוש ואחשב את הנטו.
+            </div>
+            <ChatPanel />
+          </div>
+        </div>
       </div>
     </main>
   );

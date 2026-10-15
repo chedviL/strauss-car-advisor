@@ -157,6 +157,24 @@ export class CaseService {
     return SAMPLE_EMPLOYEES;
   }
 
+  /**
+   * פותח תיק ריק לשיחה אמיתית (ללא עובד לדוגמה). עובדות ריקות + baseline
+   * זמני (רכב לא ידוע). השיחה תמלא עובדות ואת המצב הנוכחי. אין נטו עד שיש קלט.
+   */
+  async startBlankCase(ownerId: string): Promise<CaseState> {
+    const dataset = await this.getDataset();
+    const facts: CaseFacts = {
+      occupationCode: null, reportedGroup: null, baseSalary: null, commission: null,
+      bonus: null, pensionRate: null, trainingRate: null, creditPoints: null, qualifyingChildren: null,
+    };
+    const baseline: CreateScenarioInput = {
+      role: "baseline", route: "company_car", vehicleCode: null,
+      participation: null, maintenanceAllowance: 0,
+    };
+    const datasetId = await this.resolveDatasetId(dataset);
+    return await this.repo.createCase({ ownerId, isDemo: true, datasetId, facts, baseline });
+  }
+
   /** יוצר תיק דגמה מעובד לדוגמה: עובדות + baseline (המצב הנוכחי). */
   async createDemoCaseFromEmployee(
     ownerId: string,

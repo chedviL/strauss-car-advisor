@@ -20,25 +20,22 @@ export async function POST(req: Request): Promise<Response> {
   const { messages }: { messages: UIMessage[] } = await req.json();
   const owner = await getOrCreateVisitOwner();
   const store = await cookies();
-  const caseId = store.get("strauss_case")?.value ?? null;
+  let caseId = store.get("strauss_case")?.value ?? null;
   const service = caseService();
 
-  if (!caseId) {
-    return new Response(
-      JSON.stringify({ error: "אין תיק פעיל. בחר/י עובד/ת להתחלה." }),
-      { status: 409, headers: { "content-type": "application/json" } },
-    );
-  }
-  const state = await service.getCaseState(caseId, owner);
+  // שימוש אמיתי: אם אין תיק פעיל, פותחים תיק ריק מהשיחה (עובדות ריקות).
+  let state = caseId ? await service.getCaseState(caseId, owner) : null;
   if (!state) {
-    return new Response(
-      JSON.stringify({ error: "התיק לא נמצא או אינו בהרשאת הביקור." }),
-      { status: 404, headers: { "content-type": "application/json" } },
-    );
+    const created = await service.startBlankCase(owner);
+    caseId = created.case.id;
+    state = created;
+    store.set("strauss_case", caseId, {
+      httpOnly: true, sameSite: "lax", path: "/", maxAge: 60 * 60 * 24 * 7,
+    });
   }
 
   const ctx: ToolContext = {
-    ownerId: owner, caseId, staffRole: null, requestId: randomUUID(), messageId: null,
+    ownerId: owner, caseId: caseId!, staffRole: null, requestId: randomUUID(), messageId: null,
   };
 
   // מסירים reasoning מההיסטוריה לפני שליחה (binding של thinking ב-Claude).

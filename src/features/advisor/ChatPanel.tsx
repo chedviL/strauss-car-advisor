@@ -4,7 +4,8 @@
 // מציג הודעת משתמש מיד, מצב התקדמות אמיתי בזמן המתנה, וצ'יפים של שלבי כלים.
 // המספרים/הזכאות אינם נקבעים כאן - הם מגיעים מהכלים/המנוע דרך המודל.
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 
@@ -20,10 +21,19 @@ const TOOL_LABEL: Record<string, string> = {
 
 export function ChatPanel() {
   const [input, setInput] = useState("");
+  const router = useRouter();
   const { messages, sendMessage, status, error } = useChat({
     transport: new DefaultChatTransport({ api: "/api/chat" }),
   });
   const busy = status === "submitted" || status === "streaming";
+
+  // כשתור הסתיים, מרעננים את ה-Server Components כדי שכרטיס ההשוואה
+  // (אם נשמר בתור) יופיע/יתעדכן. רק במעבר מ-busy ל-ready.
+  const wasBusy = useRef(false);
+  useEffect(() => {
+    if (wasBusy.current && status === "ready") router.refresh();
+    wasBusy.current = busy;
+  }, [status, busy, router]);
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
