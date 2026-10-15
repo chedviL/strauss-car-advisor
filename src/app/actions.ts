@@ -28,3 +28,17 @@ export async function resetDemo(): Promise<void> {
   (await cookies()).delete("strauss_case");
   revalidatePath("/");
 }
+
+/**
+ * "שיחה חדשה": פותח תיק נפרד ומצביע עליו ב-cookie. התיק הקודם וההיסטוריה שלו
+ * נשמרים במסד (לא נמחקים) - פשוט אינם הפעילים יותר.
+ */
+export async function newConversation(): Promise<void> {
+  const owner = await getOrCreateVisitOwner();
+  const created = await caseService().startBlankCase(owner);
+  const { cookies } = await import("next/headers");
+  (await cookies()).set("strauss_case", created.case.id, {
+    httpOnly: true, sameSite: "lax", path: "/", maxAge: 60 * 60 * 24 * 7,
+  });
+  revalidatePath("/");
+}

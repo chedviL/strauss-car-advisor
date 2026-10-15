@@ -7,6 +7,7 @@ import { ComparisonView } from "../features/advisor/ComparisonView.js";
 import { OpeningScreen } from "../features/advisor/OpeningScreen.js";
 import { DemoBadge } from "../features/advisor/DemoBadge.js";
 import { ChatPanel } from "../features/advisor/ChatPanel.js";
+import { NewConversationButton } from "../features/advisor/NewConversationButton.js";
 import type { CaseState } from "../domain/contracts/case.js";
 import type { SampleEmployee } from "../../data/source/sample-employees.js";
 
@@ -69,9 +70,12 @@ function TopBar() {
         padding: "var(--space-2) var(--space-3)",
       }}
     >
-      <a className="btn" href="/representative" aria-label="אזור נציג">
-        אזור נציג
-      </a>
+      <div style={{ display: "flex", gap: "var(--space-2)" }}>
+        <NewConversationButton />
+        <a className="btn" href="/representative" aria-label="אזור נציג">
+          אזור נציג
+        </a>
+      </div>
     </div>
   );
 }
