@@ -58,9 +58,14 @@ const planSchema = z.object({
   reply: z.string(),
   // אם הבקשה עמומה לבחירת פעולה - שאלת הבהרה (ואז actions ריק).
   clarify: z.boolean().default(false),
+  // בקשה שאינה בתחום הפעולות הסגורות (חיפוש רכבים חופשי, פירוט השוואה קודמת,
+  // פנייה לנציג) -> מעבר למסלול הכלים המלא. actions יישאר ריק.
+  handoff: z.boolean().default(false),
 });
 
 export interface FastPathOutcome {
+  // כשצריך מסלול כלים מלא (חיפוש/פירוט/פנייה). עדכונים שכבר בוצעו מדווחים ב-did.
+  handoff: boolean;
   reply: string;
   // סיכום מובנה לרענון UI / נרטיב אופציונלי.
   did: { facts: boolean; simulation: boolean; clearedSimulation: boolean; compared: boolean };
@@ -84,7 +89,15 @@ const SYSTEM = `את/ה היועץ/ת של שטראוס. החזר/י *תוכני
 
 סדר: תיקון עובדה/סימולציה לפני compare. בקשה משולבת ("תקני שכר ל-19,000 ותשווי חשמליים")
 = [update_facts, compare]. ברכה/שאלת הבהרה = actions ריק + reply (clarify=true אם עמום).
-reply: טבעי וקצר בעברית, בלי לטעון שבוצע - המערכת תאשר אחרי השמירה.`;
+
+handoff=true (ו-actions ריק) כאשר הבקשה דורשת יכולת שאינה ברשימה הסגורה:
+- חיפוש רכבים חופשי לפי מאפיין ("אילו רכבים חשמליים קיימים?", סינון מורכב).
+- פירוט/הסבר על השוואה קודמת ("למה דווקא זה?", "מה במקום השישי?", "תראה את כולן").
+- פנייה לנציג ("לא יודעת את ההשתתפות, אפשר לברר?"). עדיין אפשר לכלול update_facts
+  לפני ה-handoff אם ההודעה כוללת גם תיקון, כדי לא לאבד אותו.
+
+reply: טבעי וקצר בעברית, בלי לטעון שבוצע ובלי להסביר תוצאה שטרם חושבה - המערכת תאשר
+אחרי השמירה, והסבר על תוצאת השוואה יינתן רק אחרי שהתקבלה.`;
 
 export async function runFastPlan(
   service: CaseService,
@@ -198,6 +211,7 @@ export async function executeFastPlan(
   }
 
   return {
+    handoff: object.handoff === true,
     reply, did, conflict,
     ...(compareRunId ? { compareRunId } : {}),
     ...(partialFailure ? { partialFailure } : {}),
