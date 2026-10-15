@@ -41,9 +41,26 @@ export async function POST(req: Request): Promise<Response> {
   // מסירים reasoning מההיסטוריה לפני שליחה (binding של thinking ב-Claude).
   const modelMessages = stripReasoning(await convertToModelMessages(messages));
 
+  // שומרים את הודעת המשתמש האחרונה (dedup לפי id) כדי שתשרוד רענון.
+  const lastUser = [...messages].reverse().find((m) => m.role === "user");
+  if (lastUser) {
+    await service.appendMessages(ctx.caseId, owner, [
+      { role: "user", clientMessageId: lastUser.id, content: lastUser.parts },
+    ]).catch(() => {});
+  }
+
   try {
     const result = streamChat({ service, ctx, state, messages: modelMessages, budget });
-    return result.toUIMessageStreamResponse();
+    return result.toUIMessageStreamResponse({
+      // כשהתור מסתיים, שומרים את הודעת העוזר לשחזור.
+      onFinish: ({ responseMessage }) => {
+        if (responseMessage) {
+          void service.appendMessages(ctx.caseId, owner, [
+            { role: "assistant", clientMessageId: responseMessage.id, content: responseMessage.parts },
+          ]).catch(() => {});
+        }
+      },
+    });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     // מסננים כל דבר שנראה כמו מפתח מהודעת השגיאה.

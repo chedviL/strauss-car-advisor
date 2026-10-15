@@ -21,6 +21,7 @@ import type {
   CreateScenarioInput,
   FactsPatch,
   UpdateFactsOutcome,
+  StoredMessage,
 } from "./case-repository.js";
 
 export class PgCaseRepository implements CaseRepository {
@@ -311,6 +312,48 @@ export class PgCaseRepository implements CaseRepository {
       );
       if (r.rowCount === 0) throw new Error("inquiry not found for owner");
       return mapInquiry(r.rows[0]);
+    });
+  }
+
+  async appendMessages(
+    caseId: string,
+    ownerId: string,
+    messages: Array<{ role: string; clientMessageId: string | null; content: unknown }>,
+  ): Promise<void> {
+    if (messages.length === 0) return;
+    await this.withOwner(ownerId, async (c) => {
+      const maxRow = await c.query(
+        "select coalesce(max(seq), -1) as m from messages where case_id = $1",
+        [caseId],
+      );
+      let seq = (maxRow.rows[0].m as number) + 1;
+      for (const m of messages) {
+        // dedup לפי client_message_id (אם קיים) כדי לא לשכפל בשליחה חוזרת.
+        await c.query(
+          `insert into messages (case_id, role, seq, client_message_id, content)
+           values ($1,$2,$3,$4,$5)
+           on conflict (case_id, client_message_id) do nothing`,
+          [caseId, m.role, seq, m.clientMessageId, JSON.stringify(m.content)],
+        );
+        seq += 1;
+      }
+    });
+  }
+
+  async loadMessages(caseId: string, ownerId: string): Promise<StoredMessage[]> {
+    return this.withOwner(ownerId, async (c) => {
+      const r = await c.query(
+        "select id, role, seq, client_message_id, content, created_at from messages where case_id = $1 order by seq",
+        [caseId],
+      );
+      return r.rows.map((m) => ({
+        id: m.id as string,
+        role: m.role as string,
+        seq: m.seq as number,
+        clientMessageId: (m.client_message_id as string) ?? null,
+        content: m.content,
+        createdAt: iso(m.created_at),
+      }));
     });
   }
 

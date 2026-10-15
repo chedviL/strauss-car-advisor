@@ -19,11 +19,17 @@ const TOOL_LABEL: Record<string, string> = {
   openInquiry: "פנייה לנציג",
 };
 
-export function ChatPanel() {
+export interface ChatPanelProps {
+  initialMessages?: Array<{ id: string; role: string; parts: unknown }>;
+}
+
+export function ChatPanel({ initialMessages = [] }: ChatPanelProps) {
   const [input, setInput] = useState("");
   const router = useRouter();
   const { messages, sendMessage, status, error } = useChat({
     transport: new DefaultChatTransport({ api: "/api/chat" }),
+    // שחזור היסטוריה אחרי רענון (נטען מהמסד בצד השרת).
+    messages: initialMessages as never,
   });
   const busy = status === "submitted" || status === "streaming";
 

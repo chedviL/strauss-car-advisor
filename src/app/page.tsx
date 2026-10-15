@@ -16,9 +16,13 @@ export default async function Page() {
 
   let state: CaseState | null = null;
   let employee: SampleEmployee | null = null;
+  let initialMessages: Array<{ id: string; role: string; parts: unknown }> = [];
   if (owner && caseId) {
     state = await caseService().getCaseState(caseId, owner);
     if (state) {
+      // טוענים היסטוריית שיחה לשחזור אחרי רענון.
+      const stored = await caseService().loadMessages(caseId, owner);
+      initialMessages = stored.map((m) => ({ id: m.clientMessageId ?? m.id, role: m.role, parts: m.content }));
       // זיהוי העובד לדוגמה לפי העובדות (לתצוגת ההקשר).
       employee =
         caseService()
@@ -47,7 +51,7 @@ export default async function Page() {
             <div style={{ fontSize: "0.8rem", color: "var(--color-muted)", marginBottom: "var(--space-2)" }}>
               דברו איתי כאן. אבדוק זכאות, אשלוף שווי שימוש ואחשב את הנטו.
             </div>
-            <ChatPanel />
+            <ChatPanel initialMessages={initialMessages} />
           </div>
         </div>
       </div>

@@ -55,6 +55,15 @@ export type UpdateFactsOutcome =
   | { status: "ok"; factsRevision: number }
   | { status: "conflict"; currentRevision: number };
 
+export interface StoredMessage {
+  id: string;
+  role: string;
+  seq: number;
+  clientMessageId: string | null;
+  content: unknown;
+  createdAt: string;
+}
+
 export interface CaseRepository {
   createCase(input: {
     ownerId: string;
@@ -105,6 +114,14 @@ export interface CaseRepository {
     ownerId: string,
     answer: { value: number | null; note: string | null; effectiveFrom: string | null },
   ): Promise<InquiryRecord>;
+  /** שומר הודעות שיחה (append) לשחזור אחרי רענון. seq רציף לכל תיק. */
+  appendMessages(
+    caseId: string,
+    ownerId: string,
+    messages: Array<{ role: string; clientMessageId: string | null; content: unknown }>,
+  ): Promise<void>;
+  /** טוען את הודעות השיחה של התיק לפי סדר. */
+  loadMessages(caseId: string, ownerId: string): Promise<StoredMessage[]>;
 }
 
 interface StoredCase {
@@ -113,6 +130,7 @@ interface StoredCase {
   scenarios: Scenario[];
   comparisons: ComparisonRecord[];
   inquiries?: InquiryRecord[];
+  messages?: StoredMessage[];
 }
 
 /** מימוש מבוסס קובץ: קובץ JSON לכל תיק תחת rootDir/<ownerId>/<caseId>.json. */
@@ -360,5 +378,31 @@ export class FileCaseRepository implements CaseRepository {
       }
     }
     throw new Error("inquiry not found for owner");
+  }
+
+  async appendMessages(
+    caseId: string,
+    ownerId: string,
+    messages: Array<{ role: string; clientMessageId: string | null; content: unknown }>,
+  ): Promise<void> {
+    const stored = this.read(ownerId, caseId);
+    if (!stored || stored.case.ownerId !== ownerId) throw new Error("case not found for owner");
+    stored.messages = stored.messages ?? [];
+    let seq = stored.messages.length > 0 ? Math.max(...stored.messages.map((m) => m.seq)) + 1 : 0;
+    for (const m of messages) {
+      if (m.clientMessageId && stored.messages.some((x) => x.clientMessageId === m.clientMessageId)) continue;
+      stored.messages.push({
+        id: randomUUID(), role: m.role, seq, clientMessageId: m.clientMessageId,
+        content: m.content, createdAt: new Date().toISOString(),
+      });
+      seq += 1;
+    }
+    this.write(stored);
+  }
+
+  async loadMessages(caseId: string, ownerId: string): Promise<StoredMessage[]> {
+    const stored = this.read(ownerId, caseId);
+    if (!stored || stored.case.ownerId !== ownerId) return [];
+    return [...(stored.messages ?? [])].sort((a, b) => a.seq - b.seq);
   }
 }

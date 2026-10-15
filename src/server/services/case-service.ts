@@ -349,6 +349,20 @@ export class CaseService {
     return await this.repo.answerInquiry(inquiryId, ownerId, answer);
   }
 
+  /** שמירת הודעות שיחה לשחזור אחרי רענון. */
+  async appendMessages(
+    caseId: string,
+    ownerId: string,
+    messages: Array<{ role: string; clientMessageId: string | null; content: unknown }>,
+  ) {
+    return await this.repo.appendMessages(caseId, ownerId, messages);
+  }
+
+  /** טעינת הודעות השיחה של התיק. */
+  async loadMessages(caseId: string, ownerId: string) {
+    return await this.repo.loadMessages(caseId, ownerId);
+  }
+
   /** עדכון עובדות משותפות עם בדיקת גרסה. לתיקון עובדה אמיתית (לא סימולציה). */
   async updateFacts(
     caseId: string,
