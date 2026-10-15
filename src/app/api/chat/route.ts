@@ -9,7 +9,7 @@ import { getOrCreateVisitOwner } from "../../../server/web/visit.js";
 import { streamChat, stripReasoning, type ChatBudgetState } from "../../../server/agent/chat-runtime.js";
 import type { ToolContext } from "../../../server/agent/tool-contracts.js";
 import { fastPathEnabled } from "../../../server/agent/model.js";
-import { tryFastPath } from "../../../server/agent/fast-path.js";
+import { runFastPlan } from "../../../server/agent/fast-path.js";
 import { randomUUID } from "node:crypto";
 
 export const runtime = "nodejs";
@@ -51,40 +51,31 @@ export async function POST(req: Request): Promise<Response> {
     ]).catch(() => {});
   }
 
-  // --- חתך ניסוי: מסלול מהיר (קריאת מודל אחת) להודעות איסוף/תיקון/סימולציה ---
+  // --- חתך מבני (דגל): תוכנית פעולות בקריאת מודל אחת. מבצעת עדכונים/סימולציה/
+  //     השוואה בקוד, מציגה כרטיס מהתוצאה השמורה, ומחזירה תשובה - בלי הבנה כפולה. ---
   if (fastPathEnabled() && lastUser) {
     const userText = (lastUser.parts as Array<{ type: string; text?: string }>)
       .filter((p) => p.type === "text").map((p) => p.text).join(" ");
     try {
-      const fp = await tryFastPath(service, ctx.caseId, owner, state, userText);
-      if (fp.kind === "handled") {
-        // טוענים מצב מעודכן (ייתכן שהעדכון שינה אותו) לרענון הכרטיס בצד הלקוח.
-        const reply = fp.reply;
-        const asstId = "asst-" + randomUUID();
-        const stream = createUIMessageStream({
-          execute: ({ writer }) => {
-            const id = "t-" + randomUUID();
-            writer.write({ type: "text-start", id });
-            writer.write({ type: "text-delta", id, delta: reply });
-            writer.write({ type: "text-end", id });
-          },
-          onFinish: () => {
-            void service.appendMessages(ctx.caseId, owner, [
-              { role: "assistant", clientMessageId: asstId, content: [{ type: "text", text: reply }] },
-            ]).catch(() => {});
-          },
-        });
-        return createUIMessageStreamResponse({ stream });
-      }
-      // needs_tools: עדכוני העובדות (אם היו) כבר הוחלו במסלול המהיר. טוענים מצב
-      // מעודכן כדי שהמסלול המלא יחשב על פי הנתונים החדשים (בלי לאבד/לכפול).
-      if (fp.appliedFactUpdates) {
-        const refreshed = await service.getCaseState(ctx.caseId, owner);
-        if (refreshed) state = refreshed;
-      }
-      // נופלים למסלול המלא למטה (רק עבודת הכלים נותרה).
+      const fp = await runFastPlan(service, ctx.caseId, owner, state, userText);
+      const reply = fp.reply;
+      const asstId = "asst-" + randomUUID();
+      const stream = createUIMessageStream({
+        execute: ({ writer }) => {
+          const id = "t-" + randomUUID();
+          writer.write({ type: "text-start", id });
+          writer.write({ type: "text-delta", id, delta: reply });
+          writer.write({ type: "text-end", id });
+        },
+        onFinish: () => {
+          void service.appendMessages(ctx.caseId, owner, [
+            { role: "assistant", clientMessageId: asstId, content: [{ type: "text", text: reply }] },
+          ]).catch(() => {});
+        },
+      });
+      return createUIMessageStreamResponse({ stream });
     } catch {
-      // כשל במסלול המהיר -> נופלים בבטחה למסלול המלא.
+      // כשל במסלול המהיר -> נופלים בבטחה למסלול המלא (הבנה מלאה של ההודעה).
     }
   }
 
