@@ -13,7 +13,8 @@
                     "import:data":  "tsx scripts/import/import-dataset.ts",
                     "db:migrate":  "tsx scripts/db/migrate.ts",
                     "db:set-app-password":  "tsx scripts/db/set-app-password.ts",
-                    "import:dataset":  "tsx scripts/import/import-dataset.ts"
+                    "import:dataset":  "tsx scripts/import/import-dataset.ts",
+                    "sim":  "tsx scripts/sim/run-sim.ts --sim"
                 },
     "engines":  {
                     "node":  "\u003e=20"

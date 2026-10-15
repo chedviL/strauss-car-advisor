@@ -35,25 +35,51 @@ export class PgCaseRepository implements CaseRepository {
     /* shared pool - do not end here */
   }
 
+  private static isConnError(err: unknown): boolean {
+    const msg = err instanceof Error ? err.message : String(err);
+    return /terminated|ECONNRESET|EPIPE|Connection terminated|server closed|timeout|Client has encountered a connection error/i.test(
+      msg,
+    );
+  }
+
   private async withOwner<T>(
     ownerId: string,
     fn: (client: PoolClient) => Promise<T>,
   ): Promise<T> {
-    const client = await this.pool.connect();
-    try {
-      await client.query("begin");
-      await client.query("select set_config('app.owner_id', $1, true)", [ownerId]);
-      const result = await fn(client);
-      await client.query("commit");
-      return result;
-    } catch (err) {
-      await client.query("rollback");
-      throw err;
-    } finally {
-      client.release();
+    // ה-transaction pooler של Supabase סוגר חיבורים idle; חיבור מת מה-pool
+    // עלול להיכשל כבר ב-connect() או ב-begin. עוטפים את כל מחזור החיים
+    // (connect+use+release) ומנסים עד 3 פעמים עם חיבור טרי בכשל חיבור.
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      let client: PoolClient | null = null;
+      try {
+        client = await this.pool.connect();
+        await client.query("begin");
+        await client.query("select set_config('app.owner_id', $1, true)", [ownerId]);
+        const result = await fn(client);
+        await client.query("commit");
+        client.release();
+        return result;
+      } catch (err) {
+        lastErr = err;
+        if (client) {
+          try {
+            await client.query("rollback");
+          } catch {
+            /* חיבור כבר מת - אין מה לגלגל אחורה */
+          }
+          client.release(true); // destroy: מסיר חיבור פגום מה-pool
+        }
+        if (attempt < 2 && PgCaseRepository.isConnError(err)) {
+          // המתנה קצרה כדי לאפשר ל-pool להחליף את החיבור המת.
+          await new Promise((r) => setTimeout(r, 50));
+          continue;
+        }
+        throw err;
+      }
     }
+    throw lastErr;
   }
-
   async createCase(input: {
     ownerId: string;
     isDemo: boolean;
@@ -242,25 +268,27 @@ export class PgCaseRepository implements CaseRepository {
     });
   }
 
+  /**
+   * טוען את כל מצב התיק ב-round-trip יחיד (במקום 5 שאילתות רצופות).
+   * כל טבלה נאספת כ-JSON; מקצץ עלות רשת מהותית מול pooler מרוחק.
+   */
   private async loadState(c: PoolClient, caseId: string): Promise<CaseState> {
-    const caseRow = await c.query("select * from cases where id = $1", [caseId]);
-    const factsRow = await c.query("select * from case_facts where case_id = $1", [caseId]);
-    const scenRows = await c.query("select * from scenarios where case_id = $1", [caseId]);
-    const cmpRows = await c.query(
-      "select * from comparisons where case_id = $1 order by completed_at desc limit 1",
+    const r = await c.query(
+      `select
+         (select to_jsonb(x) from (select * from cases where id = $1) x) as case,
+         (select to_jsonb(x) from (select * from case_facts where case_id = $1) x) as facts,
+         coalesce((select jsonb_agg(to_jsonb(x)) from (select * from scenarios where case_id = $1) x), '[]'::jsonb) as scenarios,
+         (select to_jsonb(x) from (select * from comparisons where case_id = $1 order by completed_at desc limit 1) x) as latest_comparison,
+         coalesce((select jsonb_agg(to_jsonb(x)) from (select * from inquiries where case_id = $1 and status = 'open') x), '[]'::jsonb) as open_inquiries`,
       [caseId],
     );
-    const inqRows = await c.query(
-      "select * from inquiries where case_id = $1 and status = 'open'",
-      [caseId],
-    ).catch(() => ({ rows: [] as Record<string, unknown>[] }));
+    const row = r.rows[0];
     return {
-      case: mapCase(caseRow.rows[0]),
-      facts: mapFacts(factsRow.rows[0]),
-      scenarios: scenRows.rows.map(mapScenario),
-      latestComparison:
-        cmpRows.rowCount && cmpRows.rows[0] ? mapComparison(cmpRows.rows[0]) : null,
-      openInquiries: inqRows.rows.map(mapInquiry),
+      case: mapCase(row.case),
+      facts: mapFacts(row.facts),
+      scenarios: (row.scenarios as Record<string, unknown>[]).map(mapScenario),
+      latestComparison: row.latest_comparison ? mapComparison(row.latest_comparison) : null,
+      openInquiries: (row.open_inquiries as Record<string, unknown>[]).map(mapInquiry),
     };
   }
 }
@@ -273,12 +301,16 @@ function mapCase(r: Record<string, unknown>): CaseRecord {
     datasetId: r.dataset_id as string,
     status: r.status as CaseRecord["status"],
     factsRevision: r.facts_revision as number,
-    createdAt: (r.created_at as Date).toISOString(),
-    updatedAt: (r.updated_at as Date).toISOString(),
+    createdAt: iso(r.created_at),
+    updatedAt: iso(r.updated_at),
   };
 }
 function num(v: unknown): number | null {
   return v === null || v === undefined ? null : Number(v);
+}
+// עמיד גם ל-Date (שורת pg גולמית) וגם ל-ISO string (פלט to_jsonb).
+function iso(v: unknown): string {
+  return v instanceof Date ? v.toISOString() : new Date(v as string).toISOString();
 }
 function mapFacts(r: Record<string, unknown> | undefined): CaseFacts {
   if (!r) {
@@ -322,7 +354,7 @@ function mapComparison(r: Record<string, unknown>): ComparisonRecord {
     factsRevision: r.facts_revision as number,
     inputSnapshot: r.input_snapshot as ComparisonRecord["inputSnapshot"],
     result: r.result as ComparisonRecord["result"],
-    completedAt: (r.completed_at as Date).toISOString(),
+    completedAt: iso(r.completed_at),
   };
 }
 
@@ -334,6 +366,6 @@ function mapInquiry(r: Record<string, unknown>): InquiryRecord {
     scenarioId: (r.scenario_id as string) ?? null,
     contextFingerprint: r.context_fingerprint as string,
     status: r.status as InquiryRecord["status"],
-    createdAt: (r.created_at as Date).toISOString(),
+    createdAt: iso(r.created_at),
   };
 }

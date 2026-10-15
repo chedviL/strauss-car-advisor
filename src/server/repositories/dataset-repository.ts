@@ -5,7 +5,7 @@
 
 import { createHash } from "node:crypto";
 import { type Pool, type PoolClient } from "pg";
-import { getPool } from "./pg-pool.js";
+import { getPool, withClient } from "./pg-pool.js";
 import type { RuleSet } from "../../domain/contracts/types.js";
 import type { ResolvedVehicle } from "./catalog-import.js";
 
@@ -34,7 +34,9 @@ export function datasetContentHash(seed: DatasetSeed): string {
 
 export class DatasetRepository {
   private readonly pool: Pool;
+  private readonly conn: string;
   constructor(connectionString: string) {
+    this.conn = connectionString;
     this.pool = getPool(connectionString);
   }
   // ה-pool משותף; close() הוא no-op.
@@ -106,8 +108,7 @@ export class DatasetRepository {
    * מזהה את ה-dataset הפעיל התואם לכללים הנוכחיים. מחזיר את העדכני ביותר אם יש כמה.
    */
   async findDatasetIdByRuleSetHash(ruleSetHash: string): Promise<string | null> {
-    const client = await this.pool.connect();
-    try {
+    return withClient(this.conn, async (client) => {
       const r = await client.query(
         `select d.id from datasets d
            join rule_sets r on r.id = d.rule_set_id
@@ -117,29 +118,23 @@ export class DatasetRepository {
         [ruleSetHash],
       );
       return r.rowCount && r.rows[0] ? (r.rows[0].id as string) : null;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   /** חיפוש read-only של dataset לפי content hash (עובד בתפקיד האפליקציה). */
   async findDatasetIdByContentHash(contentHash: string): Promise<string | null> {
-    const client = await this.pool.connect();
-    try {
+    return withClient(this.conn, async (client) => {
       const r = await client.query(
         `select id from datasets where validation_report->>'contentHash' = $1 limit 1`,
         [contentHash],
       );
       return r.rowCount && r.rows[0] ? (r.rows[0].id as string) : null;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   /** טוען את רכבי ה-dataset מהמסד (20 שורות) - ללא פענוח CSV בזמן ריצה. */
   async loadDatasetVehicles(datasetId: string): Promise<ResolvedVehicle[]> {
-    const client = await this.pool.connect();
-    try {
+    return withClient(this.conn, async (client) => {
       const r = await client.query(
         `select catalog_code, grp, manufacturer_code, model_code, registration_year,
                 vehicle_type_code, value_of_use, propulsion, company_cost,
@@ -160,9 +155,7 @@ export class DatasetRepository {
         defaultParticipation: Number(v.default_participation),
         typeResolutionSource: v.type_resolution_source as string,
       }));
-    } finally {
-      client.release();
-    }
+    });
   }
 
   private async insertVehicle(

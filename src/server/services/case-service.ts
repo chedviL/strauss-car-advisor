@@ -165,6 +165,35 @@ export class CaseService {
   }
 
   /**
+   * זרימת דמו מלאה בקריאה אחת: יצירת תיק+baseline, יישום החלופה המוצעת,
+   * טעינת מצב פעם אחת, וחישוב+שמירת השוואה - ללא טעינות מצב כפולות.
+   * מצמצם מהותית round-trips מול pooler מרוחק (היה מקור ה-latency).
+   */
+  async startDemoFlow(
+    ownerId: string,
+    employeeId: string,
+  ): Promise<CaseState> {
+    const emp = SAMPLE_EMPLOYEES.find((e) => e.id === employeeId);
+    if (!emp) throw new Error("עובד לדוגמה לא נמצא");
+    const created = await this.createDemoCaseFromEmployee(ownerId, employeeId);
+    const caseId = created.case.id;
+    await this.pickAlternative(caseId, ownerId, {
+      role: "alternative",
+      route: emp.suggestedAlternative.route,
+      vehicleCode: emp.suggestedAlternative.vehicleCode,
+      participation: emp.suggestedAlternative.participation,
+      maintenanceAllowance: emp.suggestedAlternative.maintenanceAllowance,
+    });
+    // טוענים מצב פעם אחת ומעבירים לחישוב (preloaded) כדי לא לקרוא שוב מהמסד.
+    const state = await this.repo.getCaseState(caseId, ownerId);
+    if (!state) throw new Error("תיק לא נמצא לבעלים");
+    await this.computeAndSaveComparison(caseId, ownerId, state);
+    // מצב סופי כולל ההשוואה שנשמרה.
+    const finalState = await this.repo.getCaseState(caseId, ownerId);
+    return finalState ?? state;
+  }
+
+  /**
    * מחזיר את מזהה ה-dataset לשימוש ביצירת תיק:
    * - אם קיים חיבור בעלים/מסד (MIGRATION_DATABASE_URL/DATABASE_URL) -> UUID אמיתי מהמסד (idempotent).
    * - אחרת (אחסון קבצים מקומי) -> contentId (hash) שמספיק לקבצים.
@@ -204,8 +233,10 @@ export class CaseService {
   async computeAndSaveComparison(
     caseId: string,
     ownerId: string,
+    preloadedState?: CaseState,
   ): Promise<{ status: "ok"; comparison: ComparisonRecord } | { status: "missing_data"; missingFields: string[] } | { status: "no_alternative" }> {
-    const state = await this.repo.getCaseState(caseId, ownerId);
+    // חוסך round-trip: אם המצב כבר נטען (אותה גרסה), אין צורך לקרוא שוב מהמסד.
+    const state = preloadedState ?? (await this.repo.getCaseState(caseId, ownerId));
     if (!state) throw new Error("תיק לא נמצא לבעלים");
     const dataset = await this.getDataset();
     const baseline = state.scenarios.find((s) => s.role === "baseline");

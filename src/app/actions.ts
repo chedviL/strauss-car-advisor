@@ -6,25 +6,13 @@
 import { revalidatePath } from "next/cache";
 import { caseService } from "../server/web/service.js";
 import { getOrCreateVisitOwner } from "../server/web/visit.js";
-import { SAMPLE_EMPLOYEES } from "../../data/source/sample-employees.js";
 
 export async function startDemoCase(employeeId: string): Promise<void> {
   const owner = await getOrCreateVisitOwner();
   const service = caseService();
-  const emp = SAMPLE_EMPLOYEES.find((e) => e.id === employeeId);
-  if (!emp) throw new Error("עובד לדוגמה לא נמצא");
 
-  const state = await service.createDemoCaseFromEmployee(owner, employeeId);
-
-  // חתך ראשון: מיישמים את החלופה המוצעת ומחשבים מיד, כדי להציג כרטיס מלא.
-  await service.pickAlternative(state.case.id, owner, {
-    role: "alternative",
-    route: emp.suggestedAlternative.route,
-    vehicleCode: emp.suggestedAlternative.vehicleCode,
-    participation: emp.suggestedAlternative.participation,
-    maintenanceAllowance: emp.suggestedAlternative.maintenanceAllowance,
-  });
-  await service.computeAndSaveComparison(state.case.id, owner);
+  // זרימת דמו מלאה בקריאת שירות אחת: יצירה + חלופה + חישוב+שמירה, עם מינימום round-trips.
+  const state = await service.startDemoFlow(owner, employeeId);
 
   // שמירת מזהה התיק הפעיל ב-cookie כדי שרענון ישחזר אותו.
   const { cookies } = await import("next/headers");
