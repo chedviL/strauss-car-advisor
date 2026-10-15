@@ -57,7 +57,11 @@ export async function POST(req: Request): Promise<Response> {
     const userText = (lastUser.parts as Array<{ type: string; text?: string }>)
       .filter((p) => p.type === "text").map((p) => p.text).join(" ");
     try {
-      const fp = await runFastPlan(service, ctx.caseId, owner, state, userText);
+      const fp = await runFastPlan(service, ctx.caseId, owner, state, userText, modelMessages);
+      // חיווי מסלול בלוג (ללא תוכן אישי): אילו פעולות בוצעו ואם נדרשה קריאת-המשך.
+      console.log(
+        `[chat] path=A did=${Object.entries(fp.did).filter(([, v]) => v).map(([k]) => k).join(",") || "none"} followup=${fp.needsFollowup}`,
+      );
       // תלוי-תוצאה: ממשיכים למודל עם התוצאה בפועל (לא מתחילים שוב את ההבנה).
       // זו קריאת-המשך קצרה שמנסחת הסבר מבוסס-תוצאה; הכרטיס כבר נשמר.
       const reply = fp.needsFollowup
@@ -82,13 +86,15 @@ export async function POST(req: Request): Promise<Response> {
         },
       });
       return createUIMessageStreamResponse({ stream });
-    } catch {
+    } catch (e) {
       // כשל במסלול המהיר -> נופלים בבטחה למסלול הכלים המלא (הבנה מלאה).
-      // (עדכוני עובדות שכבר בוצעו נשמרו במסד.)
+      const m = e instanceof Error ? e.message : String(e);
+      console.log(`[chat] path=A->B fallback (${m.replace(/sk-[A-Za-z0-9_-]{8,}/g, "sk-***").slice(0, 80)})`);
     }
   }
 
   try {
+    console.log("[chat] path=B (full tool loop)");
     const result = streamChat({ service, ctx, state, messages: modelMessages, budget });
     return result.toUIMessageStreamResponse({
       // כשהתור מסתיים, שומרים את הודעת העוזר לשחזור.

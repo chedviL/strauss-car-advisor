@@ -4,7 +4,7 @@
 // תמונת מצב אחת שמתעדכנת מתוצאות השירות (ללא טעינה חוזרת פר-פעולה). חישוב/זכאות
 // בקוד. אין שפת תכנות כללית ואין מתכנן — רק פעולות שתואמות לחוזי השירות הקיימים.
 
-import { generateObject, generateText } from "ai";
+import { generateObject, generateText, type ModelMessage } from "ai";
 import { z } from "zod";
 import type { CaseService, CompareRequest } from "../services/case-service.js";
 import type { CaseState, Scenario } from "../../domain/contracts/case.js";
@@ -19,6 +19,19 @@ import type { Occupation } from "../../domain/eligibility/engine.js";
  * דגלי ויתור/רכב-חובה). אחרת, אם נמסרה קבוצה -> בונים זכאות לפי קבוצה (לרכב חברה
  * בלבד; ויתור דורש עיסוק מאומת). null רק אם אין עיסוק ואין קבוצה.
  */
+// תוויות עבריות לשדות חסרים, כדי לשאול על מה שחסר במקום הודעה כללית.
+const FIELD_LABEL: Record<string, string> = {
+  baseSalary: "שכר הבסיס החודשי", commission: "עמלות", bonus: "בונוס",
+  pensionRate: "שיעור הפנסיה", trainingRate: "שיעור קרן ההשתלמות",
+  creditPoints: "נקודות זיכוי", qualifyingChildren: "מספר הילדים",
+  reportedGroup: "קבוצת הזכאות", occupationCode: "העיסוק",
+  vehicleCode: "הרכב", participation: "ההשתתפות ברכב",
+};
+function labelMissing(fields: string[]): string {
+  const labels = fields.map((f) => FIELD_LABEL[f.replace(/^vehicle:.*/, "vehicleCode")] ?? f);
+  return [...new Set(labels)].join(", ");
+}
+
 function occupationOrGroup(occCode: string | null, group: string | null): Occupation | undefined {
   const occ = findOccupation(occCode);
   if (occ) return occ;
@@ -66,7 +79,6 @@ const actionSchema = z.discriminatedUnion("type", [
     includeWaiver: z.boolean().optional(),
     propulsion: z.enum(["0", "1", "2", "3"]).optional(),  // 3=חשמלי (discover לסינון קל)
     vehicleCodes: z.array(z.string()).optional(),          // explicit
-    minNetDelta: z.number().optional(),
   }),
   // חיפוש רכבים בקטלוג עם סטטוס זכאות (אין המצאת מאפיינים שאינם במקור).
   z.object({
@@ -77,9 +89,8 @@ const actionSchema = z.discriminatedUnion("type", [
   // פירוט מהשוואה שמורה (למה דווקא זה / #N / הכל) - ללא חישוב מחדש.
   z.object({
     type: z.literal("compare_detail"),
-    ref: z.string().optional(),       // vehicleCode/label ספציפי
-    fromRank: z.number().int().min(1).optional(),
-    toRank: z.number().int().min(1).optional(),
+    ref: z.string().optional(),       // vehicleCode/label ספציפי ל"למה דווקא זה"
+    topN: z.number().int().min(1).optional(),  // כמה מובילות להציג ("תראה את כולן"=גדול)
   }),
   // פנייה לנציג לנושא שבתחום אחריותו (השתתפות/הבהרת זכאות). dedup אוטומטי.
   z.object({
@@ -124,20 +135,22 @@ const SYSTEM = `את/ה היועץ/ת של שטראוס. החזר/י *תוכני
 - compare: השוואת נטו ("מה יחסוך לי", "תשווי חשמליים"). discover (propulsion="3"=חשמלי,
   includeWaiver) או explicit עם vehicleCodes.
 - search_vehicles: חיפוש בקטלוג עם סטטוס זכאות ("אילו רכבים חשמליים יש?"). propulsion/group.
-- compare_detail: פירוט מהשוואה קודמת ("למה דווקא זה?"=ref; "מה במקום השישי"=fromRank/toRank;
+- compare_detail: פירוט מהשוואה קודמת ("למה דווקא זה?"=ref; "תראה את כולן"=topN גדול;
   "תראה את כולן"=ללא טווח). בלי חישוב מחדש.
 - set_current_vehicle: הרכב הנוכחי של העובד/ת ("יש לי Atto 3", "אני נוסע/ת היום בטויוטה")
   -> מתעדכן כמצב הקיים (baseline), לא כרכב יעד להשוואה. vehicleCode מהקטלוג.
 - open_inquiry: פנייה לנציג כשחסר ערך שבתחומו ("לא יודעת מה ההשתתפות, אפשר לברר?"
   =employee_participation; הבהרת זכאות=occupation_eligibility_clarification).
 
-## מטרה לפני איסוף (חשוב)
+## מטרה והמשכיות (חשוב)
 - הבחן/י בין *מידע שנמסר* (שכר/קבוצה/רכב נוכחי) לבין *מה שהעובד/ת רוצה לברר* (המטרה).
-- אם המטרה עדיין לא ידועה (למשל רק הציג/ה את עצמו/ה או מסר/ה פרט) - שאל/י בקצרה מה היעד:
-  "מה היית רוצה לבדוק - מעבר לרכב אחר, השפעת שכר, ויתור על רכב?". אל תתחיל/י לאסוף שכר/
-  עיסוק/השתתפות לפני שברור מה רוצים לחשב.
-- שאל/י רק על מה שחסר *לפעולה המבוקשת*, לא על כל שדה חסר בתיק. ברכה/שם -> ברך/י והצע/י עזרה,
-  בלי לדרוש נתונים.
+- אם המטרה עדיין לא ידועה (ברכה/שם/פרט בודד) - שאל/י בקצרה מה היעד. אל תתחיל/י לאסוף
+  שכר/עיסוק/השתתפות לפני שברור מה רוצים לחשב.
+- **המשכיות:** אם ההודעה האחרונה עונה על שאלה ששאלת בתור הקודם (למשל שאלת שכר ->
+  "15000 בלי" = שכר 15,000, בלי עמלות/בונוס) - פענח/י אותה בהקשר, עדכן/י, והמשך/י את
+  הבקשה שכבר נמסרה (למשל ההשוואה שהתבקשה). אל תשאל/י שוב "מה המטרה" כשהיא כבר ידועה
+  מההיסטוריה. בקשת השוואה שנעצרה על מידע חסר נשארת פעילה - השלם/י אותה כשהמידע הגיע.
+- שאל/י רק על מה שחסר *לפעולה המבוקשת*, לא על כל שדה חסר בתיק. ברכה/שם -> ברך/י והצע/י עזרה.
 
 ## זכאות
 - זכאות לרכב חברה נקבעת לפי *קבוצת הזכאות*. אם נמסרה קבוצה (למשל "ג") - אפשר לחפש/להשוות
@@ -165,12 +178,19 @@ export async function runFastPlan(
   ownerId: string,
   state: CaseState,
   userText: string,
+  history?: ModelMessage[],
 ): Promise<FastPathOutcome> {
+  // מעבירים את ההיסטוריה האחרונה כדי שהמודל יראה את שאלת-ההשלמה הקודמת ואת
+  // הבקשה המקורית (למשל בקשת השוואה שנעצרה על מידע חסר). כך תשובה קצרה כמו
+  // "15000 בלי" נקשרת לשאלה ולבקשה הפתוחה, ולא מתפרשת כפתיחה חדשה.
+  const recent = (history ?? []).slice(-10);
+  const messages: ModelMessage[] =
+    recent.length > 0 ? recent : [{ role: "user", content: userText }];
   const { object } = await generateObject({
     model: getModel(),
     schema: planSchema,
     system: SYSTEM + "\n\n" + buildContext(state),
-    prompt: userText,
+    messages,
     maxOutputTokens: 900,
     providerOptions: { anthropic: { effort: getEffort() } },
   });
@@ -254,7 +274,6 @@ export async function executeFastPlan(
             includeWaiver: action.includeWaiver ?? false,
             waiverMaintenance: occupation?.waiverAllowed ? occupation.maintenanceAllowance : 0,
             ...(occupation ? { occupation } : {}),
-            ...(action.minNetDelta !== undefined ? { minNetDelta: action.minNetDelta } : {}),
           };
         }
         const result = await service.compareScenarios(caseId, ownerId, request);
@@ -262,7 +281,7 @@ export async function executeFastPlan(
           did.compared = true; compareRunId = result.compareRunId;
           const top = result.comparisons.slice(0, 5).map((c) => ({ ref: c.vehicleCode ?? c.label, net: c.net, netDelta: c.netDelta }));
           actionResults.push({ type: "compare", summary: { currentNet: result.baseline.net, top, computed: result.coverage.computed } });
-        } else partialFailure = "חסרים נתונים לחישוב ההשוואה; לא הצגתי נטו.";
+        } else { const mf = (result as { missingFields?: string[] }).missingFields ?? []; partialFailure = mf.length > 0 ? `כדי לחשב את ההשוואה חסר: ${labelMissing(mf)}.` : "חסרים נתונים לחישוב ההשוואה."; }
       } else if (action.type === "search_vehicles") {
         const occupation = occupationOrGroup(state.facts.occupationCode, state.facts.reportedGroup);
         if (!occupation) { partialFailure = "כדי לחפש לפי זכאות צריך לדעת את קבוצת הזכאות (או העיסוק)."; }
@@ -301,8 +320,12 @@ export async function executeFastPlan(
   // הנתונים הפנימי). טקסט שנוצר בקוד נשמר רק למקרי כשל/קונפליקט, שם דיוק על
   // "מה נשמר ומה לא" מונע אי-הבנה.
   let reply = object.reply;
-  if (conflict || partialFailure) {
-    reply = (partialFailure ?? "העובדות השתנו בינתיים; לא עדכנתי.") + " אפשר לנסות שוב.";
+  if (conflict) {
+    reply = "העובדות השתנו בינתיים ממקור אחר; לא עדכנתי. אפשר לנסות שוב.";
+  } else if (partialFailure) {
+    // חוסר-מידע: שואלים על מה שחסר, לא הודעת מבוי-סתום. (ה-partialFailure כבר מנוסח
+    // כ"כדי לחשב חסר: X" כשרלוונטי.) מצרפים שאלת-המשך קצרה מתשובת המודל אם יש.
+    reply = partialFailure;
   }
 
   // needsFollowup רק אם יש תוצאה אמיתית לנסח עליה ולא היה כשל.
