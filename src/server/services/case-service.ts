@@ -537,6 +537,35 @@ export class CaseService {
       ranking: "net_delta_desc",
       result,
     });
+
+    // כדי שהכרטיס בממשק יציג את החלופה המובילה: קובעים אותה כ-alternative
+    // ושומרים comparison (baseline מול המובילה) מהתוצאות שכבר חושבו (ללא חישוב מחדש).
+    const top = filtered[0];
+    if (top) {
+      const altScenario = await this.repo.upsertAlternative(caseId, ownerId, {
+        role: "alternative",
+        route: top.route,
+        vehicleCode: top.vehicleCode,
+        participation: null, // ברירת מחדל/ירושה; המנוע תיעד הנחה בעת החישוב
+        maintenanceAllowance: 0,
+        overrides: {},
+      });
+      const baselineScenario = state.scenarios.find((s) => s.role === "baseline")!;
+      await this.repo.saveComparison(caseId, ownerId, {
+        caseId,
+        baselineScenarioId: baselineScenario.id,
+        alternativeScenarioId: altScenario.id,
+        ruleSetHash: dataset.rules.contentHash,
+        factsRevision: state.case.factsRevision,
+        inputSnapshot: { baseline: baselineScenario, alternative: altScenario },
+        result: {
+          baseline: baseCalc.result,
+          alternative: top.result,
+          netDeltaDisplay: top.netDelta,
+        },
+      });
+    }
+
     return { ...result, compareRunId, factsRevision: state.case.factsRevision, ruleSetHash: dataset.rules.contentHash };
   }
 }
