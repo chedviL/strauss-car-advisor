@@ -153,6 +153,18 @@ export class CaseService {
     return getActiveDataset();
   }
 
+  /**
+   * חימום: טוען מראש את ה-dataset (ל-cache) ופותח חיבור DB, כדי שהתור הראשון
+   * לא ישלם את ה-TLS handshake (~1.2s) ואת טעינת ה-dataset. fire-and-forget.
+   */
+  async warmup(): Promise<void> {
+    try {
+      await this.getDataset();
+    } catch {
+      /* חימום בלבד - כשל כאן אינו מפיל בקשה אמיתית */
+    }
+  }
+
   listSampleEmployees(): SampleEmployee[] {
     return SAMPLE_EMPLOYEES;
   }

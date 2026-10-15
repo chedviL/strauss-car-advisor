@@ -35,6 +35,8 @@ function buildRepository(): CaseRepository {
 export function caseService(): CaseService {
   if (!singleton) {
     singleton = new CaseService(buildRepository());
+    // חימום fire-and-forget: dataset + חיבור DB מוכנים לתור הראשון.
+    void singleton.warmup();
   }
   return singleton;
 }
