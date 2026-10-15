@@ -189,6 +189,34 @@ export class PgCaseRepository implements CaseRepository {
     });
   }
 
+  async computeComparisonTxn(
+    caseId: string,
+    ownerId: string,
+    compute: (state: CaseState) => import("./case-repository.js").ComputeTxnOutcome,
+  ): Promise<import("./case-repository.js").ComparisonTxnResult> {
+    // טרנזקציה אחת: טעינת מצב + compute סינכרוני (ללא I/O) + INSERT.
+    // חוסך טרנזקציה שנייה, set_config כפול, ו-select כפול של dataset_id.
+    return this.withOwner(ownerId, async (c) => {
+      // ללא select נפרד לבדיקת קיום: loadState קורא מ-cases ממילא. RLS אוכף
+      // בעלות (set_config). אם אין תיק (null) - נזרקת שגיאה מתוך loadState.
+      const state = await this.loadStateOrThrow(c, caseId);
+      const outcome = compute(state);
+      if (outcome.status !== "ok") return outcome;
+      const rec = outcome.record;
+      const id = randomUUID();
+      const r = await c.query(
+        `insert into comparisons (id, case_id, baseline_scenario_id, alternative_scenario_id,
+           dataset_id, rule_set_hash, facts_revision, input_snapshot, result, request_id)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning *`,
+        [id, caseId, rec.baselineScenarioId, rec.alternativeScenarioId, state.case.datasetId,
+          rec.ruleSetHash, rec.factsRevision,
+          JSON.stringify(rec.inputSnapshot), JSON.stringify(rec.result), null],
+      );
+      await c.query("update cases set updated_at = now() where id = $1", [caseId]);
+      return { status: "ok", comparison: mapComparison(r.rows[0]) };
+    });
+  }
+
   async updateFacts(
     caseId: string,
     ownerId: string,
@@ -272,6 +300,12 @@ export class PgCaseRepository implements CaseRepository {
    * טוען את כל מצב התיק ב-round-trip יחיד (במקום 5 שאילתות רצופות).
    * כל טבלה נאספת כ-JSON; מקצץ עלות רשת מהותית מול pooler מרוחק.
    */
+  /** כמו loadState אך זורק אם התיק לא קיים/לא בבעלות (row.case = null). */
+  private async loadStateOrThrow(c: PoolClient, caseId: string): Promise<CaseState> {
+    const state = await this.loadState(c, caseId);
+    return state;
+  }
+
   private async loadState(c: PoolClient, caseId: string): Promise<CaseState> {
     const r = await c.query(
       `select
@@ -283,6 +317,9 @@ export class PgCaseRepository implements CaseRepository {
       [caseId],
     );
     const row = r.rows[0];
+    if (!row || row.case === null) {
+      throw new Error("case not found for owner");
+    }
     return {
       case: mapCase(row.case),
       facts: mapFacts(row.facts),

@@ -18,6 +18,7 @@ import type {
   CreateScenarioInput,
   FactsPatch,
   UpdateFactsOutcome,
+  ComputeTxnOutcome,
 } from "../repositories/case-repository.js";
 import type { ResolvedVehicle } from "../repositories/catalog-import.js";
 import { validateEligibility, type Occupation } from "../../domain/eligibility/engine.js";
@@ -235,37 +236,44 @@ export class CaseService {
     ownerId: string,
     preloadedState?: CaseState,
   ): Promise<{ status: "ok"; comparison: ComparisonRecord } | { status: "missing_data"; missingFields: string[] } | { status: "no_alternative" }> {
-    // חוסך round-trip: אם המצב כבר נטען (אותה גרסה), אין צורך לקרוא שוב מהמסד.
-    const state = preloadedState ?? (await this.repo.getCaseState(caseId, ownerId));
-    if (!state) throw new Error("תיק לא נמצא לבעלים");
+    // ה-dataset נקרא מראש (cache בזיכרון, ללא DB בהרצה חמה). ה-compute עצמו
+    // טהור וסינכרוני - בטוח להריץ בתוך הטרנזקציה (אין I/O ואין קריאת מודל).
     const dataset = await this.getDataset();
-    const baseline = state.scenarios.find((s) => s.role === "baseline");
-    const alternative = state.scenarios.find((s) => s.role === "alternative");
-    if (!baseline) throw new Error("אין baseline לתיק");
-    if (!alternative) return { status: "no_alternative" };
 
-    const b = computeScenario(state.facts, baseline, dataset);
-    const a = computeScenario(state.facts, alternative, dataset);
-    if (b.status !== "ok") return { status: "missing_data", missingFields: b.missingFields };
-    if (a.status !== "ok") return { status: "missing_data", missingFields: a.missingFields };
+    // חישוב טהור ממצב נתון -> רשומת השוואה או מצב חוסר. אין DB כאן.
+    const computeFrom = (state: CaseState): ComputeTxnOutcome => {
+      const baseline = state.scenarios.find((s) => s.role === "baseline");
+      const alternative = state.scenarios.find((s) => s.role === "alternative");
+      if (!baseline) throw new Error("אין baseline לתיק");
+      if (!alternative) return { status: "no_alternative" };
+      const b = computeScenario(state.facts, baseline, dataset);
+      const a = computeScenario(state.facts, alternative, dataset);
+      if (b.status !== "ok") return { status: "missing_data", missingFields: b.missingFields };
+      if (a.status !== "ok") return { status: "missing_data", missingFields: a.missingFields };
+      const netDeltaDisplay = Number(a.result.netDisplay) - Number(b.result.netDisplay);
+      return {
+        status: "ok",
+        record: {
+          caseId,
+          baselineScenarioId: baseline.id,
+          alternativeScenarioId: alternative.id,
+          ruleSetHash: dataset.rules.contentHash,
+          factsRevision: state.case.factsRevision,
+          inputSnapshot: { baseline, alternative },
+          result: { baseline: b.result, alternative: a.result, netDeltaDisplay },
+        },
+      };
+    };
 
-    const netDeltaDisplay =
-      Number(a.result.netDisplay) - Number(b.result.netDisplay);
-
-    const comparison = await this.repo.saveComparison(caseId, ownerId, {
-      caseId,
-      baselineScenarioId: baseline.id,
-      alternativeScenarioId: alternative.id,
-      ruleSetHash: dataset.rules.contentHash,
-      factsRevision: state.case.factsRevision,
-      inputSnapshot: { baseline, alternative },
-      result: {
-        baseline: b.result,
-        alternative: a.result,
-        netDeltaDisplay,
-      },
-    });
-    return { status: "ok", comparison };
+    // אם המצב כבר נטען (למשל מ-startDemoFlow) - משתמשים בו ושומרים בטרנזקציה אחת.
+    // אחרת - טעינה+חישוב+שמירה בטרנזקציה אחת (מצמצם round-trips).
+    if (preloadedState) {
+      const outcome = computeFrom(preloadedState);
+      if (outcome.status !== "ok") return outcome;
+      const comparison = await this.repo.saveComparison(caseId, ownerId, outcome.record);
+      return { status: "ok", comparison };
+    }
+    return await this.repo.computeComparisonTxn(caseId, ownerId, computeFrom);
   }
 
   /** פתיחת פנייה לנציג. השרת בונה את ה-contextFingerprint; dedup לפניות פתוחות. */

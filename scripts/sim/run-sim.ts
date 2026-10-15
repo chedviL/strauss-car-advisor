@@ -131,7 +131,7 @@ async function runOnce(verify: boolean): Promise<Record<string, StageTiming>> {
     let provisional = false;
     if (cmp.status === "missing_data") {
       provisional = true;
-      await service.openInquiry(caseId, OWNER, "participation", null, { field: "participation", vehicle: "CAR-10" });
+      await service.openInquiry(caseId, OWNER, "employee_participation", null, { field: "participation", vehicle: "CAR-10" });
     }
     return { search, toolMs, compMs, provisional };
   });
@@ -182,7 +182,7 @@ async function runOnce(verify: boolean): Promise<Record<string, StageTiming>> {
     const comp0 = Date.now();
     const cmp = await service.compareScenarios(caseId, OWNER, {
       mode: "explicit",
-      occupation: occ,
+      ...(occ ? { occupation: occ } : {}),
       candidates: [{ label: "ויתור", route: "waiver", vehicleCode: null, participation: 0, maintenanceAllowance: occ!.maintenanceAllowance }],
     });
     return { compMs: Date.now() - comp0, cmp };

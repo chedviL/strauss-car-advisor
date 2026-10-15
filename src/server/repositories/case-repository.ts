@@ -41,6 +41,16 @@ export type FactsPatch = Partial<{
   qualifyingChildren: number | null;
 }>;
 
+export type ComputeTxnOutcome =
+  | { status: "ok"; record: Omit<ComparisonRecord, "id" | "completedAt"> }
+  | { status: "missing_data"; missingFields: string[] }
+  | { status: "no_alternative" };
+
+export type ComparisonTxnResult =
+  | { status: "ok"; comparison: ComparisonRecord }
+  | { status: "missing_data"; missingFields: string[] }
+  | { status: "no_alternative" };
+
 export type UpdateFactsOutcome =
   | { status: "ok"; factsRevision: number }
   | { status: "conflict"; currentRevision: number };
@@ -66,6 +76,16 @@ export interface CaseRepository {
     ownerId: string,
     record: Omit<ComparisonRecord, "id" | "completedAt">,
   ): Promise<ComparisonRecord>;
+  /**
+   * טוען מצב, מריץ compute סינכרוני (ללא I/O/מודל), ושומר השוואה - הכל
+   * בטרנזקציה אחת. מצמצם round-trips (BEGIN/COMMIT/set_config פעם אחת,
+   * בלי select כפול). ה-callback חייב להיות טהור וסינכרוני.
+   */
+  computeComparisonTxn(
+    caseId: string,
+    ownerId: string,
+    compute: (state: CaseState) => ComputeTxnOutcome,
+  ): Promise<ComparisonTxnResult>;
   /** עדכון עובדות עם בדיקת גרסה (optimistic). מעלה facts_revision אם היה שינוי סמנטי. */
   updateFacts(
     caseId: string,
@@ -229,6 +249,26 @@ export class FileCaseRepository implements CaseRepository {
     stored.case.updatedAt = new Date().toISOString();
     this.write(stored);
     return full;
+  }
+
+  async computeComparisonTxn(
+    caseId: string,
+    ownerId: string,
+    compute: (state: CaseState) => import("./case-repository.js").ComputeTxnOutcome,
+  ): Promise<import("./case-repository.js").ComparisonTxnResult> {
+    const stored = this.read(ownerId, caseId);
+    if (!stored || stored.case.ownerId !== ownerId) {
+      throw new Error("case not found for owner");
+    }
+    const outcome = compute(this.toState(stored));
+    if (outcome.status !== "ok") return outcome;
+    const full: ComparisonRecord = {
+      ...outcome.record, id: randomUUID(), completedAt: new Date().toISOString(),
+    };
+    stored.comparisons.push(full);
+    stored.case.updatedAt = new Date().toISOString();
+    this.write(stored);
+    return { status: "ok", comparison: full };
   }
 
   async updateFacts(
