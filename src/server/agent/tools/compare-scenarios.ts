@@ -24,18 +24,17 @@ const candidate = z.object({
     .optional(),
 });
 
-export const compareScenariosInput = z.discriminatedUnion("mode", [
-  z.object({
-    mode: z.literal("explicit"),
-    candidates: z.array(candidate).min(1),
-    minNetDelta: z.number().optional(),
-  }),
-  z.object({
-    mode: z.literal("discover"),
-    includeWaiver: z.boolean().optional(),
-    minNetDelta: z.number().optional(),
-  }),
-]);
+// סכמת object בודדת (Anthropic דורש input_schema מסוג object בשורש; union נדחה).
+// mode קובע אילו שדות רלוונטיים; ולידציה סמנטית בהמשך.
+export const compareScenariosInput = z.object({
+  mode: z.enum(["explicit", "discover"]),
+  // explicit:
+  candidates: z.array(candidate).optional(),
+  // discover:
+  includeWaiver: z.boolean().optional(),
+  // משותף:
+  minNetDelta: z.number().optional(),
+});
 export type CompareScenariosInput = z.infer<typeof compareScenariosInput>;
 
 export async function compareScenarios(
@@ -49,6 +48,9 @@ export async function compareScenarios(
 
   let request: CompareRequest;
   if (input.mode === "explicit") {
+    if (!input.candidates || input.candidates.length === 0) {
+      return missing(["candidates"], "להשוואה מפורשת נדרשת רשימת חלופות");
+    }
     request = {
       mode: "explicit",
       candidates: input.candidates.map((c) => {
