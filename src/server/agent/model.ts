@@ -23,6 +23,12 @@ export const BUDGET = {
   maxEstimatedUsd: 1.0,
 };
 
+/** דגל ניתן-להחזרה: מסלול מהיר (קריאת מודל אחת + פלט מובנה) להודעות
+ *  איסוף/תיקון פשוטות. ברירת מחדל כבוי; CHAT_FAST_PATH=1 מפעיל. */
+export function fastPathEnabled(): boolean {
+  return process.env.CHAT_FAST_PATH === "1";
+}
+
 export type Effort = "low" | "medium" | "high" | "xhigh";
 /** רמת ה-effort (adaptive thinking). ברירת מחדל medium; ניתן להחלפה ב-MODEL_EFFORT. */
 export function getEffort(): Effort {
