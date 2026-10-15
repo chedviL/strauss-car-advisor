@@ -143,4 +143,58 @@ describe("fast-plan executor (ללא מודל)", () => {
     expect(r.did.searched).toBe(true); // לא נחסם בגלל חוסר עיסוק
     expect(r.partialFailure).toBeUndefined();
   });
+  // --- בקשה פעילה עמידה (pending request) + המשך אוטומטי אחרי השלמת נתונים ---
+
+  // תיק ללא שכר בסיס -> compare נעצר על מידע חסר.
+  async function caseNoSalary() {
+    const ds = getActiveDataset();
+    const repo = new FileCaseRepository(dir);
+    const noSal = { ...facts, baseSalary: null };
+    return repo.createCase({ ownerId: OWNER, isDemo:true, datasetId: ds.contentId, facts: noSal, baseline:{ role:"baseline", route:"company_car", vehicleCode:"CAR-09", participation:300, maintenanceAllowance:0 } });
+  }
+
+  it("compare נעצר על מידע חסר -> הבקשה נשמרת כפעילה (pending)", async () => {
+    const c = await caseNoSalary();
+    const r = await executeFastPlan(service, c.case.id, OWNER, (await st(c.case.id))!, { clarify:false, needsFollowup:false, reply:"צריך שכר", actions:[{ type:"compare", mode:"explicit", vehicleCodes:["CAR-10"] }] });
+    expect(r.did.compared).toBe(false);
+    expect(r.partialFailure).toBeTruthy();
+    const s = (await st(c.case.id))!;
+    expect(s.case.pendingRequest).toEqual({ kind:"compare", mode:"explicit", vehicleCodes:["CAR-10"] });
+  });
+
+  it("השלמת שכר (בלי compare מפורש) מפעילה מחדש את ההשוואה הפעילה -> כרטיס + ניקוי pending", async () => {
+    const c = await caseNoSalary();
+    // תור 1: compare נעצר -> pending נשמר
+    await executeFastPlan(service, c.case.id, OWNER, (await st(c.case.id))!, { clarify:false, needsFollowup:false, reply:"צריך שכר", actions:[{ type:"compare", mode:"explicit", vehicleCodes:["CAR-10"] }] });
+    // תור 2: רק עדכון עובדות (המודל לא חזה compare)
+    const r = await executeFastPlan(service, c.case.id, OWNER, (await st(c.case.id))!, { clarify:false, needsFollowup:false, reply:"קיבלתי", actions:[{ type:"update_facts", set:{ baseSalary:15000, commission:0, bonus:0 } }] });
+    expect(r.did.compared).toBe(true); // הופעלה אוטומטית
+    expect(r.needsFollowup).toBe(true); // כדי שהתוצאה תנוסח
+    expect(r.actionResults.some((a) => a.type === "compare")).toBe(true);
+    const s = (await st(c.case.id))!;
+    expect(s.latestComparison).not.toBeNull();
+    expect(s.case.pendingRequest).toBeNull(); // נוקתה אחרי הצלחה
+  });
+
+  it("שינוי כיוון (search_vehicles) מנקה בקשה פעילה ואינו מפעיל compare אוטומטי", async () => {
+    const c = await caseNoSalary();
+    await executeFastPlan(service, c.case.id, OWNER, (await st(c.case.id))!, { clarify:false, needsFollowup:false, reply:"צריך שכר", actions:[{ type:"compare", mode:"explicit", vehicleCodes:["CAR-10"] }] });
+    // המשתמשת עברה לנושא אחר: חיפוש רכבים
+    const r = await executeFastPlan(service, c.case.id, OWNER, (await st(c.case.id))!, { clarify:false, needsFollowup:true, reply:"בודקת", actions:[{ type:"search_vehicles", propulsion:"3" }] });
+    expect(r.did.searched).toBe(true);
+    expect(r.did.compared).toBe(false); // לא הופעל compare אוטומטי
+    const s = (await st(c.case.id))!;
+    expect(s.case.pendingRequest).toBeNull(); // הבקשה הפעילה נוקתה
+  });
+
+  it("ההשוואה האוטומטית רצה פעם אחת בלבד: תור נוסף אחרי הצלחה לא יוצר השוואה חדשה", async () => {
+    const c = await caseNoSalary();
+    await executeFastPlan(service, c.case.id, OWNER, (await st(c.case.id))!, { clarify:false, needsFollowup:false, reply:"צריך שכר", actions:[{ type:"compare", mode:"explicit", vehicleCodes:["CAR-10"] }] });
+    await executeFastPlan(service, c.case.id, OWNER, (await st(c.case.id))!, { clarify:false, needsFollowup:false, reply:"קיבלתי", actions:[{ type:"update_facts", set:{ baseSalary:15000 } }] });
+    const afterFirst = (await st(c.case.id))!;
+    expect(afterFirst.case.pendingRequest).toBeNull();
+    // תור 3: עדכון נוסף - אין pending, אסור להפעיל compare אוטומטי
+    const r3 = await executeFastPlan(service, c.case.id, OWNER, (await st(c.case.id))!, { clarify:false, needsFollowup:false, reply:"קיבלתי", actions:[{ type:"update_facts", set:{ bonus:200 } }] });
+    expect(r3.did.compared).toBe(false); // אין בקשה פעילה -> אין השוואה אוטומטית
+  });
 });

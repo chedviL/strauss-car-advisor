@@ -42,6 +42,18 @@ export interface Scenario {
   revision: number;
 }
 
+/**
+ * בקשה פעילה שממתינה להשלמת נתונים (למשל בקשת השוואה שנעצרה על מידע חסר).
+ * ייצוג עמיד על התיק - שורד רענון והתארכות היסטוריה; מתנקה בשינוי כיוון/ביטול.
+ */
+export interface PendingRequest {
+  kind: "compare";
+  mode: "discover" | "explicit";
+  vehicleCodes?: string[];
+  propulsion?: string;
+  includeWaiver?: boolean;
+}
+
 export interface CaseRecord {
   id: string;
   ownerId: string;
@@ -49,6 +61,7 @@ export interface CaseRecord {
   datasetId: string;
   status: CaseStatus;
   factsRevision: number;
+  pendingRequest: PendingRequest | null;
   createdAt: string;
   updatedAt: string;
 }

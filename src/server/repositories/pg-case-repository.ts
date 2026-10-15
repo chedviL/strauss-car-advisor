@@ -381,6 +381,18 @@ export class PgCaseRepository implements CaseRepository {
     });
   }
 
+  async setPendingRequest(
+    caseId: string,
+    ownerId: string,
+    req: import("../../domain/contracts/case.js").PendingRequest | null,
+  ): Promise<void> {
+    await this.withOwner(ownerId, async (c) => {
+      await c.query("update cases set pending_request = $2, updated_at = now() where id = $1", [
+        caseId, req ? JSON.stringify(req) : null,
+      ]);
+    });
+  }
+
   async saveCompareRun(
     caseId: string,
     ownerId: string,
@@ -458,6 +470,7 @@ function mapCase(r: Record<string, unknown>): CaseRecord {
     datasetId: r.dataset_id as string,
     status: r.status as CaseRecord["status"],
     factsRevision: r.facts_revision as number,
+    pendingRequest: (r.pending_request as CaseRecord["pendingRequest"]) ?? null,
     createdAt: iso(r.created_at),
     updatedAt: iso(r.updated_at),
   };

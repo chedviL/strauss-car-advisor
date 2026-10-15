@@ -384,6 +384,11 @@ export class CaseService {
     return await this.repo.loadMessages(caseId, ownerId);
   }
 
+  /** קביעה/ניקוי של הבקשה הפעילה הממתינה לנתונים. */
+  async setPendingRequest(caseId: string, ownerId: string, req: import("../../domain/contracts/case.js").PendingRequest | null) {
+    return await this.repo.setPendingRequest(caseId, ownerId, req);
+  }
+
   /** שליפת תוצאת השוואה שמורה לפי מזהה (לפירוט לפי דרישה, בלי חישוב מחדש). */
   async loadCompareRun(caseId: string, ownerId: string, runId: string) {
     return await this.repo.loadCompareRun(caseId, ownerId, runId);

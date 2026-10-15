@@ -138,6 +138,8 @@ export interface CaseRepository {
   ): Promise<void>;
   /** טוען את הודעות השיחה של התיק לפי סדר. */
   loadMessages(caseId: string, ownerId: string): Promise<StoredMessage[]>;
+  /** קובע/מנקה את הבקשה הפעילה הממתינה לנתונים (עמיד, שורד רענון). */
+  setPendingRequest(caseId: string, ownerId: string, req: import("../../domain/contracts/case.js").PendingRequest | null): Promise<void>;
   /** שומר תוצאת השוואה גמישה מלאה; מחזיר מזהה לשליפה בהמשך. */
   saveCompareRun(
     caseId: string,
@@ -226,6 +228,7 @@ export class FileCaseRepository implements CaseRepository {
       case: {
         id: caseId, ownerId: input.ownerId, isDemo: input.isDemo,
         datasetId: input.datasetId, status: "active", factsRevision: 0,
+        pendingRequest: null,
         createdAt: now, updatedAt: now,
       },
       facts: input.facts,
@@ -449,6 +452,18 @@ export class FileCaseRepository implements CaseRepository {
     const stored = this.read(ownerId, caseId);
     if (!stored || stored.case.ownerId !== ownerId) return [];
     return [...(stored.messages ?? [])].sort((a, b) => a.seq - b.seq);
+  }
+
+  async setPendingRequest(
+    caseId: string,
+    ownerId: string,
+    req: import("../../domain/contracts/case.js").PendingRequest | null,
+  ): Promise<void> {
+    const stored = this.read(ownerId, caseId);
+    if (!stored || stored.case.ownerId !== ownerId) throw new Error("case not found for owner");
+    stored.case.pendingRequest = req;
+    stored.case.updatedAt = new Date().toISOString();
+    this.write(stored);
   }
 
   async saveCompareRun(

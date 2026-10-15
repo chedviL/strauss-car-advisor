@@ -218,6 +218,41 @@ export async function executeFastPlan(
   let alt: Scenario | undefined = state.scenarios.find((s) => s.role === "alternative");
   const base = state.scenarios.find((s) => s.role === "baseline");
 
+  type PendingReq = import("../../domain/contracts/case.js").PendingRequest;
+  // בניית CompareRequest לשירות מתוך תיאור בקשה (action או בקשה שמורה).
+  function buildCompareRequest(spec: { mode: "discover" | "explicit"; vehicleCodes?: string[]; includeWaiver?: boolean }): CompareRequest {
+    const occupation = occupationOrGroup(state.facts.occupationCode, state.facts.reportedGroup);
+    if (spec.mode === "explicit" && spec.vehicleCodes && spec.vehicleCodes.length > 0) {
+      return {
+        mode: "explicit",
+        candidates: spec.vehicleCodes.map((vc) => ({ label: vc, route: "company_car" as const, vehicleCode: vc, participation: null, maintenanceAllowance: 0 })),
+        ...(occupation ? { occupation } : {}),
+      };
+    }
+    return {
+      mode: "discover",
+      includeWaiver: spec.includeWaiver ?? false,
+      waiverMaintenance: occupation?.waiverAllowed ? occupation.maintenanceAllowance : 0,
+      ...(occupation ? { occupation } : {}),
+    };
+  }
+  // מריץ השוואה; מחזיר true אם הצליחה (נשמר כרטיס). מעדכן did/actionResults/partialFailure.
+  async function runCompare(spec: { mode: "discover" | "explicit"; vehicleCodes?: string[]; includeWaiver?: boolean }): Promise<boolean> {
+    const result = await service.compareScenarios(caseId, ownerId, buildCompareRequest(spec));
+    if (result.status === "ok") {
+      did.compared = true; compareRunId = result.compareRunId;
+      const top = result.comparisons.slice(0, 5).map((c) => ({ ref: c.vehicleCode ?? c.label, net: c.net, netDelta: c.netDelta }));
+      actionResults.push({ type: "compare", summary: { currentNet: result.baseline.net, top, computed: result.coverage.computed } });
+      return true;
+    }
+    const mf = (result as { missingFields?: string[] }).missingFields ?? [];
+    partialFailure = mf.length > 0 ? `כדי לחשב את ההשוואה חסר: ${labelMissing(mf)}.` : "חסרים נתונים לחישוב ההשוואה.";
+    return false;
+  }
+  // האם התוכנית כוללת שינוי כיוון/ביטול שמבטל בקשה פעילה.
+  const changesDirection = object.actions.some((a) => a.type === "clear_simulation" || a.type === "search_vehicles" || a.type === "open_inquiry");
+  let explicitCompareInPlan = false;
+
   // ולידציה מוקדמת: לפחות הסדר הגיוני (update_facts/סימולציה לפני compare) כבר בסכמה.
   for (const action of object.actions) {
     try {
@@ -260,28 +295,16 @@ export async function executeFastPlan(
         });
         did.currentVehicle = true;
       } else if (action.type === "compare") {
-        const occupation = occupationOrGroup(state.facts.occupationCode, state.facts.reportedGroup);
-        let request: CompareRequest;
-        if (action.mode === "explicit" && action.vehicleCodes && action.vehicleCodes.length > 0) {
-          request = {
-            mode: "explicit",
-            candidates: action.vehicleCodes.map((vc) => ({ label: vc, route: "company_car" as const, vehicleCode: vc, participation: null, maintenanceAllowance: 0 })),
-            ...(occupation ? { occupation } : {}),
-          };
+        explicitCompareInPlan = true;
+        const spec = { mode: action.mode, ...(action.vehicleCodes ? { vehicleCodes: action.vehicleCodes } : {}), ...(action.includeWaiver !== undefined ? { includeWaiver: action.includeWaiver } : {}) };
+        const ok = await runCompare(spec);
+        if (ok) {
+          // הצלחה -> מנקים בקשה ממתינה (הושלמה).
+          await service.setPendingRequest(caseId, ownerId, null).catch(() => {});
         } else {
-          request = {
-            mode: "discover",
-            includeWaiver: action.includeWaiver ?? false,
-            waiverMaintenance: occupation?.waiverAllowed ? occupation.maintenanceAllowance : 0,
-            ...(occupation ? { occupation } : {}),
-          };
+          // נעצר על מידע חסר -> שומרים את הבקשה כפעילה (עמיד, שורד רענון).
+          await service.setPendingRequest(caseId, ownerId, { kind: "compare", ...spec } as PendingReq).catch(() => {});
         }
-        const result = await service.compareScenarios(caseId, ownerId, request);
-        if (result.status === "ok") {
-          did.compared = true; compareRunId = result.compareRunId;
-          const top = result.comparisons.slice(0, 5).map((c) => ({ ref: c.vehicleCode ?? c.label, net: c.net, netDelta: c.netDelta }));
-          actionResults.push({ type: "compare", summary: { currentNet: result.baseline.net, top, computed: result.coverage.computed } });
-        } else { const mf = (result as { missingFields?: string[] }).missingFields ?? []; partialFailure = mf.length > 0 ? `כדי לחשב את ההשוואה חסר: ${labelMissing(mf)}.` : "חסרים נתונים לחישוב ההשוואה."; }
       } else if (action.type === "search_vehicles") {
         const occupation = occupationOrGroup(state.facts.occupationCode, state.facts.reportedGroup);
         if (!occupation) { partialFailure = "כדי לחפש לפי זכאות צריך לדעת את קבוצת הזכאות (או העיסוק)."; }
@@ -316,6 +339,27 @@ export async function executeFastPlan(
     }
   }
 
+  // דגל: האם הופעלה השוואה אוטומטית (שהמודל לא חזה) שהצליחה - כדי שהתוצאה תנוסח.
+  let autoCompared = false;
+  // --- המשך אוטומטי של בקשה פעילה שהושלמו לה הנתונים ---
+  // אם לא הייתה פעולת compare מפורשת בתוכנית, אבל התעדכנו נתונים (עובדות/רכב),
+  // ויש בקשת השוואה ששמורה כפעילה, ואין שינוי כיוון/ביטול -> מריצים אותה פעם אחת.
+  const pending = state.case.pendingRequest;
+  if (!explicitCompareInPlan && !conflict && !changesDirection && pending && pending.kind === "compare"
+      && (did.facts || did.currentVehicle || did.simulation)) {
+    const ok = await runCompare({
+      mode: pending.mode,
+      ...(pending.vehicleCodes ? { vehicleCodes: pending.vehicleCodes } : {}),
+      ...(pending.includeWaiver !== undefined ? { includeWaiver: pending.includeWaiver } : {}),
+    });
+    if (ok) { autoCompared = true; await service.setPendingRequest(caseId, ownerId, null).catch(() => {}); }
+    // אם עדיין חסר - הבקשה נשארת פעילה; partialFailure כבר מנוסח עם מה שחסר.
+  }
+  // שינוי כיוון/ביטול מנקה בקשה פעילה (העובד/ת עברו לנושא אחר).
+  if (changesDirection && pending) {
+    await service.setPendingRequest(caseId, ownerId, null).catch(() => {});
+  }
+
   // ברירת מחדל: משתמשים בתשובת המודל כפי שהיא (סגנון טבעי, בלי לקרוא את ניהול
   // הנתונים הפנימי). טקסט שנוצר בקוד נשמר רק למקרי כשל/קונפליקט, שם דיוק על
   // "מה נשמר ומה לא" מונע אי-הבנה.
@@ -329,7 +373,7 @@ export async function executeFastPlan(
   }
 
   // needsFollowup רק אם יש תוצאה אמיתית לנסח עליה ולא היה כשל.
-  const needsFollowup = object.needsFollowup === true && actionResults.length > 0 && !partialFailure;
+  const needsFollowup = (object.needsFollowup === true || autoCompared) && actionResults.length > 0 && !partialFailure;
 
   let reply2 = reply;
   if (conflict || partialFailure) {
