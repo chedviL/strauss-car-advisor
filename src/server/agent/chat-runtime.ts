@@ -139,6 +139,16 @@ export function streamChat(args: StreamChatArgs) {
   const system = SYSTEM + "\n\n" + buildContext(state);
   // זיהוי לולאה: אותה קריאת כלי (שם+קלט) פעמיים ברצף = ניסיון חוזר ללא מידע חדש.
   const seenToolCalls = new Set<string>();
+
+  // --- מדידת תור (ללא מידע אישי): זמנים, מספר קריאות מודל, זמן עד טקסט/כרטיס. ---
+  const t0 = Date.now();
+  const ms = () => Date.now() - t0;
+  let modelCalls = 0;          // מספר צעדי מודל (קריאות)
+  let toolCount = 0;           // מספר קריאות כלים בתור
+  let firstTextMs: number | null = null; // זמן עד אירוע הטקסט הראשון
+  let cardMs: number | null = null;      // זמן עד שהכרטיס (compareScenarios) מוכן
+  const callsBefore = budget.calls;
+
   return streamText({
     model: getModel(),
     system,
@@ -155,8 +165,17 @@ export function streamChat(args: StreamChatArgs) {
     },
     stopWhen: stepCountIs(BUDGET.maxSteps),
     maxOutputTokens: BUDGET.maxOutputTokens,
+    onChunk: (ev) => {
+      // זמן עד אירוע הטקסט הראשון (TTFT) - חיווי שימושיות ראשון למשתמש/ת.
+      const type = (ev.chunk as { type?: string }).type;
+      if (firstTextMs === null && (type === "text-delta" || type === "text")) {
+        firstTextMs = ms();
+      }
+    },
     onStepFinish: (step) => {
+      modelCalls += 1;
       for (const call of step.toolCalls ?? []) {
+        toolCount += 1;
         const key = call.toolName + ":" + JSON.stringify(call.input);
         if (seenToolCalls.has(key)) {
           // לא נכשל קשה, אבל נרשם לאיתור לולאות בלוג המדידה.
@@ -164,12 +183,27 @@ export function streamChat(args: StreamChatArgs) {
         }
         seenToolCalls.add(key);
       }
+      // זמן עד כרטיס: כשתוצאת compareScenarios הגיעה בהצלחה (status=ok).
+      if (cardMs === null) {
+        for (const r of step.toolResults ?? []) {
+          const tr = r as { toolName?: string; output?: unknown };
+          const out = tr.output as { status?: string } | undefined;
+          if (tr.toolName === "compareScenarios" && out?.status === "ok") { cardMs = ms(); break; }
+        }
+      }
     },
     onFinish: (ev) => {
       const inTok = ev.usage?.inputTokens ?? 0;
       const outTok = ev.usage?.outputTokens ?? 0;
       budget.estimatedUsd += estimateUsd(inTok, outTok);
       budget.calls += 1;
+      // מדידת תור בלוג (ללא מידע אישי): מסלול, קריאות מודל, כלים, זמנים.
+      // modelCalls כאן = צעדי מודל שהושלמו; budget.calls עולה פעם אחת לכל תור streamText.
+      console.log(
+        `[measure] path=B modelCalls=${modelCalls} tools=${toolCount} ` +
+        `ttft_ms=${firstTextMs ?? "-"} card_ms=${cardMs ?? "-"} total_ms=${ms()} ` +
+        `tok_in=${inTok} tok_out=${outTok} turnBudget#=${callsBefore + 1}`,
+      );
     },
   });
 }

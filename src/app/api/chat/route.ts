@@ -56,6 +56,7 @@ export async function POST(req: Request): Promise<Response> {
   if (fastPathEnabled() && lastUser) {
     const userText = (lastUser.parts as Array<{ type: string; text?: string }>)
       .filter((p) => p.type === "text").map((p) => p.text).join(" ");
+    const tA0 = Date.now();
     try {
       const fp = await runFastPlan(service, ctx.caseId, owner, state, userText, modelMessages);
       // חיווי מסלול בלוג (ללא תוכן אישי): אילו פעולות בוצעו ואם נדרשה קריאת-המשך.
@@ -64,9 +65,16 @@ export async function POST(req: Request): Promise<Response> {
       );
       // תלוי-תוצאה: ממשיכים למודל עם התוצאה בפועל (לא מתחילים שוב את ההבנה).
       // זו קריאת-המשך קצרה שמנסחת הסבר מבוסס-תוצאה; הכרטיס כבר נשמר.
+      const planMs = Date.now() - tA0;
       const reply = fp.needsFollowup
         ? await narrateResult(userText, fp.actionResults)
         : fp.reply;
+      // מדידת תור (ללא מידע אישי): A עושה קריאת-תוכנית אחת + קריאת-ניסוח כשצריך.
+      // card_ms מקורב ל-planMs כי הכרטיס נשמר במהלך ביצוע התוכנית.
+      console.log(
+        `[measure] path=A modelCalls=${fp.needsFollowup ? 2 : 1} ` +
+        `card_ms=${fp.did.compared ? planMs : "-"} ttft_ms=${Date.now() - tA0} total_ms=${Date.now() - tA0}`,
+      );
       const asstId = "asst-" + randomUUID();
       const stream = createUIMessageStream({
         execute: ({ writer }) => {

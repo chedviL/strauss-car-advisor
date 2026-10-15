@@ -79,4 +79,57 @@ describe("בניית היסטוריה למסלול B (הבקשה בפועל)", (
     expect(ctx).toContain("קבוצה מדווחת=ג");
     expect(ctx).toContain("גרסת עובדות 2"); // גרסה לבדיקת conflict
   });
+
+  it("stripReasoning שומר על רצף tool-call ↔ tool-result (toolCallId תואם) ומסיר רק reasoning", () => {
+    // היסטוריה מציאותית: assistant[reasoning + tool-call] -> tool[tool-result] -> assistant[reasoning + text].
+    const history: ModelMessage[] = [
+      { role: "user", content: [{ type: "text", text: "השווה לי לרכב חשמלי" }] },
+      { role: "assistant", content: [
+        { type: "reasoning", text: "צריך לקרוא ל-compareScenarios" } as never,
+        { type: "tool-call", toolCallId: "call-1", toolName: "compareScenarios", input: { mode: "discover" } } as never,
+      ] },
+      { role: "tool", content: [
+        { type: "tool-result", toolCallId: "call-1", toolName: "compareScenarios", output: { type: "json", value: { status: "ok" } } } as never,
+      ] },
+      { role: "assistant", content: [
+        { type: "reasoning", text: "אנסח את התוצאה" } as never,
+        { type: "text", text: "החשמלי משפר לך את הנטו." },
+      ] },
+    ];
+    const out = stripReasoning(history);
+
+    // 1) אין reasoning בשום הודעה
+    for (const m of out) {
+      if (Array.isArray(m.content)) {
+        expect(m.content.some((p) => (p as { type?: string }).type === "reasoning")).toBe(false);
+      }
+    }
+    // 2) ה-tool-call נשמר ב-assistant
+    const asst = out[1]!;
+    const callParts = (asst.content as Array<{ type: string; toolCallId?: string }>).filter((p) => p.type === "tool-call");
+    expect(callParts).toHaveLength(1);
+    expect(callParts[0]!.toolCallId).toBe("call-1");
+    // 3) ה-tool-result נשמר ב-tool role עם אותו toolCallId
+    const toolMsg = out[2]!;
+    const resParts = (toolMsg.content as Array<{ type: string; toolCallId?: string }>).filter((p) => p.type === "tool-result");
+    expect(resParts).toHaveLength(1);
+    expect(resParts[0]!.toolCallId).toBe("call-1");
+    // 4) כל tool-call מתמפה ל-tool-result (אין קריאה יתומה שתיפסל בפנייה אמיתית)
+    const callIds = new Set(callParts.map((p) => p.toolCallId));
+    const resIds = new Set(resParts.map((p) => p.toolCallId));
+    for (const id of callIds) expect(resIds.has(id)).toBe(true);
+    // 5) הטקסט הגלוי נשמר
+    const lastText = (out[3]!.content as Array<{ type: string; text?: string }>).find((p) => p.type === "text");
+    expect(lastText?.text).toContain("הנטו");
+  });
+
+  it("stripReasoning אינו משנה הודעות user/tool ואינו מסיר תוכן לא-reasoning", () => {
+    const history: ModelMessage[] = [
+      { role: "user", content: [{ type: "text", text: "שלום" }] },
+      { role: "tool", content: [{ type: "tool-result", toolCallId: "x", toolName: "t", output: { type: "json", value: {} } } as never] },
+    ];
+    const out = stripReasoning(history);
+    expect(out[0]).toEqual(history[0]); // user ללא שינוי
+    expect((out[1]!.content as unknown[]).length).toBe(1); // tool-result נשמר
+  });
 });
