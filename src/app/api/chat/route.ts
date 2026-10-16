@@ -43,13 +43,24 @@ export async function POST(req: Request): Promise<Response> {
   // מסירים reasoning מההיסטוריה לפני שליחה (binding של thinking ב-Claude).
   const modelMessages = stripReasoning(await convertToModelMessages(messages));
 
-  // שומרים את הודעת המשתמש האחרונה (dedup לפי id) כדי שתשרוד רענון.
   const lastUser = [...messages].reverse().find((m) => m.role === "user");
-  if (lastUser) {
-    await service.appendMessages(ctx.caseId, owner, [
-      { role: "user", clientMessageId: lastUser.id, content: lastUser.parts },
-    ]).catch(() => {});
-  }
+
+  // שמירת הודעת המשתמש: מתוזמנת ב-void (לא חוסמת את המודל).
+  // runtime=nodejs — הלולאה ממשיכה אחרי שה-Response נשלח; ה-promise יושלם.
+  // ה-void בטוח כי: (א) Next.js Node runtime לא מסיים את ה-process בסיום הבקשה,
+  //                  (ב) הלקוח שולח את ההודעה שוב בכל תור (dedup על client_message_id).
+  // כשל בשמירה נרשם בלוג בלבד; הלקוח מציג את ההודעה ושולח אותה מחדש בתור הבא.
+  const tSave0 = Date.now();
+  const userSavePromise = lastUser
+    ? service.appendMessages(ctx.caseId, owner, [
+        { role: "user", clientMessageId: lastUser.id, content: lastUser.parts },
+      ]).then(() => {
+        console.log(`[measure] user-msg-save_ms=${Date.now() - tSave0}`);
+      }).catch((e) => {
+        console.warn("[measure] user-msg-save failed:", e instanceof Error ? e.message : String(e));
+      })
+    : Promise.resolve();
+  void userSavePromise;
 
   // --- חתך מבני (דגל): תוכנית פעולות בקריאת מודל אחת. מבצעת עדכונים/סימולציה/
   //     השוואה בקוד, מציגה כרטיס מהתוצאה השמורה, ומחזירה תשובה - בלי הבנה כפולה. ---
