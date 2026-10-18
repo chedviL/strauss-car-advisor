@@ -1,42 +1,79 @@
-# Strauss Car Advisor (yoetz harechev)
+# Strauss Car Advisor (יועץ הרכב של שטראוס)
 
-Hebrew net-salary simulator. Deterministic calculation in code; the model (next phase) runs the conversation and picks tools.
+סימולטור נטו בעברית לבחירת רכב. החישוב דטרמיניסטי בקוד; השיחה מתנהלת דרך מודל
+(Claude) שבוחר כלים. חילוץ תלושים דרך מודל נפרד (Gemini). מסלול השיחה הפעיל: B.
 
-## Local run (npm scripts)
-- install  -> installs deps
-- dev      -> employee screen at http://localhost:3000
-- test     -> Vitest suite
-- typecheck-> tsc --noEmit
-- build    -> Next.js production build
-- db:migrate -> apply SQL migrations (needs DATABASE_URL)
+## הרצה מקומית (npm scripts)
+- `install`   — התקנת תלויות
+- `dev`       — מסך העובד/ת ב-http://localhost:3000
+- `test`      — חבילת Vitest (יחידה + אינטגרציה מול Postgres/Supabase כש-env מוגדר)
+- `typecheck` — tsc --noEmit
+- `build`     — בניית פרודקשן של Next.js
+- `db:migrate`     — החלת מיגרציות SQL (דורש MIGRATION_DATABASE_URL)
+- `import:dataset` — יבוא ה-dataset למסד (דורש חיבור)
 
-## Current status (verified / pending)
-VERIFIED (51 tests pass): pure calc engine six-employee exact-shekel; electric gross-up +250 net (tolerance < 0.01 before display rounding); CSV import 77,988 rows windows-1255 + 20-vehicle catalog resolution; service slice create/alternative/compute/restore/isolation against FILE storage.
-PENDING (6 tests skipped until DATABASE_URL set): RLS, cross-user isolation, single-baseline constraint, concurrency against POSTGRES. Conversation (agent+model) not wired yet; marked unverified.
+הערה: אל תריצו `build` בזמן ש-`dev` פעיל, ואל תמחקו את `.next` תחת dev רץ
+(עלול לגרום ל-Internal Server Error / webpack cache פגום). אם קרה — עצרו dev,
+מחקו `.next`, הפעילו `dev` מחדש.
 
-## Supabase / Postgres connection
-Set these in .env.local locally (never pasted in chat, never in git). Copy .env.example to .env.local and fill:
-- DATABASE_URL : Supabase > Project Settings > Database > Connection string (URI), Session pooler or Direct, with DB password. REQUIRED now - enables Postgres + RLS.
-- SUPABASE_URL : Project Settings > API > Project URL (Auth/Storage/Realtime phases).
-- SUPABASE_ANON_KEY : Project Settings > API > anon public (Auth phase).
-- SUPABASE_SERVICE_ROLE_KEY : Project Settings > API > service_role (secret). Worker/admin only.
+## מצב המוצר — מומש מול נבדק בפועל
+מובחן בכוונה בין "מומש בקוד" לבין "נבדק בפועל" (end-to-end/בדפדפן).
 
-Steps:
-1. Create a project at https://supabase.com (or run Supabase locally via Docker).
-2. Set DATABASE_URL in .env.local.
-3. Apply migrations with the db:migrate script (applies supabase/migrations/0001_core_schema.sql: tables, constraints, RLS).
-4. Run the test script - Postgres tests run only when DATABASE_URL is set; otherwise skipped (NOT counted as Postgres verification).
+### נבדק בפועל (אוטומטי): 197 בדיקות עוברות, 0 נכשלו, 0 דולגו
+- **מנוע החישוב** (טהור): ששת עובדי הייחוס בהתאמה מדויקת לשקל; גילום חשמל +250 ₪
+  נטו; שווי שימוש בבסיס המס בלבד; אי-שליליות ומונוטוניות (property-based).
+- **יבוא נתונים**: CSV שווי שימוש (windows-1255) + קטלוג רכבים עם הכרעת provenance.
+- **מצב/הרשאות מול Postgres אמיתי (RLS)**: יצירה/חלופה/חישוב/שחזור; בידוד בין
+  בעלים; אילוץ baseline יחיד; קונפליקט גרסה; מקביליות שמירת הודעות.
+- **זרימת תלוש (צד שרת, חילוץ מדומה ללא מודל)**: העלאה → שמירת חילוץ → שחזור
+  חילוץ ממתין אחרי רענון → **אישור אטומי** (סימון applied + עדכון עובדות בטרנזקציה
+  אחת; קונפליקט מגלגל את שניהם) → זיהוי חוסר (null≠0) → השלמה → השוואה → שחזור →
+  אי-החלה כפולה → מדיניות אי-מחיקה אוטומטית בכשל.
+- **אחסון תלושים ב-Supabase Storage (חי)**: העלאה, מחיקה, בידוד נתיב, בידוד
+  בעלות דרך פעולות האפליקציה (RLS).
+- **מסך הנציג מול Postgres**: מענה → החלה → חישוב מחדש בצד שרת → שחזור; בידוד
+  בעלות; החלה-אם-רלוונטי (גרסה שהשתנתה); תחולה עתידית אינה מוחלת; אי-החלה כפולה.
+- **סיווג כשל חילוץ**: הבחנה בין כשל מכסה (429) לכשל פענוח; חילוץ metric + retryDelay.
 
-### How RLS is enforced
-PgCaseRepository opens a transaction per operation and sets app.owner_id via set_config(..., true) (transaction-scoped). RLS policies filter every query by current_setting('app.owner_id'). owner_id is server-injected only (visit cookie in demo, or auth.uid() in real auth) - never from the client.
+### מומש אך טרם נבדק מקצה-לקצה בפועל
+- **חילוץ תלוש אמיתי עם Gemini** מקובץ (PDF/סריקה). הפייפליין אומת מול PDF עם
+  שכבת טקסט; בדיקת הסריקות (ברורה/מעומעמת) ממתינה לאיפוס מכסת ה-free-tier.
+- **בדיקה ידנית בדפדפן** של זרימת התלוש המלאה (ראו docs/payslip-browser-test.md).
+- **הורדת הקובץ הבינארי מ-Supabase** — נחסמה בסביבת הפיתוח ע"י מסנן רשת (NetFree);
+  העלאה/מחיקה אומתו, הורדה טרם. אמורה לעבוד בפריסה. ראו docs/supabase-setup.md.
 
-## Architecture
-- src/domain/calculation : pure calc engine (decimal.js), no network/db/model.
-- src/domain/eligibility : deterministic eligibility.
-- src/server/repositories : CSV/catalog import; CaseRepository (File + Pg).
-- src/server/services : shared app services (UI/agent/worker).
-- src/app, src/features : Next.js App Router, Hebrew/RTL employee screen, design tokens.
-- supabase/migrations : DB schema of record with RLS and constraints.
+## חיבור Supabase / Postgres
+הגדירו ב-.env.local (לא בצ'אט, לא ב-git). העתיקו את .env.example ומלאו:
+- `DATABASE_URL`              — תפקיד האפליקציה (strauss_app) הכפוף ל-RLS. נדרש לריצה.
+- `MIGRATION_DATABASE_URL`    — תפקיד הבעלים, להרצת מיגרציות בלבד (לא לפריסה).
+- `SUPABASE_URL`              — Project URL (https://<ref>.supabase.co).
+- `SUPABASE_SERVICE_ROLE_KEY` — service_role (סוד; צד שרת בלבד) לאחסון התלושים.
+- `MODEL_API_KEY`             — Claude (שיחה).
+- `MODEL_API_KEY3`            — Gemini (חילוץ; גיבוי: MODEL_API_KEY2).
+- `CHAT_FAST_PATH=0`          — מסלול B הפעיל.
 
-Limits and open-decision status: see docs/decision-log.md.
-Hebrew spec docs: requirements/design/tasks under .kiro/specs/strauss-car-advisor/.
+פרטי התקנה מלאים: docs/supabase-setup.md. פריסת Vercel: docs/vercel-deploy.md.
+
+### אכיפת RLS
+PgCaseRepository פותח טרנזקציה לכל פעולה ומגדיר `app.owner_id` דרך
+`set_config(..., true)` (scope טרנזקציה). פוליסות RLS מסננות כל שאילתה לפי
+`current_setting('app.owner_id')`. ה-owner_id מוזרק מהשרת בלבד (cookie ביקור
+בדמו, או auth.uid() באימות אמיתי) — לעולם לא מהלקוח.
+
+## ארכיטקטורה
+- `src/domain/calculation` — מנוע חישוב טהור (decimal.js), ללא רשת/מסד/מודל.
+- `src/domain/eligibility` — זכאות דטרמיניסטית.
+- `src/server/repositories` — יבוא CSV/קטלוג; CaseRepository (File + Pg).
+- `src/server/services`     — שירותי אפליקציה משותפים (UI/סוכן/worker).
+- `src/server/agent`        — ריצת שיחה, כלים, חילוץ תלוש (Gemini).
+- `src/server/web`          — אחסון תלושים, בחירת backend, טעינת env.
+- `src/app`, `src/features` — Next.js App Router, מסך עברי/RTL, מסך נציג, design tokens.
+- `supabase/migrations`     — סכמת המסד עם RLS ואילוצים.
+
+## מגבלות ידועות
+- חילוץ תלוש תלוי במכסת Gemini החינמית; במיצוי מוחזרת הודעת 429 מתאימה, ללא
+  מעבר אוטומטי לספק בתשלום.
+- אחסון מקומי (STRAUSS_ALLOW_FILE_STORE=1) מיועד לפיתוח/בדיקות בלבד; בפרודקשן
+  הוא נכשל בבירור (חובה Supabase Storage).
+- מצב ההחלטות הפתוחות: docs/decision-log.md.
+- מסמכי האפיון (requirements/design/tasks) תחת .kiro/specs/strauss-car-advisor/.

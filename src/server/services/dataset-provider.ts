@@ -132,6 +132,8 @@ function loadRulesOnly(): { rules: RuleSet; appliedDefaults: string[]; rawRulesJ
  */
 export async function getActiveDatasetFromDb(connectionString: string): Promise<ActiveDataset> {
   if (dbDatasetCache) return dbDatasetCache;
+  // כללים מה-JSON הקטן (ארוז עם הפונקציה דרך outputFileTracingIncludes), ורכבים
+  // מ-Postgres. הקובץ הוא מקור האמת לזיהוי גרסה (content hash); המסד מאחסן עותק.
   const { rules, appliedDefaults, rawRulesJson } = loadRulesOnly();
   const repo = new _DatasetRepo(connectionString);
   try {

@@ -6,7 +6,7 @@
 //  - אחוזים כשבר (6% -> 0.06), כספים בשקלים.
 import { generateObject } from "ai";
 import { z } from "zod";
-import { getExtractionModel, getExtractionModelId } from "./model.js";
+import { getExtractionModel, getExtractionModelId, getModel, getModelId, BUDGET } from "./model.js";
 import type { AllowedMime } from "../web/payslip-storage.js";
 
 const fieldNum = z.object({
@@ -50,11 +50,11 @@ export async function extractPayslip(bytes: Buffer, mime: AllowedMime): Promise<
     "חלץ/י את שדות השכר מהתלוש המצורף לפי הסכמה בלבד. החזר/י JSON תקין יחיד. " +
     "נתון שאינו מופיע = value:null, confidence:\"low\". אל תוסיף/י שדות שאינם בסכמה.";
 
-  // ניסיון + ניסיון חוזר אחד *שלנו* (על כשל פענוח בלבד). maxRetries:0 מבטל את
-  // הניסיונות הפנימיים של ה-SDK, כדי לא לשרוף 3 קריאות מכסה חינמית לכל ניסיון.
-  async function once(extraNudge: string): Promise<PayslipExtraction> {
-    const { object } = await generateObject({
-      model: getExtractionModel(), // Gemini (Google), לא Claude
+  // קריאה בודדת לספק נתון. maxRetries:0 מבטל ניסיונות פנימיים של ה-SDK (לא לשרוף
+  // מכסה חינמית). מחזיר את התוצאה + usage (לחישוב עלות בגיבוי Claude).
+  async function runOnce(model: import("ai").LanguageModel, extraNudge: string) {
+    const res = await generateObject({
+      model,
       schema: extractionSchema,
       system: SYSTEM,
       maxRetries: 0,
@@ -63,23 +63,113 @@ export async function extractPayslip(bytes: Buffer, mime: AllowedMime): Promise<
       ],
       maxOutputTokens: 900,
     });
-    return object;
+    return res;
   }
 
+  // --- ספק ראשי: Gemini (מפתח/מכסה נפרדים מהשיחה) ---
+  const gemini = getExtractionModel();
   try {
-    return await once("");
+    return (await runOnce(gemini, "")).object;
   } catch (e) {
-    // כשל מכסה/קצב (429/RESOURCE_EXHAUSTED): עוצרים מיד עם שגיאה ממוינת -
-    // ללא ניסיון חוזר וללא מעבר לספק בתשלום. ה-route יציג הודעה מתאימה.
-    if (isQuotaError(e)) throw new PayslipQuotaError(quotaDetails(e));
-    // אחרת (כשל פענוח/ולידציה) -> ניסיון חוזר אחד בלבד, עם דגש JSON תקין.
+    if (isQuotaError(e)) {
+      // מכסת Gemini נוצלה. גיבוי ל-Claude *רק אם הופעל במפורש* ובכפוף לתקרות.
+      if (claudeFallbackEnabled()) {
+        return await extractWithClaude(bytes, mime, filePart, userText, runOnce, quotaDetails(e));
+      }
+      throw new PayslipQuotaError(quotaDetails(e));
+    }
+    // כשל פענוח/ולידציה -> ניסיון חוזר אחד (אותו ספק).
     try {
-      return await once(" שים/י לב: החזר/י אך ורק אובייקט JSON יחיד ותקין, ללא טקסט נוסף.");
+      return (await runOnce(gemini, " שים/י לב: החזר/י אך ורק אובייקט JSON יחיד ותקין, ללא טקסט נוסף.")).object;
     } catch (e2) {
-      if (isQuotaError(e2)) throw new PayslipQuotaError(quotaDetails(e2));
+      if (isQuotaError(e2)) {
+        if (claudeFallbackEnabled()) {
+          return await extractWithClaude(bytes, mime, filePart, userText, runOnce, quotaDetails(e2));
+        }
+        throw new PayslipQuotaError(quotaDetails(e2));
+      }
       throw e2;
     }
   }
+}
+
+// ----- גיבוי חילוץ באמצעות Claude (כבוי כברירת מחדל) -----
+
+/** מופעל רק כש-PAYSLIP_CLAUDE_FALLBACK=1. ברירת מחדל: כבוי. */
+export function claudeFallbackEnabled(): boolean {
+  return process.env.PAYSLIP_CLAUDE_FALLBACK === "1";
+}
+
+/** תקרת עמודים ל-PDF בגיבוי (ברירת מחדל 3). תמונה = עמוד אחד. */
+function maxPages(): number {
+  const n = Number(process.env.PAYSLIP_CLAUDE_MAX_PAGES ?? "3");
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 3;
+}
+
+/** תקרת עלות מצטברת (USD) לגיבוי Claude, לכל חיי התהליך. ברירת מחדל 0.50$. */
+function maxCumulativeUsd(): number {
+  const n = Number(process.env.PAYSLIP_CLAUDE_MAX_USD ?? "0.5");
+  return Number.isFinite(n) && n > 0 ? n : 0.5;
+}
+
+/** עלות מצטברת בפועל של גיבוי Claude (per-process). */
+let claudeSpendUsd = 0;
+export function getClaudeFallbackSpendUsd(): number { return claudeSpendUsd; }
+export function __resetClaudeSpend(): void { claudeSpendUsd = 0; }
+
+/** שגיאה: גיבוי Claude כבוי או שחרגנו מהתקרות. ה-route מטפל בה בנפרד. */
+export class PayslipFallbackUnavailable extends Error {
+  constructor(public readonly reason: "disabled" | "page_limit" | "cost_cap") {
+    super("payslip claude fallback unavailable: " + reason);
+    this.name = "PayslipFallbackUnavailable";
+  }
+}
+
+/** ספירת עמודי PDF ללא תלות חיצונית: ספירת אובייקטי Page. תמונה = 1. */
+export function countPages(bytes: Buffer, mime: AllowedMime): number {
+  if (mime !== "application/pdf") return 1;
+  const text = bytes.toString("latin1");
+  const matches = text.match(/\/Type\s*\/Page[^s]/g);
+  const n = matches ? matches.length : 1;
+  return n > 0 ? n : 1;
+}
+
+/** אומדן עלות קריאת Claude לחילוץ (USD), לפי קירוב טוקנים. לתצוגה לפני הפעלה. */
+export function estimateClaudeExtractionUsd(pages: number): { inputTokens: number; outputTokens: number; usd: number } {
+  // קירוב שמרני: ~1500 טוקני קלט לעמוד (תמונה/טקסט) + ~1000 טוקני מערכת/הנחיה,
+  // ו-~300 טוקני פלט (JSON קצר). משתמש בתמחור המאומת מ-BUDGET.
+  const inputTokens = 1000 + pages * 1500;
+  const outputTokens = 300;
+  const usd = inputTokens * BUDGET.usdPerInputToken + outputTokens * BUDGET.usdPerOutputToken;
+  return { inputTokens, outputTokens, usd: Math.round(usd * 10000) / 10000 };
+}
+
+async function extractWithClaude(
+  bytes: Buffer,
+  mime: AllowedMime,
+  _filePart: unknown,
+  _userText: string,
+  runOnce: (model: import("ai").LanguageModel, nudge: string) => Promise<import("ai").GenerateObjectResult<PayslipExtraction>>,
+  geminiQuota: QuotaDetails,
+): Promise<PayslipExtraction> {
+  void geminiQuota;
+  // תקרת עמודים: PDF ארוך נחסם (עלות/הקשר). תמונה = עמוד אחד.
+  const pages = countPages(bytes, mime);
+  if (pages > maxPages()) throw new PayslipFallbackUnavailable("page_limit");
+
+  // תקרת עלות מצטברת: אם האומדן יחרוג מהתקרה - לא קוראים.
+  const est = estimateClaudeExtractionUsd(pages);
+  if (claudeSpendUsd + est.usd > maxCumulativeUsd()) throw new PayslipFallbackUnavailable("cost_cap");
+
+  // ניסיון יחיד בלבד (ללא retry) דרך Claude. אם ייכשל - מתפשט.
+  const model = getModel(); // Claude (MODEL_API_KEY)
+  const res = await runOnce(model, "");
+  const inTok = res.usage?.inputTokens ?? est.inputTokens;
+  const outTok = res.usage?.outputTokens ?? est.outputTokens;
+  const spent = inTok * BUDGET.usdPerInputToken + outTok * BUDGET.usdPerOutputToken;
+  claudeSpendUsd += spent;
+  console.warn(`[payslip] claude fallback used: model=${getModelId()} pages=${pages} inTok=${inTok} outTok=${outTok} usd=${spent.toFixed(4)} cumUsd=${claudeSpendUsd.toFixed(4)}`);
+  return res.object;
 }
 
 /** פרטי כשל מכסה (לוג בלבד): המכסה שנחסמה וזמן ההמתנה המומלץ אם נמסר. */

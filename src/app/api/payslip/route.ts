@@ -11,9 +11,10 @@ import { caseService } from "../../../server/web/service.js";
 import { getOrCreateVisitOwner } from "../../../server/web/visit.js";
 import {
   validatePayslip, storePayslip, readPayslipBytes,
-  saveExtraction, discardPayslip, loadPendingExtraction,
+  saveExtraction, discardPayslip, loadPendingExtraction, loadExtractionByUpload,
 } from "../../../server/web/payslip-storage.js";
-import { extractPayslip, PayslipQuotaError, type PayslipExtraction } from "../../../server/agent/payslip-extract.js";
+import { extractPayslip, PayslipQuotaError, PayslipFallbackUnavailable, type PayslipExtraction } from "../../../server/agent/payslip-extract.js";
+import { checkRateLimit } from "../../../server/web/rate-limit.js";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -58,6 +59,11 @@ export async function POST(req: Request): Promise<Response> {
 
   try {
     if (action === "upload") {
+      // הגבלת קצב: עד 10 העלאות לדקה לכל בעלים (קו הגנה ראשון; RLS הוא המהותי).
+      const rl = checkRateLimit(`payslip-upload:${owner}`, 10, 60_000);
+      if (!rl.allowed) {
+        return json({ error: "יותר מדי העלאות בזמן קצר. נסו שוב בעוד רגע.", kind: "rate_limit", retryAfterSeconds: rl.retryAfterSeconds }, 429);
+      }
       const form = await req.formData();
       const file = form.get("file");
       if (!(file instanceof File)) return json({ error: "לא צורף קובץ." }, 400);
@@ -83,6 +89,19 @@ export async function POST(req: Request): Promise<Response> {
     if (action === "extract") {
       const body = (await req.json().catch(() => ({}))) as { uploadId?: string };
       if (!body.uploadId) return json({ error: "חסר מזהה העלאה." }, 400);
+
+      // מניעת קריאת מודל חוזרת: אם כבר קיים חילוץ שמור לאותו מסמך (רענון/לחיצה
+      // כפולה), מחזירים אותו מיד - *ללא* קריאת מודל ו*ללא* צריכת מגבלת הקצב.
+      const cached = await loadExtractionByUpload({ connectionString: conn, ownerId: owner, uploadId: body.uploadId }).catch(() => null);
+      if (cached) {
+        return json({ status: "extracted", uploadId: body.uploadId, extraction: cached, cached: true });
+      }
+
+      // הגבלת קצב לחילוץ (קריאת מודל): עד 6 חילוצים לדקה לכל בעלים.
+      const rlx = checkRateLimit(`payslip-extract:${owner}`, 6, 60_000);
+      if (!rlx.allowed) {
+        return json({ error: "יותר מדי בקשות חילוץ בזמן קצר. נסו שוב בעוד רגע.", kind: "rate_limit", retryAfterSeconds: rlx.retryAfterSeconds }, 429);
+      }
       const file = await readPayslipBytes({ connectionString: conn, ownerId: owner, uploadId: body.uploadId });
       if (!file) return json({ error: "הקובץ לא נמצא או אינו שייך לך." }, 404);
       let extraction: PayslipExtraction;
@@ -101,6 +120,15 @@ export async function POST(req: Request): Promise<Response> {
               : "מכסת החילוץ האוטומטי נוצלה כרגע. אפשר לנסות שוב מאוחר יותר, או להזין ידנית ב״הפרטים שלי״.",
             kind: "quota",
             retryAfterSeconds: d.retryAfterSeconds ?? null,
+            canRetry: true,
+          }, 429);
+        }
+        if (e instanceof PayslipFallbackUnavailable) {
+          // מכסת Gemini נוצלה וגיבוי Claude אינו זמין (כבוי/תקרת עמודים/תקרת עלות).
+          console.warn(`[payslip] fallback unavailable: ${e.reason}`);
+          return json({
+            error: "חילוץ אוטומטי אינו זמין כרגע. אפשר לנסות שוב מאוחר יותר, או להזין את הנתונים ידנית ב״הפרטים שלי״.",
+            kind: "quota",
             canRetry: true,
           }, 429);
         }

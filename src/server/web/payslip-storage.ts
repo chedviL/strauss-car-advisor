@@ -121,6 +121,24 @@ export async function saveExtraction(args: {
 }
 
 /**
+ * שולף חילוץ שמור לפי מזהה העלאה (אם קיים, טרם הוחל, ושייך לבעלים).
+ * משמש למניעת קריאת מודל חוזרת לאותו מסמך (רענון/לחיצה כפולה).
+ */
+export async function loadExtractionByUpload(args: {
+  connectionString: string; ownerId: string; uploadId: string;
+}): Promise<unknown | null> {
+  const { connectionString, ownerId, uploadId } = args;
+  return await withOwnerTx(connectionString, ownerId, async (client) => {
+    const r = await client.query(
+      "select extraction from payslip_uploads where id=$1 and extraction is not null and applied_at is null",
+      [uploadId],
+    );
+    if (r.rowCount === 0) return null;
+    return r.rows[0].extraction;
+  });
+}
+
+/**
  * סימון החלה - אטומי ומונע כפילות: מצליח רק אם applied_at עדיין null.
  * מחזיר true אם סומן כעת (ראשוני), false אם כבר הוחל (אין להחיל שוב).
  */

@@ -132,6 +132,32 @@ export class DatasetRepository {
     });
   }
 
+  /**
+   * טוען את ה-dataset הפעיל ישירות מהמסד (מקור האמת): ה-dataset העדכני ביותר,
+   * ה-rawRulesJson השמור ב-rule_sets.config, ו-content_hash של גרסת הכללים.
+   * ללא קריאת קבצים מקומיים - לפריסה (Vercel) שבה אין את קבצי המקור ארוזים.
+   */
+  async loadActiveDataset(): Promise<{ datasetId: string; rawRulesJson: string; ruleSetHash: string } | null> {
+    return withClient(this.conn, async (client) => {
+      const r = await client.query(
+        `select d.id as dataset_id, r.config as config, r.content_hash as content_hash
+           from datasets d
+           join rule_sets r on r.id = d.rule_set_id
+         order by d.imported_at desc
+         limit 1`,
+      );
+      if (!r.rowCount || !r.rows[0]) return null;
+      const cfg = r.rows[0].config;
+      // config נשמר כ-jsonb מתוך rawRulesJson; מחזירים כמחרוזת לפרסור אחיד.
+      const rawRulesJson = typeof cfg === "string" ? cfg : JSON.stringify(cfg);
+      return {
+        datasetId: r.rows[0].dataset_id as string,
+        rawRulesJson,
+        ruleSetHash: r.rows[0].content_hash as string,
+      };
+    });
+  }
+
   /** טוען את רכבי ה-dataset מהמסד (20 שורות) - ללא פענוח CSV בזמן ריצה. */
   async loadDatasetVehicles(datasetId: string): Promise<ResolvedVehicle[]> {
     return withClient(this.conn, async (client) => {
