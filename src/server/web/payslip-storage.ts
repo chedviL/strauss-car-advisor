@@ -3,18 +3,15 @@
 // ומטא-דאטה בטבלת payslip_uploads (RLS לפי בעלות). תוכן המסמך = נתונים בלבד.
 // אין להסיק נתיב מהשם המקורי; stored_key הוא מזהה אטום שנוצר בשרת.
 
-import { randomUUID, createHash } from "node:crypto";
-import { mkdir, writeFile, readFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { randomUUID } from "node:crypto";
 import { getPool } from "../repositories/pg-pool.js";
+import { putBlob, getBlob, deleteBlob, type StorageBackend } from "./payslip-blob.js";
 
 // סוגים נתמכים בלבד (PDF כולל סרוק, ותמונות). MIME + חתימת-בייטים.
 export const ALLOWED_MIME = ["application/pdf", "image/jpeg", "image/png", "image/webp"] as const;
 export type AllowedMime = (typeof ALLOWED_MIME)[number];
 export const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
 
-// שורש אחסון פרטי - מחוץ ל-public; לא מוגש כקובץ סטטי.
-const UPLOAD_ROOT = resolve(process.cwd(), "data", "uploads");
 
 export interface StoredPayslip {
   id: string;          // מזהה שורת המטא-דאטה
@@ -62,25 +59,26 @@ export async function storePayslip(args: {
   originalName: string | null;
 }): Promise<StoredPayslip> {
   const { connectionString, ownerId, caseId, bytes, mime, originalName } = args;
-  // stored_key אטום: hash(owner)+uuid. התיקייה לפי hash של הבעלים (לא הזהות עצמה).
-  const ownerDir = createHash("sha256").update(ownerId).digest("hex").slice(0, 32);
   const storedKey = randomUUID();
-  const dir = join(UPLOAD_ROOT, ownerDir);
-  await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, storedKey), Buffer.from(bytes), { mode: 0o600 });
+  // כותבים קודם את הבייטים ל-backend הפעיל (local/supabase); אם נכשל - לא נוצרת שורה.
+  const backend: StorageBackend = await putBlob(ownerId, storedKey, bytes, mime);
 
   const pool = getPool(connectionString);
   const client = await pool.connect();
   try {
     await client.query("begin");
     await client.query("select set_config('app.owner_id', $1, true)", [ownerId]);
-    // ודא שהתיק שייך לבעלים (RLS יחסום אחרת); ואז הכנס מטא-דאטה.
+    // בדיקת בעלות בהעלאה: התיק חייב להיות של הבעלים (RLS). אחרת מוחקים את ה-blob.
     const owned = await client.query("select 1 from cases where id = $1", [caseId]);
-    if (owned.rowCount === 0) { await client.query("rollback"); client.release(); throw new Error("case not found for owner"); }
+    if (owned.rowCount === 0) {
+      await client.query("rollback"); client.release();
+      await deleteBlob(backend, ownerId, storedKey).catch(() => {});
+      throw new Error("case not found for owner");
+    }
     const r = await client.query(
-      `insert into payslip_uploads (case_id, stored_key, mime, size_bytes, original_name, status)
-       values ($1,$2,$3,$4,$5,'uploaded') returning id`,
-      [caseId, storedKey, mime, bytes.length, originalName],
+      `insert into payslip_uploads (case_id, stored_key, mime, size_bytes, original_name, status, storage_backend)
+       values ($1,$2,$3,$4,$5,'uploaded',$6) returning id`,
+      [caseId, storedKey, mime, bytes.length, originalName, backend],
     );
     await client.query("commit");
     client.release();
@@ -102,14 +100,14 @@ export async function readPayslipBytes(args: {
   try {
     await client.query("begin");
     await client.query("select set_config('app.owner_id', $1, true)", [ownerId]);
-    const r = await client.query("select stored_key, mime from payslip_uploads where id = $1", [uploadId]);
+    const r = await client.query("select stored_key, mime, storage_backend from payslip_uploads where id = $1", [uploadId]);
     await client.query("commit");
     client.release();
-    if (r.rowCount === 0) return null; // RLS: לא שייך לבעלים -> אין שורה
+    if (r.rowCount === 0) return null; // RLS: לא שייך לבעלים -> אין שורה (בדיקת בעלות בקריאה)
     const storedKey = r.rows[0].stored_key as string;
     const mime = r.rows[0].mime as AllowedMime;
-    const ownerDir = createHash("sha256").update(ownerId).digest("hex").slice(0, 32);
-    const bytes = await readFile(join(UPLOAD_ROOT, ownerDir, storedKey));
+    const backend = (r.rows[0].storage_backend as StorageBackend) ?? "local";
+    const bytes = await getBlob(backend, ownerId, storedKey);
     return { bytes, mime };
   } catch (e) {
     try { await client.query("rollback"); } catch { /* ignore */ }
@@ -148,14 +146,21 @@ export async function markApplied(args: {
   });
 }
 
-/** מסמן discarded (ביטול/כשל). */
+/** מסמן discarded ומוחק את ה-blob (ביטול/כשל). מחיקה רק לשורה ששייכת לבעלים (RLS). */
 export async function discardPayslip(args: {
   connectionString: string; ownerId: string; uploadId: string;
 }): Promise<void> {
   const { connectionString, ownerId, uploadId } = args;
-  await withOwnerTx(connectionString, ownerId, async (client) => {
-    await client.query("update payslip_uploads set status='discarded' where id=$1 and status <> 'applied'", [uploadId]);
+  const toDelete = await withOwnerTx(connectionString, ownerId, async (client) => {
+    // בדיקת בעלות במחיקה: UPDATE מסונן RLS; RETURNING רק אם השורה של הבעלים.
+    const r = await client.query(
+      "update payslip_uploads set status='discarded' where id=$1 and status <> 'applied' returning stored_key, storage_backend",
+      [uploadId],
+    );
+    if (r.rowCount === 0) return null;
+    return { storedKey: r.rows[0].stored_key as string, backend: (r.rows[0].storage_backend as StorageBackend) ?? "local" };
   });
+  if (toDelete) await deleteBlob(toDelete.backend, ownerId, toDelete.storedKey).catch(() => {});
 }
 
 /**
