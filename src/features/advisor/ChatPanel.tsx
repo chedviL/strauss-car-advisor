@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
+import { PayslipUpload } from "./PayslipUpload.js";
 
 
 export interface ChatPanelProps {
@@ -113,16 +114,8 @@ export function ChatPanel({ initialMessages = [], showExamples = false }: ChatPa
       {/* קומפוזר - תמיד בתחתית, אינו מסתיר הודעות */}
       <div style={{ borderTop: empty ? "none" : "1px solid var(--color-border)", padding: "var(--space-3)", background: "var(--color-surface)" }}>
         <form onSubmit={submit} style={{ display: "flex", gap: "var(--space-2)", alignItems: "flex-end" }}>
-          {/* צירוף תלוש - מושבת עד שההעלאה תעבוד (מופיע אפור עם הסבר) */}
-          <button
-            type="button"
-            className="icon-btn"
-            disabled
-            title="העלאת תלוש - בקרוב"
-            aria-label="העלאת תלוש (בקרוב)"
-          >
-            <PaperclipIcon />
-          </button>
+          {/* צירוף תלוש: העלאה + חילוץ (באישור) + אישור/עריכה + החלה על התיק */}
+          <PayslipUpload onApplied={() => router.refresh()} />
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -169,13 +162,7 @@ function TypingHint() {
   );
 }
 
-function PaperclipIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M21.44 11.05 12.25 20.24a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-    </svg>
-  );
-}
+
 type SavePhaseUI = "saving" | "retrying" | "saved" | "failed" | null;
 
 // מצב השמירה של התור האחרון מתוך data-saveStatus בהודעת העוזר האחרונה.
