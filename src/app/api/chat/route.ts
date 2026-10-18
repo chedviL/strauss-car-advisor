@@ -14,7 +14,7 @@ import {
   consumeStream, type UIMessage,
 } from "ai";
 import { caseService } from "../../../server/web/service.js";
-import { getOrCreateVisitOwner } from "../../../server/web/visit.js";
+import { getSessionUser } from "../../../server/auth/next-session.js";
 import { streamChat, stripReasoning, type ChatBudgetState } from "../../../server/agent/chat-runtime.js";
 import type { ToolContext } from "../../../server/agent/tool-contracts.js";
 import { fastPathEnabled } from "../../../server/agent/model.js";
@@ -68,8 +68,13 @@ export async function POST(req: Request): Promise<Response> {
 }
 
 async function handleChat(req: Request): Promise<Response> {
+  // הבעלים = המשתמש המאומת (סשן Supabase), לעולם לא ערך מהלקוח או עוגיית ביקור.
+  const user = await getSessionUser();
+  if (!user) {
+    return new Response(JSON.stringify({ error: "auth_required" }), { status: 401, headers: { "content-type": "application/json" } });
+  }
+  const owner = user.id;
   const { messages }: { messages: UIMessage[] } = await req.json();
-  const owner = await getOrCreateVisitOwner();
   const store = await cookies();
   let caseId = store.get("strauss_case")?.value ?? null;
   const service = caseService();

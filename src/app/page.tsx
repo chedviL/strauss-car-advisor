@@ -1,7 +1,10 @@
 // src/app/page.tsx
 // מסך העובד/ת. השיחה והתוצאות במרכז; "הפרטים שלי" במגירה (סגורה כברירת מחדל).
 // כותרת-טקסט (wordmark) - אין לוגו מקורי בפרויקט, ולכן לא ממציאים סמל.
-import { readVisitOwner } from "../server/web/visit.js";
+import { getSessionUser } from "../server/auth/next-session.js";
+import { redirect } from "next/navigation";
+import { AccountMenu } from "../features/auth/AccountMenu.js";
+import { myStaffScope } from "./actions.js";
 import { caseService } from "../server/web/service.js";
 import { cookies } from "next/headers";
 import { ComparisonView } from "../features/advisor/ComparisonView.js";
@@ -18,7 +21,11 @@ const BLANK_FACTS: CaseFacts = {
 };
 
 export default async function Page() {
-  const owner = await readVisitOwner();
+  // הבעלות = המשתמש המאומת. הרשאה נקבעת בשרת; עוגיית strauss_case היא מצביע בלבד.
+  const user = await getSessionUser();
+  if (!user) redirect("/login");
+  const owner = user.id;
+  const staff = await myStaffScope();
   const caseId = (await cookies()).get("strauss_case")?.value ?? null;
 
   let state: CaseState | null = null;
@@ -36,7 +43,7 @@ export default async function Page() {
 
   return (
     <main style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
-      <TopBar facts={facts} />
+      <TopBar facts={facts} email={user.email} isStaff={staff.isStaff} />
       <DemoBadge />
 
       <div style={{ flex: 1, width: "100%", maxWidth: 820, margin: "0 auto", padding: "0 var(--space-4) var(--space-6)", display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
@@ -69,7 +76,7 @@ export default async function Page() {
   );
 }
 
-function TopBar({ facts }: { facts: CaseFacts }) {
+function TopBar({ facts, email, isStaff }: { facts: CaseFacts; email: string | null; isStaff: boolean }) {
   return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "var(--space-3) var(--space-4)", maxWidth: 1100, margin: "0 auto", width: "100%" }}>
       <div style={{ fontWeight: 800, fontSize: "var(--font-lg)", letterSpacing: "-0.01em" }}>
@@ -78,7 +85,7 @@ function TopBar({ facts }: { facts: CaseFacts }) {
       <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "center" }}>
         <MyDetailsDrawer facts={facts} />
         <NewConversationButton />
-        <a className="btn-ghost btn" href="/representative" aria-label="אזור נציג" style={{ borderRadius: "var(--radius-pill)" }}>אזור נציג</a>
+        <AccountMenu email={email} isStaff={isStaff} showInquiriesLink />
       </div>
     </div>
   );

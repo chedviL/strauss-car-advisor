@@ -16,6 +16,7 @@
 - `DATABASE_URL`              — חיבור תפקיד האפליקציה strauss_app (RLS). מומלץ Supavisor transaction mode (6543).
 - `SUPABASE_URL`             — https://<project-ref>.supabase.co (בלי נתיב, בלי / בסוף).
 - `SUPABASE_SERVICE_ROLE_KEY`— מפתח service_role (סוד; צד שרת בלבד).
+- `SUPABASE_ANON_KEY`         — מפתח ציבורי (anon/publishable) להתחברות בקוד חד-פעמי. **חובה**: בלעדיו האתר חסום. ראו docs/auth-setup.md.
 - `MODEL_API_KEY`            — מפתח Claude (שיחה).
 - `MODEL_API_KEY3`           — מפתח Gemini הפעיל לחילוץ תלושים (החליף את KEY2).
 - `MODEL_API_KEY2`           — מפתח Gemini גיבוי לחילוץ (אם KEY3 לא הוגדר). אופציונלי אם KEY3 קיים.

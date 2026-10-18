@@ -102,6 +102,17 @@ export interface RepInquiryContext {
   currentParticipation: number | null;
 }
 
+/** שורת "בירור" ברשימת הבירורים של המשתמש/ת. הכותרת נגזרת מההודעה הראשונה. */
+export interface CaseSummary {
+  caseId: string;
+  title: string | null;       // קטע מההודעה הראשונה של המשתמש/ת (null לתיק שעוד אין בו הודעות)
+  messageCount: number;
+  hasComparison: boolean;
+  hasOpenInquiry: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface CaseRepository {
   createCase(input: {
     ownerId: string;
@@ -113,6 +124,8 @@ export interface CaseRepository {
   /** טוען מצב תיק רק אם הוא בבעלות ownerId; אחרת null (בלי לחשוף קיום). */
   getCaseState(caseId: string, ownerId: string): Promise<CaseState | null>;
   listCasesByOwner(ownerId: string): Promise<CaseRecord[]>;
+  /** בירורים של הבעלים בלבד (לפי RLS/בעלות), מהעדכני לישן. */
+  listCaseSummaries(ownerId: string, limit?: number): Promise<CaseSummary[]>;
   upsertAlternative(
     caseId: string,
     ownerId: string,
@@ -299,6 +312,27 @@ export class FileCaseRepository implements CaseRepository {
       (f) => (JSON.parse(readFileSync(join(dir, f), "utf8")) as StoredCase).case,
     );
     return cases.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
+  async listCaseSummaries(ownerId: string, limit = 50): Promise<CaseSummary[]> {
+    const dir = this.ownerDir(ownerId);
+    if (!existsSync(dir)) return [];
+    const out: CaseSummary[] = [];
+    for (const f of readdirSync(dir).filter((x) => x.endsWith(".json"))) {
+      const s = JSON.parse(readFileSync(join(dir, f), "utf8")) as StoredCase;
+      if (s.case.ownerId !== ownerId) continue;
+      const firstUser = [...(s.messages ?? [])].sort((a, b) => a.seq - b.seq).find((m) => m.role === "user");
+      out.push({
+        caseId: s.case.id,
+        title: firstUser ? titleFromParts(firstUser.content) : null,
+        messageCount: (s.messages ?? []).length,
+        hasComparison: s.comparisons.length > 0,
+        hasOpenInquiry: (s.inquiries ?? []).some((q) => q.status === "open"),
+        createdAt: s.case.createdAt,
+        updatedAt: s.case.updatedAt,
+      });
+    }
+    return out.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, limit);
   }
 
   async upsertAlternative(
@@ -580,4 +614,12 @@ export class FileCaseRepository implements CaseRepository {
     if (!stored || stored.case.ownerId !== ownerId) return null;
     return (stored.compareRuns ?? []).find((r) => r.id === runId) ?? null;
   }
+}
+
+/** כותרת בירור מתוך חלקי הודעה: טקסט בלבד, מקוצר. לא נכלל תוכן מסמכים (הם אינם בהיסטוריה). */
+export function titleFromParts(content: unknown, max = 70): string | null {
+  const parts = Array.isArray(content) ? (content as Array<{ type?: string; text?: string }>) : [];
+  const text = parts.filter((p) => p?.type === "text" && typeof p.text === "string").map((p) => p.text).join(" ").replace(/\s+/g, " ").trim();
+  if (!text) return null;
+  return text.length > max ? text.slice(0, max - 1).trimEnd() + "…" : text;
 }

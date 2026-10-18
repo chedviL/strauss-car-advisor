@@ -20,8 +20,6 @@ type RepInquiry = {
     effectiveFrom: string | null;
     answeredAt: string | null;
   };
-  caseId: string;
-  currentFactsRevision: number;
   scenarioRole: "baseline" | "alternative" | null;
   route: "company_car" | "family" | "waiver" | null;
   vehicleCode: string | null;
@@ -118,6 +116,8 @@ function InquiryCard({ q }: { q: RepInquiry }) {
             ? "פנייה זו אינה ערך-החלה (הבהרה בלבד); התשובה נרשמה."
             : "התשובה נרשמה אך לא הוחלה (אין תרחיש מקושר).";
         setMsg({ tone: "warn", text: why });
+      } else if (res.status === "forbidden") {
+        setMsg({ tone: "err", text: "אין לך הרשאה לענות על פנייה זו." });
       } else if (res.status === "error") {
         setMsg({ tone: "err", text: res.message });
       } else {

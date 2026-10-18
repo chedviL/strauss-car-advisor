@@ -26,7 +26,9 @@ import type {
   StoredMessage,
   StoredCompareRun,
   RepInquiryContext,
+  CaseSummary,
 } from "./case-repository.js";
+import { titleFromParts } from "./case-repository.js";
 
 /** שגיאת-בקרה פנימית לגלגול-אחור של טרנזקציית apply בקונפליקט גרסה. */
 class PayslipConflict extends Error {
@@ -139,6 +141,32 @@ export class PgCaseRepository implements CaseRepository {
     return this.withOwner(ownerId, async (c) => {
       const r = await c.query("select * from cases order by updated_at desc");
       return r.rows.map(mapCase);
+    });
+  }
+
+  async listCaseSummaries(ownerId: string, limit = 50): Promise<CaseSummary[]> {
+    return this.withOwner(ownerId, async (c) => {
+      // RLS מסנן לתיקי הבעלים; ההודעות והפניות מסוננות דרך אותה בעלות.
+      const r = await c.query(
+        `select c.id, c.created_at, c.updated_at,
+         (select m.content from messages m where m.case_id = c.id and m.role = 'user' order by m.seq limit 1) as first_user,
+         (select count(*)::int from messages m where m.case_id = c.id) as msg_count,
+         exists (select 1 from comparisons k where k.case_id = c.id) as has_comparison,
+         exists (select 1 from inquiries i where i.case_id = c.id and i.status = 'open') as has_open
+       from cases c
+      order by c.updated_at desc
+      limit $1`,
+        [limit],
+      );
+      return r.rows.map((row) => ({
+        caseId: row.id as string,
+        title: row.first_user ? titleFromParts(row.first_user) : null,
+        messageCount: row.msg_count as number,
+        hasComparison: row.has_comparison as boolean,
+        hasOpenInquiry: row.has_open as boolean,
+        createdAt: iso(row.created_at),
+        updatedAt: iso(row.updated_at),
+      }));
     });
   }
 

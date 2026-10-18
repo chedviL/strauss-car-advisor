@@ -8,7 +8,7 @@
 
 import { cookies } from "next/headers";
 import { caseService } from "../../../server/web/service.js";
-import { getOrCreateVisitOwner } from "../../../server/web/visit.js";
+import { getSessionUser } from "../../../server/auth/next-session.js";
 import {
   validatePayslip, storePayslip, readPayslipBytes,
   saveExtraction, discardPayslip, loadPendingExtraction, loadExtractionByUpload,
@@ -37,7 +37,9 @@ async function activeCaseId(owner: string): Promise<string> {
 }
 
 export async function GET(req: Request): Promise<Response> {
-  const owner = await getOrCreateVisitOwner();
+  const user = await getSessionUser();
+  if (!user) return json({ error: "auth_required" }, 401);
+  const owner = user.id;
   const conn = process.env.DATABASE_URL;
   if (!conn) return json({ pending: null });
   const url = new URL(req.url);
@@ -50,7 +52,9 @@ export async function GET(req: Request): Promise<Response> {
 }
 
 export async function POST(req: Request): Promise<Response> {
-  const owner = await getOrCreateVisitOwner();
+  const user = await getSessionUser();
+  if (!user) return json({ error: "auth_required" }, 401);
+  const owner = user.id;
   const conn = process.env.DATABASE_URL;
   if (!conn) return json({ error: "אחסון לא זמין בסביבה זו." }, 503);
   const service = caseService();

@@ -1,14 +1,15 @@
 // src/app/actions.ts
 "use server";
 // Server Actions - משתמשות בשירות האפליקציה. אין חישוב כאן; רק תזמור.
-// owner_id מוזרק מהשרת (cookie), לעולם לא מהלקוח.
+// owner_id = המשתמש המאומת בשרת (סשן Supabase), לעולם לא מהלקוח.
 
 import { revalidatePath } from "next/cache";
 import { caseService } from "../server/web/service.js";
-import { getOrCreateVisitOwner, readVisitOwner } from "../server/web/visit.js";
+import { requireOwner, requireUser, AuthRequiredError } from "../server/auth/next-session.js";
+import { answerAsStaff, getStaffScope, listRepInquiries, ForbiddenError } from "../server/auth/staff.js";
 
 export async function startDemoCase(employeeId: string): Promise<void> {
-  const owner = await getOrCreateVisitOwner();
+  const owner = await requireOwner();
   const service = caseService();
 
   // זרימת דמו מלאה בקריאת שירות אחת: יצירה + חלופה + חישוב+שמירה, עם מינימום round-trips.
@@ -23,6 +24,21 @@ export async function startDemoCase(employeeId: string): Promise<void> {
   revalidatePath("/");
 }
 
+/**
+ * "המשך בירור קודם": קובע את התיק הפעיל רק אם הוא בבעלות המשתמש/ת המאומת/ת.
+ * העוגייה היא מצביע נוחות בלבד - ההרשאה נבדקת כאן ושוב בכל בקשה (RLS לפי בעלות).
+ */
+export async function openCase(caseId: string): Promise<{ status: "ok" } | { status: "not_found" }> {
+  const owner = await requireOwner();
+  const state = await caseService().getCaseState(caseId, owner);
+  if (!state) return { status: "not_found" };
+  const { cookies } = await import("next/headers");
+  (await cookies()).set("strauss_case", state.case.id, {
+    httpOnly: true, sameSite: "lax", path: "/", maxAge: 60 * 60 * 24 * 7,
+  });
+  revalidatePath("/");
+  return { status: "ok" };
+}
 export async function resetDemo(): Promise<void> {
   const { cookies } = await import("next/headers");
   (await cookies()).delete("strauss_case");
@@ -62,7 +78,7 @@ export async function updateMyFacts(
     qualifyingChildren: number | null;
   }>,
 ): Promise<{ status: "ok"; factsRevision: number } | { status: "conflict" } | { status: "no_case" }> {
-  const owner = await getOrCreateVisitOwner();
+  const owner = await requireOwner();
   const service = caseService();
   const { cookies } = await import("next/headers");
   const store = await cookies();
@@ -98,7 +114,7 @@ export async function updateMyFacts(
 export async function fillSampleData(
   force = false,
 ): Promise<{ status: "ok" } | { status: "needs_confirm"; existing: string[] } | { status: "error"; message: string }> {
-  const owner = await getOrCreateVisitOwner();
+  const owner = await requireOwner();
   const service = caseService();
   const { cookies } = await import("next/headers");
   const store = await cookies();
@@ -144,30 +160,47 @@ export async function fillSampleData(
   }
 }
 
-/**
- * --- מודל ההרשאה של אזור הנציג (חשוב, מתועד במפורש) ---
- * זהו *מסלול הדגמה מבוסס-ביקור*, לא הרשאת נציג אמיתית (RBAC).
- * - מי רשאי לקרוא/לענות: רק הבעלים של אותו ביקור (owner_id מתוך cookie httpOnly
- *   בשם strauss_visit, שהשרת מזריק; הלקוח לעולם אינו קובע אותו). כל פנייה שאינה
- *   בבעלות הביקור חסומה ב-RLS ומוחזרת כ-not_found - גם בקריאה ישירה לפעולת המענה.
- * - עובד/ת רגיל/ה שתקרא ישירות ל-answerRepInquiry עם מזהה פנייה שאינו שלה תקבל
- *   not_found (ראו tests/integration/pg-rep-inquiry.test.ts "בידוד בעלות").
- * - בפריסת אמת: נדרשת הרשאת נציג נפרדת המוקצית במנגנון ניהולי מוגן, והרשאה
- *   זו תחליף את בידוד-הביקור. אין להציג את מסלול ההדגמה כהרשאות נציג אמיתיות.
- *
- * loadRepInquiries: מחזיר את פניות הביקור עם ההקשר המינימלי להכרעה בלבד -
- * סוג, מסלול/רכב/קבוצה, גרסת עובדות וערך השתתפות נוכחי. אין שכר/נטו/פרטים אישיים.
- */
-export async function loadRepInquiries() {
-  const owner = await readVisitOwner();
-  if (!owner) return [];
-  const service = caseService();
-  return await service.listInquiriesForRep(owner);
+// ===================== נציג =====================
+// הגישה נקבעת בשרת לפי תפקיד פעיל + היקף סוגי פניות (טבלת staff_roles, נכתבת רק
+// בערוץ ניהולי) ונאכפת שוב ב-SQL דרך פונקציות SECURITY DEFINER. עובד רגיל שקורא
+// ישירות לפעולות אלה מקבל forbidden - גם אם ניחש מזהה פנייה תקף.
+// הלקוח אינו שולח בעלים או תפקיד; השרת גוזר אותם מהסשן המאומת.
+
+
+function dbUrl(): string {
+  const c = process.env.DATABASE_URL;
+  if (!c || c.trim() === "") throw new Error("DATABASE_URL אינו מוגדר");
+  return c;
+}
+
+/** האם למשתמש המאומת יש תפקיד נציג פעיל (להצגת הקישור; השער האמיתי בשרת). */
+export async function myStaffScope(): Promise<{ isStaff: boolean }> {
+  try {
+    const user = await requireUser();
+    const scope = await getStaffScope(dbUrl(), user.id);
+    return { isStaff: scope !== null };
+  } catch {
+    return { isStaff: false };
+  }
+}
+
+export type RepList =
+  | { status: "ok"; inquiries: Awaited<ReturnType<typeof listRepInquiries>> }
+  | { status: "forbidden" };
+
+/** פניות בהיקף הנציג, עם הקשר מצומצם בלבד (ללא שכר/נטו/מייל/בעלים). */
+export async function loadRepInquiries(): Promise<RepList> {
+  try {
+    const user = await requireUser();
+    return { status: "ok", inquiries: await listRepInquiries(dbUrl(), user.id) };
+  } catch (e) {
+    if (e instanceof ForbiddenError || e instanceof AuthRequiredError) return { status: "forbidden" };
+    throw e;
+  }
 }
 
 /**
- * מענה נציג על פנייה + החלה אוטומטית אם עדיין רלוונטי + חישוב מחדש של ההשוואה,
- * הכל בצד השרת (עובד גם כשהעובדת מנותקת). בחזרתה היא תראה את התשובה והתוצאה.
+ * מענה נציג + החלה אם עדיין רלוונטי + חישוב מחדש (הכול בשרת, גם כשהעובדת מנותקת).
  * value ל-employee_participation הוא ההשתתפות החודשית (₪). effectiveFrom = ISO date.
  */
 export async function answerRepInquiry(
@@ -179,13 +212,13 @@ export async function answerRepInquiry(
   | { status: "stale_context" }
   | { status: "future_effective"; effectiveFrom: string }
   | { status: "not_found" }
+  | { status: "forbidden" }
   | { status: "error"; message: string }
 > {
-  const owner = await readVisitOwner();
-  if (!owner) return { status: "not_found" };
-  const service = caseService();
+  let user;
+  try { user = await requireUser(); } catch { return { status: "forbidden" }; }
   try {
-    const res = await service.answerAndApplyInquiry(inquiryId, owner, answer);
+    const res = await answerAsStaff(caseService(), dbUrl(), user.id, inquiryId, answer);
     revalidatePath("/representative");
     revalidatePath("/");
     if (res.status === "applied") {
@@ -194,14 +227,14 @@ export async function answerRepInquiry(
         : { status: "applied", recomputed: res.recomputed ?? false };
     }
     if (res.status === "recorded_not_applied") {
-      return res.reason
-        ? { status: "recorded_not_applied", reason: res.reason }
-        : { status: "recorded_not_applied" };
+      return res.reason ? { status: "recorded_not_applied", reason: res.reason } : { status: "recorded_not_applied" };
     }
     if (res.status === "stale_context") return { status: "stale_context" };
     if (res.status === "future_effective") return { status: "future_effective", effectiveFrom: res.effectiveFrom ?? "" };
     return { status: "not_found" };
   } catch (e) {
-    return { status: "error", message: e instanceof Error ? e.message : "שגיאה במענה לפנייה" };
+    if (e instanceof ForbiddenError) return { status: "forbidden" };
+    console.warn(`[rep] answer failed: ${e instanceof Error ? e.name : "Error"}`);
+    return { status: "error", message: "שגיאה במענה לפנייה" };
   }
 }

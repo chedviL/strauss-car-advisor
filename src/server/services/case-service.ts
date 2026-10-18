@@ -278,6 +278,11 @@ export class CaseService {
     return await this.repo.getCaseState(caseId, ownerId);
   }
 
+  /** רשימת הבירורים של המשתמש/ת המאומת/ת בלבד (בעלות נאכפת ב-repository/RLS). */
+  async listCaseSummaries(ownerId: string, limit?: number) {
+    return await this.repo.listCaseSummaries(ownerId, limit);
+  }
+
   async pickAlternative(
     caseId: string,
     ownerId: string,

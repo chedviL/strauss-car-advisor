@@ -1,13 +1,17 @@
 // src/app/representative/page.tsx
-// מסך נציג. מציג את הפניות של אותו ביקור (owner) עם ההקשר הנחוץ בלבד, ומענה מובנה.
-// המענה מוחל ומחושב בצד השרת — עובד גם כשהעובדת מנותקת. בשימוש אמיתי נדרשת
-// הרשאת נציג המוקצית במנגנון ניהולי מוגן (כאן: בידוד ברמת הביקור, כמו מסך העובד).
+// מסך נציג. נגיש רק למי שיש לו תפקיד נציג פעיל (staff_roles) והיקף סוגי פניות.
+// ההרשאה נקבעת בשרת ונאכפת ב-SQL; עובד רגיל רואה הודעת "אין הרשאה" ולא נתונים.
+// מוצג ההקשר הנחוץ להכרעה בלבד: ללא שכר, נטו, מייל או זהות בעלים.
 import { DemoBadge } from "../../features/advisor/DemoBadge.js";
 import { RepresentativePanel } from "../../features/advisor/RepresentativePanel.js";
 import { loadRepInquiries } from "../actions.js";
+import { redirect } from "next/navigation";
+import { getSessionUser } from "../../server/auth/next-session.js";
 
 export default async function RepresentativePage() {
-  const inquiries = await loadRepInquiries();
+  const user = await getSessionUser();
+  if (!user) redirect("/login");
+  const res = await loadRepInquiries();
 
   return (
     <main style={{ minHeight: "100vh" }}>
@@ -15,20 +19,24 @@ export default async function RepresentativePage() {
       <div style={{ maxWidth: 820, margin: "0 auto", padding: "var(--space-4)", display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "var(--space-2)" }}>
           <h1 style={{ fontSize: "var(--font-xl)", margin: 0 }}>אזור נציג</h1>
-          <a className="btn btn-ghost" href="/" style={{ borderRadius: "var(--radius-pill)" }}>חזרה למסך העובד/ת</a>
+          <a className="btn btn-ghost" href="/inquiries" style={{ borderRadius: "var(--radius-pill)" }}>חזרה לבירורים</a>
         </div>
-        <div style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-2)", alignSelf: "flex-start",
-          background: "var(--color-surface-2)", border: "1px solid var(--color-border)",
-          borderRadius: "var(--radius-pill)", padding: "2px var(--space-3)", fontSize: "0.72rem", color: "var(--color-muted)" }}>
-          מסלול הדגמה מבוסס-ביקור — אינו הרשאת נציג אמיתית
-        </div>
-        <p style={{ color: "var(--color-muted)", margin: 0, fontSize: "var(--font-sm)" }}>
-          בסביבת הדגמה מוצגות רק פניות של אותו ביקור (אותו דפדפן). התשובה שנרשמת
-          מוחלת על התיק ומעדכנת את ההשוואה אוטומטית — גם אם העובד/ת אינו/ה מחובר/ת
-          כעת. מוצג ההקשר הנחוץ להכרעה בלבד, ללא שכר או פרטים אישיים. בפריסת אמת
-          תידרש הרשאת נציג נפרדת המוקצית במנגנון ניהולי מוגן.
-        </p>
-        <RepresentativePanel inquiries={inquiries} />
+        {res.status === "forbidden" ? (
+          <div role="alert" className="card" style={{ padding: "var(--space-4)" }}>
+            <strong>אין לך הרשאת נציג.</strong>
+            <p style={{ color: "var(--color-muted)", marginTop: "var(--space-2)" }}>
+              הגישה לאזור זה ניתנת רק לנציגים מורשים. אם לדעתך מדובר בטעות, פנה/י למנהל המערכת.
+            </p>
+          </div>
+        ) : (
+          <>
+            <p style={{ color: "var(--color-muted)", margin: 0, fontSize: "var(--font-sm)" }}>
+              מוצגות הפניות שבהיקף ההרשאה שלך בלבד. התשובה מוחלת על התיק ומעדכנת את ההשוואה אוטומטית,
+              גם אם העובד/ת אינו/ה מחובר/ת כעת. מוצג ההקשר הנחוץ להכרעה בלבד, ללא שכר או פרטים אישיים.
+            </p>
+            <RepresentativePanel inquiries={res.inquiries} />
+          </>
+        )}
       </div>
     </main>
   );
