@@ -42,22 +42,22 @@ const SYSTEM = `את/ה מחלץ/ת נתונים מתלוש שכר ישראלי.
  * מחלץ נתוני תלוש מבייטים (PDF/תמונה). שימוש במודל (בתשלום) - לקרוא רק אחרי אישור תקציב.
  */
 export async function extractPayslip(bytes: Buffer, mime: AllowedMime): Promise<PayslipExtraction> {
-  const filePart =
-    mime === "application/pdf"
-      ? { type: "file" as const, data: bytes, mediaType: mime }
-      : { type: "image" as const, image: bytes, mediaType: mime };
+  // חלק קובץ אחיד (גם PDF וגם תמונה) לפי ה-SDK העדכני: "file" + mediaType.
+  // (חלק "image" הוצא משימוש; שימוש בו הפיק אזהרת deprecation.)
+  const filePart = { type: "file" as const, data: bytes, mediaType: mime };
 
   const userText =
     "חלץ/י את שדות השכר מהתלוש המצורף לפי הסכמה בלבד. החזר/י JSON תקין יחיד. " +
     "נתון שאינו מופיע = value:null, confidence:\"low\". אל תוסיף/י שדות שאינם בסכמה.";
 
-  // ניסיון + ניסיון חוזר אחד: Gemini לעיתים מחזיר JSON שלא נפרס. הניסיון החוזר
-  // מדגיש "JSON תקין יחיד". אין מעבר לספק אחר, ואין המצאת נתונים.
+  // ניסיון + ניסיון חוזר אחד *שלנו* (על כשל פענוח בלבד). maxRetries:0 מבטל את
+  // הניסיונות הפנימיים של ה-SDK, כדי לא לשרוף 3 קריאות מכסה חינמית לכל ניסיון.
   async function once(extraNudge: string): Promise<PayslipExtraction> {
     const { object } = await generateObject({
       model: getExtractionModel(), // Gemini (Google), לא Claude
       schema: extractionSchema,
       system: SYSTEM,
+      maxRetries: 0,
       messages: [
         { role: "user", content: [{ type: "text", text: userText + extraNudge }, filePart as never] },
       ],
@@ -69,9 +69,41 @@ export async function extractPayslip(bytes: Buffer, mime: AllowedMime): Promise<
   try {
     return await once("");
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    // כשל פענוח/ולידציה -> ניסיון חוזר אחד. כשל מכסה (429) מתפשט כדי לעצור.
-    if (/429|RESOURCE_EXHAUSTED|quota|rate limit/i.test(msg)) throw e;
-    return await once(" שים/י לב: החזר/י אך ורק אובייקט JSON יחיד ותקין, ללא טקסט נוסף.");
+    // כשל מכסה/קצב (429/RESOURCE_EXHAUSTED): עוצרים מיד עם שגיאה ממוינת -
+    // ללא ניסיון חוזר וללא מעבר לספק בתשלום. ה-route יציג הודעה מתאימה.
+    if (isQuotaError(e)) throw new PayslipQuotaError();
+    // אחרת (כשל פענוח/ולידציה) -> ניסיון חוזר אחד בלבד, עם דגש JSON תקין.
+    try {
+      return await once(" שים/י לב: החזר/י אך ורק אובייקט JSON יחיד ותקין, ללא טקסט נוסף.");
+    } catch (e2) {
+      if (isQuotaError(e2)) throw new PayslipQuotaError();
+      throw e2;
+    }
   }
+}
+
+/** שגיאת מכסה/קצב של ספק החילוץ (Gemini). ה-route ממפה אותה ל-429 עם הודעה מתאימה. */
+export class PayslipQuotaError extends Error {
+  constructor() {
+    super("payslip extraction quota exceeded");
+    this.name = "PayslipQuotaError";
+  }
+}
+
+/** זיהוי כשל מכסה/קצב מתוך השגיאה (כולל עטיפת AI_RetryError של ה-SDK). */
+export function isQuotaError(e: unknown): boolean {
+  const parts: string[] = [];
+  let cur: unknown = e;
+  for (let i = 0; i < 4 && cur; i++) {
+    if (cur instanceof Error) {
+      parts.push(cur.message);
+      const status = (cur as { statusCode?: number }).statusCode;
+      if (status === 429) return true;
+      cur = (cur as { cause?: unknown }).cause;
+    } else {
+      parts.push(String(cur));
+      break;
+    }
+  }
+  return /\b429\b|RESOURCE_EXHAUSTED|exceeded your current quota|rate limit|too many requests/i.test(parts.join(" "));
 }

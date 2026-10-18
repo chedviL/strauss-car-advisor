@@ -13,7 +13,7 @@ import {
   validatePayslip, storePayslip, readPayslipBytes,
   saveExtraction, discardPayslip, loadPendingExtraction,
 } from "../../../server/web/payslip-storage.js";
-import { extractPayslip, type PayslipExtraction } from "../../../server/agent/payslip-extract.js";
+import { extractPayslip, PayslipQuotaError, type PayslipExtraction } from "../../../server/agent/payslip-extract.js";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -89,9 +89,23 @@ export async function POST(req: Request): Promise<Response> {
       try {
         extraction = await extractPayslip(file.bytes, file.mime);
       } catch (e) {
-        await discardPayslip({ connectionString: conn, ownerId: owner, uploadId: body.uploadId }).catch(() => {});
         const m = e instanceof Error ? e.message : String(e);
-        return json({ error: "לא הצלחתי לקרוא את המסמך. נסו קובץ ברור יותר או הזנה ידנית.", detail: m.slice(0, 120) }, 422);
+        // פרטים טכניים ללוג בלבד (ללא תוכן התלוש וללא סודות).
+        console.warn(`[payslip] extract failed: ${m.replace(/key[=:]\S+/gi, "key=***").slice(0, 200)}`);
+        if (e instanceof PayslipQuotaError) {
+          // כשל מכסה - הקובץ נשמר; אפשר לנסות שוב מאוחר יותר או להזין ידנית.
+          // *לא* מוחקים את ההעלאה (אין בעיית קובץ), ואין מעבר לספק בתשלום.
+          return json({
+            error: "מכסת החילוץ האוטומטי נוצלה כרגע. אפשר לנסות שוב מאוחר יותר, או להזין את הנתונים ידנית ב״הפרטים שלי״.",
+            kind: "quota",
+          }, 429);
+        }
+        // כשל קריאה/פענוח של המסמך עצמו -> מוחקים את ההעלאה ומכוונים להתאוששות.
+        await discardPayslip({ connectionString: conn, ownerId: owner, uploadId: body.uploadId }).catch(() => {});
+        return json({
+          error: "לא הצלחתי לקרוא את המסמך. נסו קובץ ברור יותר (סריקה חדה, ללא חיתוך) או הזנה ידנית ב״הפרטים שלי״.",
+          kind: "unreadable",
+        }, 422);
       }
       await saveExtraction({ connectionString: conn, ownerId: owner, uploadId: body.uploadId, extraction }).catch(() => {});
       return json({ status: "extracted", uploadId: body.uploadId, extraction });
