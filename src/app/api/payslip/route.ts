@@ -11,7 +11,7 @@ import { caseService } from "../../../server/web/service.js";
 import { getOrCreateVisitOwner } from "../../../server/web/visit.js";
 import {
   validatePayslip, storePayslip, readPayslipBytes,
-  saveExtraction, markApplied, discardPayslip, loadPendingExtraction,
+  saveExtraction, discardPayslip, loadPendingExtraction,
 } from "../../../server/web/payslip-storage.js";
 import { extractPayslip, type PayslipExtraction } from "../../../server/agent/payslip-extract.js";
 
@@ -104,14 +104,12 @@ export async function POST(req: Request): Promise<Response> {
       const caseId = store.get("strauss_case")?.value ?? null;
       if (!caseId) return json({ error: "אין תיק פעיל." }, 400);
 
-      // אידמפוטנטיות: מסמנים applied אטומית; אם כבר הוחל - לא מחילים שוב.
-      const first = await markApplied({ connectionString: conn, ownerId: owner, uploadId: body.uploadId });
-      if (!first) return json({ status: "already_applied" });
-
       const cur = await service.getCaseState(caseId, owner);
       if (!cur) return json({ error: "התיק לא נמצא." }, 404);
-      // רק שדות עם ערך (כולל 0 מפורש) מוחלים; null לא נשלח מהלקוח ולא דורס.
-      const res = await service.updateFacts(caseId, owner, body.patch, cur.case.factsRevision);
+      // אטומי: סימון applied + עדכון עובדות בטרנזקציה אחת. כשל/קונפליקט מגלגל
+      // אחורה את שניהם - לא נשאר חילוץ מסומן "הוחל" בלי עדכון. null לא נשלח ולא דורס.
+      const res = await service.applyPayslip(caseId, owner, body.uploadId, body.patch, cur.case.factsRevision);
+      if (res.status === "already_applied") return json({ status: "already_applied" });
       if (res.status === "conflict") {
         return json({ status: "conflict", message: "הנתונים השתנו בינתיים; רענן/י ונסה/י שוב." }, 409);
       }

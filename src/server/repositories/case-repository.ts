@@ -55,6 +55,17 @@ export type UpdateFactsOutcome =
   | { status: "ok"; factsRevision: number }
   | { status: "conflict"; currentRevision: number };
 
+/**
+ * תוצאת החלת חילוץ תלוש + עדכון עובדות בטרנזקציה אחת:
+ * - applied: סומן כהוחל *וגם* העובדות עודכנו (או שלא נדרש שינוי). אטומי.
+ * - already_applied: ההעלאה כבר הוחלה בעבר (applied_at לא null) - לא נגענו בעובדות.
+ * - conflict: גרסת העובדות השתנתה; הטרנזקציה גולגלה אחורה - הסימון "הוחל" *לא* נשמר.
+ */
+export type ApplyPayslipOutcome =
+  | { status: "applied"; factsRevision: number }
+  | { status: "already_applied" }
+  | { status: "conflict"; currentRevision: number };
+
 export interface StoredCompareRun {
   id: string;
   factsRevision: number;
@@ -135,6 +146,18 @@ export interface CaseRepository {
     patch: FactsPatch,
     expectedRevision: number,
   ): Promise<UpdateFactsOutcome>;
+  /**
+   * אטומי: מסמן את התלוש כ"הוחל" (רק אם טרם הוחל) *וגם* מעדכן עובדות עם בדיקת
+   * גרסה - בטרנזקציה אחת. כשל/קונפליקט בעדכון מגלגל אחורה גם את הסימון, כך
+   * שלא נשאר חילוץ מסומן "הוחל" בלי שהעובדות עודכנו.
+   */
+  applyPayslipAndUpdateFacts(
+    caseId: string,
+    ownerId: string,
+    uploadId: string,
+    patch: FactsPatch,
+    expectedRevision: number,
+  ): Promise<ApplyPayslipOutcome>;
   /** פותח פנייה לנציג עם dedup לפי (type, contextFingerprint) בפניות פתוחות. */
   openInquiry(
     caseId: string,
@@ -395,6 +418,21 @@ export class FileCaseRepository implements CaseRepository {
     stored.case.updatedAt = new Date().toISOString();
     this.write(stored);
     return { status: "ok", factsRevision: stored.case.factsRevision };
+  }
+
+  async applyPayslipAndUpdateFacts(
+    caseId: string,
+    ownerId: string,
+    _uploadId: string,
+    patch: FactsPatch,
+    expectedRevision: number,
+  ): Promise<ApplyPayslipOutcome> {
+    // אחסון הקבצים אינו מנהל שורות payslip_uploads (אלה Postgres בלבד; זרימת
+    // התלוש דורשת DATABASE_URL). כאן מיישמים את עדכון העובדות בלבד, אטומית
+    // ברמת הקובץ (כתיבה אחת). במסלול הפרודקשן (Postgres) האטומיות מלאה.
+    const res = await this.updateFacts(caseId, ownerId, patch, expectedRevision);
+    if (res.status === "conflict") return { status: "conflict", currentRevision: res.currentRevision };
+    return { status: "applied", factsRevision: res.factsRevision };
   }
 
   async openInquiry(

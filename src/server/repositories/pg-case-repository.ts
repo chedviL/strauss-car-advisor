@@ -22,10 +22,18 @@ import type {
   CreateScenarioInput,
   FactsPatch,
   UpdateFactsOutcome,
+  ApplyPayslipOutcome,
   StoredMessage,
   StoredCompareRun,
   RepInquiryContext,
 } from "./case-repository.js";
+
+/** שגיאת-בקרה פנימית לגלגול-אחור של טרנזקציית apply בקונפליקט גרסה. */
+class PayslipConflict extends Error {
+  constructor(public readonly currentRevision: number) {
+    super("payslip apply conflict");
+  }
+}
 
 export class PgCaseRepository implements CaseRepository {
   private readonly pool: Pool;
@@ -291,6 +299,73 @@ export class PgCaseRepository implements CaseRepository {
         [caseId],
       );
       return { status: "ok", factsRevision: upd.rows[0].facts_revision as number };
+    });
+  }
+
+  async applyPayslipAndUpdateFacts(
+    caseId: string,
+    ownerId: string,
+    uploadId: string,
+    patch: FactsPatch,
+    expectedRevision: number,
+  ): Promise<ApplyPayslipOutcome> {
+    // טרנזקציה אחת (withOwner פותח begin/commit): מסמנים applied רק אם טרם הוחל,
+    // ואז מעדכנים עובדות עם בדיקת גרסה. קונפליקט/כשל -> throw/return מגלגל אחורה
+    // את ה-UPDATE על payslip_uploads יחד עם השאר. כך לא נשאר "הוחל" בלי עדכון.
+    return this.withOwner<ApplyPayslipOutcome>(ownerId, async (c): Promise<ApplyPayslipOutcome> => {
+      // 1) בדיקת בעלות על התיק (RLS ממילא מסנן; בדיקה מפורשת להודעה ברורה).
+      const owned = await c.query("select 1 from cases where id = $1", [caseId]);
+      if (owned.rowCount === 0) throw new Error("case not found for owner");
+
+      // 2) סימון אטומי: רק אם applied_at עדיין null. RLS מוודא שהשורה שייכת לבעלים.
+      const mark = await c.query(
+        `update payslip_uploads set status='applied', applied_at=now()
+          where id = $1 and applied_at is null returning id`,
+        [uploadId],
+      );
+      if (mark.rowCount === 0) {
+        // כבר הוחל בעבר (או לא שייך לבעלים) -> לא נוגעים בעובדות.
+        return { status: "already_applied" };
+      }
+
+      // 3) עדכון עובדות עם בדיקת גרסה - באותה טרנזקציה.
+      const cur = await c.query("select facts_revision from cases where id = $1", [caseId]);
+      const currentRevision = cur.rows[0].facts_revision as number;
+      if (currentRevision !== expectedRevision) {
+        // קונפליקט: זורקים כדי לגלגל אחורה את הסימון applied (אין commit חלקי).
+        throw new PayslipConflict(currentRevision);
+      }
+
+      const cols: Record<string, string> = {
+        occupationCode: "occupation_code", reportedGroup: "reported_group",
+        baseSalary: "base_salary", commission: "commission", bonus: "bonus",
+        pensionRate: "pension_rate", trainingRate: "training_rate",
+        creditPoints: "credit_points", qualifyingChildren: "qualifying_children",
+      };
+      const entries = Object.entries(patch).filter(([, v]) => v !== undefined);
+      if (entries.length === 0) {
+        // אין שדות לעדכן (patch ריק): עדיין "הוחל" (למשל אישור ללא שינוי).
+        return { status: "applied", factsRevision: currentRevision };
+      }
+      const sets: string[] = [];
+      const vals: unknown[] = [];
+      let i = 1;
+      for (const [k, v] of entries) {
+        const col = cols[k];
+        if (!col) continue;
+        sets.push(`${col} = $${i++}`);
+        vals.push(v);
+      }
+      if (sets.length === 0) return { status: "applied", factsRevision: currentRevision };
+      await c.query(`update case_facts set ${sets.join(", ")} where case_id = $${i}`, [...vals, caseId]);
+      const bumped = await c.query(
+        "update cases set facts_revision = facts_revision + 1, updated_at = now() where id = $1 returning facts_revision",
+        [caseId],
+      );
+      return { status: "applied", factsRevision: bumped.rows[0].facts_revision as number };
+    }).catch((e): ApplyPayslipOutcome => {
+      if (e instanceof PayslipConflict) return { status: "conflict", currentRevision: e.currentRevision };
+      throw e;
     });
   }
 

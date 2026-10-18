@@ -510,6 +510,20 @@ export class CaseService {
   }
 
   /**
+   * החלת חילוץ תלוש: מסמן applied ומעדכן עובדות *בטרנזקציה אחת* (אטומי).
+   * כשל/קונפליקט אינו משאיר חילוץ מסומן "הוחל" בלי עדכון עובדות.
+   */
+  async applyPayslip(
+    caseId: string,
+    ownerId: string,
+    uploadId: string,
+    patch: FactsPatch,
+    expectedRevision: number,
+  ) {
+    return await this.repo.applyPayslipAndUpdateFacts(caseId, ownerId, uploadId, patch, expectedRevision);
+  }
+
+  /**
    * חיפוש רכבים עם סטטוס זכאות וסיבות. מסנן רק לפי שדות שקיימים במקור מאומת.
    * אין המצאת מושבים/טווח; פילטר לא-נתמך מוחזר כ-unsupportedFilters.
    */

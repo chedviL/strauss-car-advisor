@@ -18,7 +18,7 @@ import { PgCaseRepository } from "../../src/server/repositories/pg-case-reposito
 import { CaseService } from "../../src/server/services/case-service.js";
 import { findActiveDatasetId } from "../../src/server/services/dataset-provider.js";
 import {
-  storePayslip, saveExtraction, loadPendingExtraction, markApplied, readPayslipBytes,
+  storePayslip, saveExtraction, loadPendingExtraction, readPayslipBytes,
 } from "../../src/server/web/payslip-storage.js";
 import type { PayslipExtraction } from "../../src/server/agent/payslip-extract.js";
 
@@ -104,14 +104,13 @@ run("זרימת תלוש מלאה (חילוץ מדומה, ללא מודל) מו�
     expect(restoredEx.baseSalary.value).toBe(18500);
     expect(restoredEx.commission.value).toBeNull(); // null נשמר כ-null (לא אפס)
 
-    // 4) אישור: markApplied אטומי (ראשוני) + updateFacts עם ה-patch (ללא null).
-    const first = await markApplied({ connectionString: CONN!, ownerId: owner, uploadId: stored.id });
-    expect(first).toBe(true);
+    // 4) אישור אטומי: applyPayslip מסמן applied ומעדכן עובדות בטרנזקציה אחת
+    //    (כפי שה-route עושה). ה-patch כולל רק שדות עם ערך (null לא נשלח).
     const patch = buildPatch(restoredEx);
     expect("commission" in patch).toBe(false); // null לא נשלח -> לא דורס
     const cur = await service.getCaseState(caseId, owner);
-    const upd = await service.updateFacts(caseId, owner, patch, cur!.case.factsRevision);
-    expect(upd.status).toBe("ok");
+    const upd = await service.applyPayslip(caseId, owner, stored.id, patch, cur!.case.factsRevision);
+    expect(upd.status).toBe("applied");
 
     // העובדות עודכנו מהתלוש.
     const afterApply = await service.getCaseState(caseId, owner);
@@ -153,9 +152,41 @@ run("זרימת תלוש מלאה (חילוץ מדומה, ללא מודל) מו�
       await freshRepo.close();
     }
 
-    // 7) אי-החלה כפולה: markApplied שני מחזיר false (כבר הוחל).
-    const second = await markApplied({ connectionString: CONN!, ownerId: owner, uploadId: stored.id });
-    expect(second).toBe(false);
+    // 7) אי-החלה כפולה: applyPayslip שני על אותה העלאה מחזיר already_applied.
+    const afterAll = await service.getCaseState(caseId, owner);
+    const second = await service.applyPayslip(caseId, owner, stored.id, { baseSalary: 18500 }, afterAll!.case.factsRevision);
+    expect(second.status).toBe("already_applied");
+  });
+
+  it("אטומיות אישור: קונפליקט גרסה אינו משאיר חילוץ מסומן 'הוחל'", { timeout: 40000 }, async () => {
+    const owner = "payslip-atomic-" + randomUUID();
+    owners.push(owner);
+    const created = await service.startBlankCase(owner);
+    const caseId = created.case.id;
+    const stored = await storePayslip({ connectionString: CONN!, ownerId: owner, caseId, bytes: PDF, mime: "application/pdf", originalName: null });
+    await saveExtraction({ connectionString: CONN!, ownerId: owner, uploadId: stored.id, extraction: SIM_EXTRACTION });
+
+    // גרסה מיושנת בכוונה -> applyPayslip צריך להחזיר conflict ולגלגל אחורה את הסימון.
+    const cur = await service.getCaseState(caseId, owner);
+    const staleRevision = cur!.case.factsRevision + 5; // לא תואם
+    const res = await service.applyPayslip(caseId, owner, stored.id, { baseSalary: 18500 }, staleRevision);
+    expect(res.status).toBe("conflict");
+
+    // ראיה לאטומיות: העובדות *לא* עודכנו (base_salary נשאר null)...
+    const afterConflict = await service.getCaseState(caseId, owner);
+    expect(afterConflict!.facts.baseSalary).toBeNull();
+
+    // ...והחילוץ *לא* נותר מסומן 'הוחל': אישור חוזר בגרסה הנכונה מצליח (applied),
+    // ולא מוחזר already_applied (מה שהיה קורה אילו הסימון היה נשמר למרות הקונפליקט).
+    const cur2 = await service.getCaseState(caseId, owner);
+    const ok = await service.applyPayslip(caseId, owner, stored.id, { baseSalary: 18500 }, cur2!.case.factsRevision);
+    expect(ok.status).toBe("applied");
+    const afterOk = await service.getCaseState(caseId, owner);
+    expect(afterOk!.facts.baseSalary).toBe(18500);
+
+    // ועכשיו החלה חוזרת כן מחזירה already_applied (הסימון נשמר רק אחרי הצלחה).
+    const again = await service.applyPayslip(caseId, owner, stored.id, { baseSalary: 18500 }, afterOk!.case.factsRevision);
+    expect(again.status).toBe("already_applied");
   });
 
   it("בעלות: בעלים אחר אינו קורא את התלוש דרך פעולת האפליקציה (RLS, לא הורדה)", { timeout: 40000 }, async () => {
