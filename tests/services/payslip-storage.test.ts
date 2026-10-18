@@ -2,11 +2,12 @@
 // אחסון תלוש: ולידציית סוג (חתימת בייטים) + גודל, וסבב שמירה/קריאה מול Postgres
 // עם בדיקת בעלות (RLS). ללא מודל. בדיקות הסבב רצות רק כש-DATABASE_URL מוגדר.
 import { randomUUID } from "node:crypto";
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 import { Client } from "pg";
 import { sslFor } from "../../src/server/repositories/pg-ssl.js";
 import { PgCaseRepository } from "../../src/server/repositories/pg-case-repository.js";
-import { validatePayslip, storePayslip, readPayslipBytes, MAX_SIZE_BYTES } from "../../src/server/web/payslip-storage.js";
+import { validatePayslip, storePayslip, readPayslipBytes, discardPayslip, MAX_SIZE_BYTES } from "../../src/server/web/payslip-storage.js";
+import { activeBackend, StorageConfigError } from "../../src/server/web/payslip-blob.js";
 import type { CaseFacts } from "../../src/domain/contracts/case.js";
 
 // חתימות בייטים
@@ -49,7 +50,14 @@ const facts: CaseFacts = { occupationCode: "product_manager", reportedGroup: "ג
 
 run("סבב אחסון תלוש מול Postgres (RLS)", () => {
   let repo: PgCaseRepository; let admin: Client; let datasetId: string;
+  // בדיקות הסבב משתמשות ב-backend המקומי (local) בכוונה. בסביבת הבדיקה
+  // DATABASE_URL מוגדר אך Supabase לא, ולכן נדרשת הסכמה מקומית מפורשת
+  // (STRAUSS_ALLOW_FILE_STORE=1) - אחרת activeBackend זורק StorageConfigError
+  // (וזה בדיוק ההתנהגות הרצויה בפריסה). שומר/משחזר כדי לא לדלוף.
+  let savedAllowFileStore: string | undefined;
   beforeAll(async () => {
+    savedAllowFileStore = process.env.STRAUSS_ALLOW_FILE_STORE;
+    process.env.STRAUSS_ALLOW_FILE_STORE = "1";
     admin = new Client({ connectionString: MIG!, ...sslFor(MIG!) });
     await admin.connect();
     const rs = await admin.query(`insert into rule_sets (version, content_hash, config) values ('t',$1,'{}'::jsonb) on conflict (content_hash) do update set version=excluded.version returning id`, ["ps-" + randomUUID()]);
@@ -57,7 +65,7 @@ run("סבב אחסון תלוש מול Postgres (RLS)", () => {
     datasetId = ds.rows[0].id;
     repo = new PgCaseRepository(CONN!);
   }, 30000);
-  afterAll(async () => { if (admin) { await admin.query("delete from cases where dataset_id=$1", [datasetId]).catch(() => {}); await admin.end().catch(() => {}); } });
+  afterAll(async () => { if (savedAllowFileStore === undefined) delete process.env.STRAUSS_ALLOW_FILE_STORE; else process.env.STRAUSS_ALLOW_FILE_STORE = savedAllowFileStore; if (admin) { await admin.query("delete from cases where dataset_id=$1", [datasetId]).catch(() => {}); await admin.end().catch(() => {}); } });
 
   it("שמירה ואז קריאה מחזירה את אותם בייטים לבעלים", { timeout: 30000 }, async () => {
     const owner = "ps-" + randomUUID();
@@ -76,5 +84,65 @@ run("סבב אחסון תלוש מול Postgres (RLS)", () => {
     const stored = await storePayslip({ connectionString: CONN!, ownerId: ownerA, caseId: c.case.id, bytes: JPG, mime: "image/jpeg", originalName: null });
     const asB = await readPayslipBytes({ connectionString: CONN!, ownerId: ownerB, uploadId: stored.id });
     expect(asB).toBeNull(); // RLS חוסם
+  });
+
+  it("בעלים אחר אינו יכול למחוק (discard) תלוש של אחר - הקובץ נשאר קריא לבעלים", { timeout: 30000 }, async () => {
+    const ownerA = "psDA-" + randomUUID();
+    const ownerB = "psDB-" + randomUUID();
+    const c = await repo.createCase({ ownerId: ownerA, isDemo: true, datasetId, facts, baseline: { role: "baseline", route: "company_car", vehicleCode: "CAR-09", participation: 300, maintenanceAllowance: 0 } });
+    const stored = await storePayslip({ connectionString: CONN!, ownerId: ownerA, caseId: c.case.id, bytes: PDF, mime: "application/pdf", originalName: null });
+    // B מנסה למחוק דרך פעולת האפליקציה: RLS חוסם -> אין שורה לעדכן -> לא נמחק blob.
+    await discardPayslip({ connectionString: CONN!, ownerId: ownerB, uploadId: stored.id });
+    // A עדיין קורא את התלוש (לא נמחק ע"י B).
+    const asA = await readPayslipBytes({ connectionString: CONN!, ownerId: ownerA, uploadId: stored.id });
+    expect(asA).not.toBeNull();
+    expect(Array.from(asA!.bytes)).toEqual(Array.from(PDF));
+  });
+
+  it("בעלים אחר אינו יכול להעלות תלוש לתיק של אחר (בדיקת בעלות בהעלאה)", { timeout: 30000 }, async () => {
+    const ownerA = "psUA-" + randomUUID();
+    const ownerB = "psUB-" + randomUUID();
+    const c = await repo.createCase({ ownerId: ownerA, isDemo: true, datasetId, facts, baseline: { role: "baseline", route: "company_car", vehicleCode: "CAR-09", participation: 300, maintenanceAllowance: 0 } });
+    await expect(
+      storePayslip({ connectionString: CONN!, ownerId: ownerB, caseId: c.case.id, bytes: PDF, mime: "application/pdf", originalName: null }),
+    ).rejects.toThrow();
+  });
+});
+
+
+describe("בחירת backend לאחסון: כשל-הגדרה ברור, בלי מעבר שקט לדיסק", () => {
+  // שומר/משחזר את משתני הסביבה הרלוונטיים כדי לא לדלוף בין בדיקות.
+  const KEYS = ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "STRAUSS_ALLOW_FILE_STORE", "DATABASE_URL"] as const;
+  let saved: Record<string, string | undefined>;
+  beforeEach(() => {
+    saved = {};
+    for (const k of KEYS) { saved[k] = process.env[k]; delete process.env[k]; }
+  });
+  afterEach(() => {
+    for (const k of KEYS) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  });
+
+  it("supabase כאשר שני המפתחות מוגדרים", () => {
+    process.env.SUPABASE_URL = "https://example.supabase.co";
+    process.env.SUPABASE_SERVICE_ROLE_KEY = "x";
+    expect(activeBackend()).toBe("supabase");
+  });
+
+  it("סביבה פרוסה (DATABASE_URL מוגדר) ללא Supabase ← שגיאת הגדרה, לא local", () => {
+    process.env.DATABASE_URL = "postgresql://app@host:6543/db";
+    expect(() => activeBackend()).toThrow(StorageConfigError);
+  });
+
+  it("אופציה מקומית מפורשת (STRAUSS_ALLOW_FILE_STORE=1) ← local גם עם DATABASE_URL", () => {
+    process.env.DATABASE_URL = "postgresql://app@host:6543/db";
+    process.env.STRAUSS_ALLOW_FILE_STORE = "1";
+    expect(activeBackend()).toBe("local");
+  });
+
+  it("פיתוח מקומי טהור (אין DATABASE_URL ואין Supabase) ← local", () => {
+    expect(activeBackend()).toBe("local");
   });
 });

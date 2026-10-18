@@ -14,11 +14,34 @@ export type StorageBackend = "local" | "supabase";
 const BUCKET = "payslips"; // bucket פרטי ב-Supabase Storage
 const UPLOAD_ROOT = resolve(process.cwd(), "data", "uploads");
 
-/** איזה backend פעיל: supabase אם מוגדרים מפתחותיו, אחרת local. */
+/** כשל-הגדרת אחסון: חסרים משתני Supabase בסביבה פרוסה (אין מעבר שקט לדיסק). */
+export class StorageConfigError extends Error {}
+
+/**
+ * איזה backend פעיל, עם אותה דיסציפלינה כמו בחירת ה-repository:
+ * - SUPABASE_URL + SERVICE_ROLE_KEY מוגדרים → supabase (מסלול הפריסה).
+ * - חסרים, אך STRAUSS_ALLOW_FILE_STORE=1 → local (אופציה מקומית מפורשת, פיתוח).
+ * - חסרים, ו-DATABASE_URL מוגדר (סביבה פרוסה/Postgres) → שגיאת הגדרה ברורה.
+ *   *אין מעבר שקט לדיסק מקומי* כשהאפליקציה רצה מול Postgres.
+ * - חסרים, ואין DATABASE_URL (פיתוח מקומי טהור) → local.
+ */
 export function activeBackend(): StorageBackend {
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  return url && url.trim() && key && key.trim() ? "supabase" : "local";
+  if (url && url.trim() && key && key.trim()) return "supabase";
+
+  if (process.env.STRAUSS_ALLOW_FILE_STORE === "1") return "local";
+
+  const dbUrl = process.env.DATABASE_URL;
+  if (dbUrl && dbUrl.trim() !== "") {
+    throw new StorageConfigError(
+      "אחסון התלושים אינו מוגדר: חסרים SUPABASE_URL ו-SUPABASE_SERVICE_ROLE_KEY. " +
+        "בסביבה פרוסה (DATABASE_URL מוגדר) חובה אחסון פרטי ב-Supabase Storage; " +
+        "אין מעבר שקט לדיסק מקומי. לפיתוח מקומי בלבד אפשר STRAUSS_ALLOW_FILE_STORE=1. " +
+        "ראו docs/supabase-setup.md.",
+    );
+  }
+  return "local";
 }
 
 /** נתיב אטום לאובייקט: hash(owner)/storedKey. אין בו זהות קריאה. */
