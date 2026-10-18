@@ -26,10 +26,18 @@ export class StorageConfigError extends Error {}
  * - חסרים, ואין DATABASE_URL (פיתוח מקומי טהור) → local.
  */
 export function activeBackend(): StorageBackend {
-  // הסכמה מקומית מפורשת גוברת תמיד: STRAUSS_ALLOW_FILE_STORE=1 מכריח אחסון
-  // מקומי (פיתוח/בדיקות), גם אם מוגדרים מפתחות Supabase. בפרודקשן אין מגדירים
-  // דגל זה, ולכן Supabase עדיין המסלול שם.
-  if (process.env.STRAUSS_ALLOW_FILE_STORE === "1") return "local";
+  // הסכמה מקומית מפורשת: STRAUSS_ALLOW_FILE_STORE=1 מכריח אחסון מקומי
+  // (פיתוח/בדיקות בלבד), וגובר על Supabase. *אסור בפרודקשן* - שם הדגל נכשל
+  // בבירור כדי שלא יישמרו תלושי משתמשים על דיסק מקומי בטעות.
+  if (process.env.STRAUSS_ALLOW_FILE_STORE === "1") {
+    if (process.env.NODE_ENV === "production") {
+      throw new StorageConfigError(
+        "STRAUSS_ALLOW_FILE_STORE=1 אסור בפרודקשן: אחסון מקומי מיועד לפיתוח/בדיקות בלבד. " +
+          "בפרודקשן הגדירו SUPABASE_URL ו-SUPABASE_SERVICE_ROLE_KEY. ראו docs/supabase-setup.md.",
+      );
+    }
+    return "local";
+  }
 
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -59,7 +67,7 @@ export function objectPath(ownerId: string, storedKey: string): string {
  * גורמים לשרת להחזיר HTML במקום JSON ("Unexpected token '<'"); עדיף כשל ברור מוקדם.
  * אין הדפסת הערך עצמו.
  */
-function resolveSupabaseUrl(): string {
+export function resolveSupabaseUrl(): string {
   const raw = (process.env.SUPABASE_URL ?? "").trim().replace(/\/+$/, "");
   let host = "";
   try {

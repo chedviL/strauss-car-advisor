@@ -21,8 +21,15 @@ function buildRepository(): CaseRepository {
   if (url && url.trim() !== "") {
     return new PgCaseRepository(url);
   }
-  // אין DATABASE_URL. מותר אחסון קבצים רק כאופציה מקומית מפורשת.
+  // אין DATABASE_URL. מותר אחסון קבצים רק כאופציה מקומית מפורשת, ורק מחוץ
+  // לפרודקשן. בפרודקשן הדגל נכשל בבירור (אין לאחסן מצב על דיסק מקומי).
   if (process.env.STRAUSS_ALLOW_FILE_STORE === "1") {
+    if (process.env.NODE_ENV === "production") {
+      throw new ConfigError(
+        "STRAUSS_ALLOW_FILE_STORE=1 אסור בפרודקשן: אחסון קבצים מיועד לפיתוח/בדיקות בלבד. " +
+          "בפרודקשן נדרש DATABASE_URL (Postgres עם RLS). ראו README.",
+      );
+    }
     return new FileCaseRepository(stateDir);
   }
   throw new ConfigError(
