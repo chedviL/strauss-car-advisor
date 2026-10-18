@@ -7,6 +7,7 @@ import { z } from "zod";
 import type { CaseService } from "../../services/case-service.js";
 import type { ToolContext, ToolResult } from "../tool-contracts.js";
 import { ok, missing } from "../tool-contracts.js";
+import { labeledBreakdown } from "../../../domain/calculation/breakdown-labels.js";
 
 export const readComparisonInput = z.object({
   compareRunId: z.string().min(1),
@@ -51,7 +52,7 @@ export async function readComparison(
         compareRunId: run.id, stale,
         ref: row.vehicleCode ?? row.label, route: row.route,
         net: row.net, netDelta: row.netDelta,
-        breakdown: row.result.breakdown, // פירוט מלא לחלופה המבוקשת בלבד
+        breakdown: labeledBreakdown(row.result.breakdown as import("../../../domain/contracts/types.js").NetBreakdown), // פירוט מתויג (שמות עבריים נכונים, לא שדות גולמיים)
         assumptions: row.result.assumptions,
       },
       stale ? { message: "התוצאה מיושנת: העובדות השתנו מאז החישוב. שקול/י חישוב מחדש." } : {},

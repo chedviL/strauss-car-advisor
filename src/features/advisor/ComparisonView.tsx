@@ -7,6 +7,7 @@ import { useTransition } from "react";
 import { resetDemo } from "../../app/actions.js";
 import type { CaseState } from "../../domain/contracts/case.js";
 import type { NetBreakdown, ScenarioResult } from "../../domain/contracts/types.js";
+import { BREAKDOWN_LABELS } from "../../domain/calculation/breakdown-labels.js";
 import type { SampleEmployee } from "../../../data/source/sample-employees.js";
 
 function shekel(s: string | number): string {
@@ -151,12 +152,8 @@ function ScenarioCol({
 }
 
 function BreakdownTable({ base, alt }: { base: NetBreakdown; alt: NetBreakdown }) {
-  const labels: Record<string, string> = {
-    cashSalary: "שכר מזומן", taxableIncome: "בסיס מס", incomeTax: "מס הכנסה",
-    nationalInsurance: "ביטוח לאומי", health: "בריאות", pensionEmployee: "פנסיה עובד",
-    trainingEmployee: "קרן השתלמות עובד", participation: "השתתפות", familyGap: "פער משפחתי",
-    electricGrossUp: "גילום החזר חשמל", pensionCredit: "זיכוי פנסיה", creditPointsCredit: "זיכוי נק' זיכוי",
-  };
+  // מקור אמת יחיד לשמות הרכיבים (זהה למה שהמודל מקבל מהכלים).
+  const labels = BREAKDOWN_LABELS as Record<string, string>;
   return (
     <table style={{ width: "100%", borderCollapse: "collapse", marginTop: "var(--space-2)", fontSize: "0.85rem" }}>
       <thead>
