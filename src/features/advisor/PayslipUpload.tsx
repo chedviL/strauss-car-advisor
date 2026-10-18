@@ -4,9 +4,8 @@
 // שלבים: idle -> uploading -> uploaded(estimate) -> extracting -> review -> applied.
 // שום דבר לא מוחל על התיק בלי אישור מפורש. נתון חסר (null) אינו אפס.
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { updateMyFacts } from "../../app/actions.js";
 
 type Field = { value: number | null; confidence: "high" | "low" };
 type Extraction = {
@@ -20,6 +19,14 @@ const RATE_KEYS = new Set(["pensionRate", "trainingRate"]);
 const LABELS: Record<string, string> = {
   baseSalary: "שכר בסיס (ברוטו)", commission: "עמלות", bonus: "בונוס",
   pensionRate: "פנסיה %", trainingRate: "קרן השתלמות %", creditPoints: "נקודות זיכוי",
+};
+const HINTS: Record<string, string> = {
+  baseSalary: "הברוטו החודשי הקבוע — לא ברוטו כולל, לא בסיס מס ולא נטו",
+  commission: "0 רק אם מופיע במפורש",
+  bonus: "0 רק אם מופיע במפורש",
+  pensionRate: "אחוז ההפרשה; לא מחושב מסכום ניכוי בלבד",
+  trainingRate: "אחוז ההפרשה; לא מחושב מסכום ניכוי בלבד",
+  creditPoints: "מספר נקודות הזיכוי",
 };
 const toDisp = (k: string, v: number | null) => v === null ? "" : (RATE_KEYS.has(k) ? String(Math.round(v * 1000) / 10) : String(v));
 const fromDisp = (k: string, s: string): number | null => {
@@ -62,7 +69,7 @@ export function PayslipUpload({ onApplied }: { onApplied?: () => void }) {
   }
 
   async function apply() {
-    if (!draft) return;
+    if (!draft || !uploadId) return;
     setPhase("applying");
     // רק שדות עם ערך (כולל 0 מפורש) מוחלים; null = לא ידוע, לא נשלח (לא דורס).
     const patch: Record<string, number | null> = {};
@@ -70,18 +77,53 @@ export function PayslipUpload({ onApplied }: { onApplied?: () => void }) {
       const f = draft[k] as Field;
       if (f.value !== null) patch[k as string] = f.value;
     });
-    const res = await updateMyFacts(patch);
-    if (res.status === "ok") {
-      setPhase("applied"); setMsg("הנתונים הוחלו על התיק. אפשר לשנות כל פרט ולהמשיך בשיחה.");
-      router.refresh(); onApplied?.();
-    } else if (res.status === "conflict") {
-      setPhase("error"); setMsg("הנתונים השתנו בינתיים; רענן/י ונסה/י שוב.");
-    } else {
-      setPhase("error"); setMsg("שגיאה בהחלת הנתונים.");
-    }
+    try {
+      // החלה דרך השרת (אידמפוטנטי: לא מחיל אותו אישור פעמיים).
+      const res = await fetch("/api/payslip?action=apply", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ uploadId, patch }),
+      });
+      const data = await res.json();
+      if (data.status === "applied" || data.status === "already_applied") {
+        setPhase("applied");
+        setMsg(data.status === "already_applied"
+          ? "הנתונים כבר הוחלו קודם."
+          : "הנתונים הוחלו על התיק. אפשר לשנות כל פרט ולהמשיך בשיחה.");
+        router.refresh(); onApplied?.();
+      } else if (data.status === "conflict") {
+        setPhase("error"); setMsg(data.message ?? "הנתונים השתנו בינתיים; רענן/י ונסה/י שוב.");
+      } else {
+        setPhase("error"); setMsg(data.error ?? "שגיאה בהחלת הנתונים.");
+      }
+    } catch { setPhase("error"); setMsg("שגיאת רשת בהחלה."); }
   }
 
-  function reset() { setPhase("idle"); setMsg(""); setUploadId(null); setDraft(null); }
+  async function reset() {
+    // ביטול חילוץ שממתין (אם יש) כדי שלא יוצג שוב אחרי רענון.
+    if (uploadId && (phase === "review" || phase === "uploaded")) {
+      await fetch("/api/payslip?action=discard", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ uploadId }),
+      }).catch(() => {});
+    }
+    setPhase("idle"); setMsg(""); setUploadId(null); setDraft(null);
+  }
+
+  // שחזור אחרי רענון: אם יש חילוץ שממתין לאישור בתיק, מציגים מחדש את כרטיס האישור.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/payslip?pending=1");
+        const data = await res.json();
+        if (!cancelled && data.pending) {
+          setUploadId(data.pending.uploadId);
+          setDraft(data.pending.extraction as Extraction);
+          setPhase("review");
+        }
+      } catch { /* ignore */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   function pick(files: FileList | null) {
     const f = files?.[0]; if (f) void upload(f);
@@ -130,21 +172,31 @@ export function PayslipUpload({ onApplied }: { onApplied?: () => void }) {
                 <p style={{ fontSize: "var(--font-sm)", color: "var(--color-muted)", marginBottom: "var(--space-2)" }}>
                   בדקו ותקנו לפני החלה. שדה ריק = לא זוהה (לא יוחל, ולא ידרוס נתון קיים). סימון «?» = ודאות נמוכה.
                 </p>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-2) var(--space-3)" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-3)" }}>
                   {(Object.keys(LABELS) as Array<keyof Extraction>).map((k) => {
                     const f = draft[k] as Field;
+                    const detected = f.value !== null;
                     return (
                       <label key={k} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                        <span style={{ fontSize: "var(--font-sm)", fontWeight: 600 }}>
-                          {LABELS[k as string]}{f.confidence === "low" ? <span title="ודאות נמוכה" style={{ color: "var(--color-loss)" }}> ?</span> : null}
+                        <span style={{ fontSize: "var(--font-sm)", fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
+                          {LABELS[k as string]}
+                          {/* מקור/חוסר: זוהה מהמסמך (ודאות) או לא זוהה */}
+                          {!detected ? (
+                            <span style={{ fontSize: "0.7rem", fontWeight: 500, color: "var(--color-muted)", background: "var(--color-bg-tint)", borderRadius: "var(--radius-pill)", padding: "1px 8px" }}>לא זוהה</span>
+                          ) : f.confidence === "low" ? (
+                            <span title="זוהה בוודאות נמוכה — נא לאמת" style={{ fontSize: "0.7rem", fontWeight: 500, color: "var(--color-loss)", background: "var(--color-loss-soft)", borderRadius: "var(--radius-pill)", padding: "1px 8px" }}>ודאות נמוכה</span>
+                          ) : (
+                            <span style={{ fontSize: "0.7rem", fontWeight: 500, color: "var(--color-gain)", background: "var(--color-gain-soft)", borderRadius: "var(--radius-pill)", padding: "1px 8px" }}>מהמסמך</span>
+                          )}
                         </span>
                         <input
                           type="number" inputMode="decimal" step="0.01"
                           defaultValue={toDisp(k as string, f.value)}
-                          placeholder="לא זוהה"
+                          placeholder="לא זוהה — אפשר להזין ידנית"
                           onChange={(e) => setDraft((d) => d ? { ...d, [k]: { ...(d[k] as Field), value: fromDisp(k as string, e.target.value) } } : d)}
                           style={{ width: "100%" }}
                         />
+                        <span style={{ fontSize: "0.68rem", color: "var(--color-muted)" }}>{HINTS[k as string]}</span>
                       </label>
                     );
                   })}

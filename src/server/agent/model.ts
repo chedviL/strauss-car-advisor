@@ -4,9 +4,12 @@
 // דרך Models API). אין auto-switch למודל אחר.
 
 import { createAnthropic } from "@ai-sdk/anthropic";
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import type { LanguageModel } from "ai";
 
 export const DEFAULT_MODEL_ID = "claude-sonnet-5-5";
+// חילוץ מסמכים בלבד: Gemini (ספק Google), מפתח נפרד MODEL_API_KEY2. השיחה נשארת Claude.
+export const DEFAULT_EXTRACTION_MODEL_ID = "gemini-3.8-flash";
 
 /** תקרות ניסוי כדי לשמור על תקציב מוערך של עד ~$1 לקבוצת הריצות. */
 export const BUDGET = {
@@ -57,4 +60,24 @@ export function getModel(): LanguageModel {
 /** אומדן עלות קריאה בודדת לפי שימוש בטוקנים. */
 export function estimateUsd(inputTokens: number, outputTokens: number): number {
   return inputTokens * BUDGET.usdPerInputToken + outputTokens * BUDGET.usdPerOutputToken;
+}
+
+/** מזהה מודל החילוץ (Gemini). ניתן להחלפה ב-EXTRACTION_MODEL_ID. */
+export function getExtractionModelId(): string {
+  const id = process.env.EXTRACTION_MODEL_ID;
+  return id && id.trim() !== "" ? id.trim() : DEFAULT_EXTRACTION_MODEL_ID;
+}
+
+/**
+ * מודל לחילוץ מסמכים בלבד: ספק Google (Gemini), מפתח נפרד MODEL_API_KEY2.
+ * *אינו* משמש לשיחה — השיחה נשארת Claude (getModel). הפרדה מכוונת: ספק/מפתח
+ * שונים, כדי לא לערבב חיוב/מכסה בין השניים. זורק שגיאה מסוננת-סוד אם אין מפתח.
+ */
+export function getExtractionModel(): LanguageModel {
+  const key = process.env.MODEL_API_KEY2;
+  if (!key || key.trim() === "") {
+    throw new Error("MODEL_API_KEY2 (מפתח Gemini לחילוץ) אינו נטען. בדוק את .env.local (נוכחות בלבד).");
+  }
+  const google = createGoogleGenerativeAI({ apiKey: key });
+  return google(getExtractionModelId());
 }

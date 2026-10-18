@@ -118,19 +118,77 @@ export async function readPayslipBytes(args: {
   }
 }
 
-/** עדכון סטטוס (extracted/applied/discarded) לשחזור/מעקב. */
-export async function setPayslipStatus(args: {
-  connectionString: string; ownerId: string; uploadId: string; status: "extracted" | "applied" | "discarded";
+/** שמירת תוצאת החילוץ על השורה (status=extracted) - לשחזור אחרי רענון. */
+export async function saveExtraction(args: {
+  connectionString: string; ownerId: string; uploadId: string; extraction: unknown;
 }): Promise<void> {
-  const { connectionString, ownerId, uploadId, status } = args;
+  const { connectionString, ownerId, uploadId, extraction } = args;
+  await withOwnerTx(connectionString, ownerId, async (client) => {
+    await client.query(
+      "update payslip_uploads set status='extracted', extraction=$2 where id=$1 and status <> 'applied'",
+      [uploadId, JSON.stringify(extraction)],
+    );
+  });
+}
+
+/**
+ * סימון החלה - אטומי ומונע כפילות: מצליח רק אם applied_at עדיין null.
+ * מחזיר true אם סומן כעת (ראשוני), false אם כבר הוחל (אין להחיל שוב).
+ */
+export async function markApplied(args: {
+  connectionString: string; ownerId: string; uploadId: string;
+}): Promise<boolean> {
+  const { connectionString, ownerId, uploadId } = args;
+  return await withOwnerTx(connectionString, ownerId, async (client) => {
+    const r = await client.query(
+      "update payslip_uploads set status='applied', applied_at=now() where id=$1 and applied_at is null returning id",
+      [uploadId],
+    );
+    return (r.rowCount ?? 0) > 0;
+  });
+}
+
+/** מסמן discarded (ביטול/כשל). */
+export async function discardPayslip(args: {
+  connectionString: string; ownerId: string; uploadId: string;
+}): Promise<void> {
+  const { connectionString, ownerId, uploadId } = args;
+  await withOwnerTx(connectionString, ownerId, async (client) => {
+    await client.query("update payslip_uploads set status='discarded' where id=$1 and status <> 'applied'", [uploadId]);
+  });
+}
+
+/**
+ * חילוץ אחרון שממתין לאישור בתיק (status=extracted, applied_at is null) - לשחזור אחרי רענון.
+ * מחזיר null אם אין.
+ */
+export async function loadPendingExtraction(args: {
+  connectionString: string; ownerId: string; caseId: string;
+}): Promise<{ uploadId: string; originalName: string | null; extraction: unknown } | null> {
+  const { connectionString, ownerId, caseId } = args;
+  return await withOwnerTx(connectionString, ownerId, async (client) => {
+    const r = await client.query(
+      `select id, original_name, extraction from payslip_uploads
+       where case_id=$1 and status='extracted' and applied_at is null and extraction is not null
+       order by created_at desc limit 1`,
+      [caseId],
+    );
+    if (r.rowCount === 0) return null;
+    return { uploadId: r.rows[0].id as string, originalName: (r.rows[0].original_name as string) ?? null, extraction: r.rows[0].extraction };
+  });
+}
+
+/** עוטף פעולה בטרנזקציה עם app.owner_id (RLS). */
+async function withOwnerTx<T>(connectionString: string, ownerId: string, fn: (c: import("pg").PoolClient) => Promise<T>): Promise<T> {
   const pool = getPool(connectionString);
   const client = await pool.connect();
   try {
     await client.query("begin");
     await client.query("select set_config('app.owner_id', $1, true)", [ownerId]);
-    await client.query("update payslip_uploads set status = $2 where id = $1", [uploadId, status]);
+    const out = await fn(client);
     await client.query("commit");
     client.release();
+    return out;
   } catch (e) {
     try { await client.query("rollback"); } catch { /* ignore */ }
     client.release(true);
