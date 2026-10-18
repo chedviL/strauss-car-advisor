@@ -74,6 +74,23 @@ export interface StoredMessage {
   createdAt: string;
 }
 
+/**
+ * תצוגת פנייה לנציג עם ההקשר המינימלי הנדרש להכרעה בלבד:
+ * סוג, מסלול/רכב/קבוצה, גרסת העובדות הנוכחית וערך ההשתתפות הנוכחי בתרחיש.
+ * ללא שכר, נטו או פרטים אישיים - הנציג מכריע לפי ההקשר הדרוש בלבד.
+ */
+export interface RepInquiryContext {
+  inquiry: InquiryRecord;
+  caseId: string;
+  caseUpdatedAt: string;
+  currentFactsRevision: number;
+  scenarioRole: ScenarioRole | null;
+  route: RouteKind | null;
+  vehicleCode: string | null;
+  reportedGroup: string | null;
+  currentParticipation: number | null;
+}
+
 export interface CaseRepository {
   createCase(input: {
     ownerId: string;
@@ -130,6 +147,11 @@ export interface CaseRepository {
     ownerId: string,
     answer: { value: number | null; note: string | null; effectiveFrom: string | null },
   ): Promise<InquiryRecord>;
+  /**
+   * מחזיר את כל הפניות של הבעלים (על פני כל התיקים) עם ההקשר המינימלי להכרעה.
+   * משמש את מסך הנציג. אוכף בעלות - לא חושף פניות של בעלים אחר.
+   */
+  listInquiriesByOwner(ownerId: string): Promise<RepInquiryContext[]>;
   /** שומר הודעות שיחה (append) לשחזור אחרי רענון. seq רציף לכל תיק. */
   appendMessages(
     caseId: string,
@@ -426,6 +448,41 @@ export class FileCaseRepository implements CaseRepository {
       }
     }
     throw new Error("inquiry not found for owner");
+  }
+
+  async listInquiriesByOwner(ownerId: string): Promise<RepInquiryContext[]> {
+    const dir = this.ownerDir(ownerId);
+    if (!existsSync(dir)) return [];
+    const out: RepInquiryContext[] = [];
+    for (const f of readdirSync(dir).filter((x) => x.endsWith(".json"))) {
+      const stored = JSON.parse(readFileSync(join(dir, f), "utf8")) as StoredCase;
+      if (stored.case.ownerId !== ownerId) continue;
+      for (const inq of stored.inquiries ?? []) {
+        if (inq.status === "cancelled") continue;
+        const scen = inq.scenarioId
+          ? stored.scenarios.find((s) => s.id === inq.scenarioId) ?? null
+          : null;
+        out.push({
+          inquiry: inq,
+          caseId: stored.case.id,
+          caseUpdatedAt: stored.case.updatedAt,
+          currentFactsRevision: stored.case.factsRevision,
+          scenarioRole: scen?.role ?? null,
+          route: scen?.route ?? null,
+          vehicleCode: scen?.vehicleCode ?? null,
+          reportedGroup: stored.facts.reportedGroup,
+          currentParticipation: scen?.participation ?? null,
+        });
+      }
+    }
+    // פתוחות קודם, ואז לפי זמן יצירה יורד.
+    out.sort((a, b) => {
+      const sa = a.inquiry.status === "open" ? 0 : 1;
+      const sb = b.inquiry.status === "open" ? 0 : 1;
+      if (sa !== sb) return sa - sb;
+      return b.inquiry.createdAt.localeCompare(a.inquiry.createdAt);
+    });
+    return out;
   }
 
   async appendMessages(

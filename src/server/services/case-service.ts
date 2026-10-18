@@ -370,6 +370,93 @@ export class CaseService {
     return await this.repo.answerInquiry(inquiryId, ownerId, answer);
   }
 
+  /** רשימת הפניות לנציג (כל התיקים של הבעלים) עם ההקשר המינימלי להכרעה. */
+  async listInquiriesForRep(ownerId: string) {
+    return await this.repo.listInquiriesByOwner(ownerId);
+  }
+
+  /**
+   * מענה נציג + החלת התשובה על התיק + חישוב מחדש של ההשוואה - צד-שרת בלבד,
+   * כך שזה עובד גם כשהעובדת מנותקת. בחזרתה היא תראה את התשובה ואת התוצאה המעודכנת.
+   *
+   * רלוונטיות/גרסה: בודקים שגרסת העובדות ששימשה בעת פתיחת הפנייה (מתוך
+   * contextFingerprint) עדיין תואמת לגרסה הנוכחית. אם לא - מסמנים staleContext,
+   * עדיין רושמים את התשובה, אך לא מחילים אוטומטית ערך על תרחיש שהקשרו השתנה.
+   *
+   * החלה: רק employee_participation מתורגם לערך מספרי על ההשתתפות של התרחיש המקושר.
+   * הבהרת זכאות אינה ערך-החלה - נרשמת כתשובה בלבד.
+   */
+  async answerAndApplyInquiry(
+    inquiryId: string,
+    ownerId: string,
+    answer: { value: number | null; note: string | null; effectiveFrom: string | null },
+  ): Promise<{
+    status: "applied" | "recorded_not_applied" | "stale_context" | "not_found";
+    inquiry?: import("../../domain/contracts/case.js").InquiryRecord;
+    caseId?: string;
+    recomputed?: boolean;
+    missingFields?: string[];
+    reason?: string;
+  }> {
+    // 1) מאתרים את הפנייה בהקשרה (על פני תיקי הבעלים).
+    const all = await this.repo.listInquiriesByOwner(ownerId);
+    const ctx = all.find((x) => x.inquiry.id === inquiryId);
+    if (!ctx) return { status: "not_found" };
+
+    // 2) בדיקת רלוונטיות לפי גרסת העובדות שבטביעת ההקשר.
+    const fpRev = parseFactsRevisionFromFingerprint(ctx.inquiry.contextFingerprint);
+    const stale = fpRev !== null && fpRev !== ctx.currentFactsRevision;
+
+    // 3) רושמים את התשובה תמיד (תיעוד מה שהנציג מסר).
+    const inquiry = await this.repo.answerInquiry(inquiryId, ownerId, answer);
+
+    // 4) הבהרת זכאות - תיעוד בלבד, אין ערך-החלה.
+    if (ctx.inquiry.type !== "employee_participation") {
+      return { status: "recorded_not_applied", inquiry, caseId: ctx.caseId, reason: "not_participation" };
+    }
+    // אין ערך מספרי להחיל (הנציג מסר הערה בלבד).
+    if (answer.value === null) {
+      return { status: "recorded_not_applied", inquiry, caseId: ctx.caseId, reason: "no_value" };
+    }
+    // התרחיש אינו ידוע/נמחק - אין היכן להחיל.
+    if (!ctx.inquiry.scenarioId || ctx.scenarioRole === null) {
+      return { status: "recorded_not_applied", inquiry, caseId: ctx.caseId, reason: "no_scenario" };
+    }
+    // ההקשר השתנה (העובדות עודכנו מאז הפנייה) - לא מחילים אוטומטית.
+    if (stale) {
+      return { status: "stale_context", inquiry, caseId: ctx.caseId, reason: "facts_changed" };
+    }
+
+    // 5) מחילים את ההשתתפות על התרחיש המקושר (שמירה על שאר שדות התרחיש).
+    const state = await this.repo.getCaseState(ctx.caseId, ownerId);
+    if (!state) return { status: "not_found" };
+    const scen = state.scenarios.find((s) => s.id === ctx.inquiry.scenarioId);
+    if (!scen) return { status: "recorded_not_applied", inquiry, caseId: ctx.caseId, reason: "no_scenario" };
+
+    if (scen.role === "baseline") {
+      await this.repo.updateBaselineVehicle(ctx.caseId, ownerId, {
+        route: scen.route, vehicleCode: scen.vehicleCode,
+        participation: answer.value, maintenanceAllowance: scen.maintenanceAllowance,
+      });
+    } else {
+      await this.repo.upsertAlternative(ctx.caseId, ownerId, {
+        role: "alternative", route: scen.route, vehicleCode: scen.vehicleCode,
+        participation: answer.value, maintenanceAllowance: scen.maintenanceAllowance,
+        overrides: scen.overrides,
+      });
+    }
+
+    // 6) חישוב מחדש + שמירת ההשוואה (צד-שרת; עובד גם כשהעובדת מנותקת).
+    const recompute = await this.computeAndSaveComparison(ctx.caseId, ownerId);
+    if (recompute.status === "missing_data") {
+      return { status: "applied", inquiry, caseId: ctx.caseId, recomputed: false, missingFields: recompute.missingFields };
+    }
+    if (recompute.status === "no_alternative") {
+      return { status: "applied", inquiry, caseId: ctx.caseId, recomputed: false, reason: "no_alternative" };
+    }
+    return { status: "applied", inquiry, caseId: ctx.caseId, recomputed: true };
+  }
+
   /** שמירת הודעות שיחה לשחזור אחרי רענון. */
   async appendMessages(
     caseId: string,
@@ -661,6 +748,24 @@ export class CaseService {
 
     return { ...result, compareRunId, factsRevision: state.case.factsRevision, ruleSetHash: dataset.rules.contentHash };
   }
+}
+
+/**
+ * שולף את גרסת העובדות מתוך contextFingerprint שנבנה ב-openInquiry
+ * (זוגות key=value ממוינים ומופרדים ב-"|"). מחזיר null אם לא נמצא/לא מספרי.
+ */
+function parseFactsRevisionFromFingerprint(fp: string): number | null {
+  for (const part of fp.split("|")) {
+    const eq = part.indexOf("=");
+    if (eq < 0) continue;
+    if (part.slice(0, eq) === "factsRevision") {
+      const v = part.slice(eq + 1);
+      if (v === "") return null;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    }
+  }
+  return null;
 }
 
 // --- types for search/compare ---

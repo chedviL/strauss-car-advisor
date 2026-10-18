@@ -24,6 +24,7 @@ import type {
   UpdateFactsOutcome,
   StoredMessage,
   StoredCompareRun,
+  RepInquiryContext,
 } from "./case-repository.js";
 
 export class PgCaseRepository implements CaseRepository {
@@ -332,6 +333,34 @@ export class PgCaseRepository implements CaseRepository {
       );
       if (r.rowCount === 0) throw new Error("inquiry not found for owner");
       return mapInquiry(r.rows[0]);
+    });
+  }
+
+  async listInquiriesByOwner(ownerId: string): Promise<RepInquiryContext[]> {
+    return this.withOwner(ownerId, async (c) => {
+      // RLS מגביל ל-cases של הבעלים; join לתרחיש ולעובדות לצורך ההקשר המינימלי.
+      const r = await c.query(
+        `select i.*, cs.facts_revision as cur_rev, cs.updated_at as case_updated_at,
+                sc.role as sc_role, sc.route as sc_route, sc.vehicle_code as sc_vehicle,
+                sc.participation as sc_participation, cf.reported_group as reported_group
+           from inquiries i
+           join cases cs on cs.id = i.case_id
+           left join scenarios sc on sc.id = i.scenario_id
+           left join case_facts cf on cf.case_id = i.case_id
+          where i.status in ('open','answered')
+          order by (case when i.status = 'open' then 0 else 1 end), i.created_at desc`,
+      );
+      return r.rows.map((row) => ({
+        inquiry: mapInquiry(row),
+        caseId: row.case_id as string,
+        caseUpdatedAt: iso(row.case_updated_at),
+        currentFactsRevision: row.cur_rev as number,
+        scenarioRole: (row.sc_role as RepInquiryContext["scenarioRole"]) ?? null,
+        route: (row.sc_route as RepInquiryContext["route"]) ?? null,
+        vehicleCode: (row.sc_vehicle as string) ?? null,
+        reportedGroup: (row.reported_group as string) ?? null,
+        currentParticipation: num(row.sc_participation),
+      }));
     });
   }
 

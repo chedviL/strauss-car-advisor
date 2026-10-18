@@ -5,7 +5,7 @@
 
 import { revalidatePath } from "next/cache";
 import { caseService } from "../server/web/service.js";
-import { getOrCreateVisitOwner } from "../server/web/visit.js";
+import { getOrCreateVisitOwner, readVisitOwner } from "../server/web/visit.js";
 
 export async function startDemoCase(employeeId: string): Promise<void> {
   const owner = await getOrCreateVisitOwner();
@@ -141,5 +141,56 @@ export async function fillSampleData(
     return { status: "ok" };
   } catch (e) {
     return { status: "error", message: e instanceof Error ? e.message : "שגיאה במילוי נתוני הדוגמה" };
+  }
+}
+
+/**
+ * אזור נציג (הדמיה): מחזיר את הפניות של אותו ביקור (owner) עם ההקשר המינימלי
+ * הנחוץ להכרעה בלבד - סוג, מסלול/רכב/קבוצה, גרסת עובדות וערך השתתפות נוכחי.
+ * אין שכר/נטו/פרטים אישיים. בשימוש אמיתי נדרשת הרשאת נציג מוקצית.
+ */
+export async function loadRepInquiries() {
+  const owner = await readVisitOwner();
+  if (!owner) return [];
+  const service = caseService();
+  return await service.listInquiriesForRep(owner);
+}
+
+/**
+ * מענה נציג על פנייה + החלה אוטומטית אם עדיין רלוונטי + חישוב מחדש של ההשוואה,
+ * הכל בצד השרת (עובד גם כשהעובדת מנותקת). בחזרתה היא תראה את התשובה והתוצאה.
+ * value ל-employee_participation הוא ההשתתפות החודשית (₪). effectiveFrom = ISO date.
+ */
+export async function answerRepInquiry(
+  inquiryId: string,
+  answer: { value: number | null; note: string | null; effectiveFrom: string | null },
+): Promise<
+  | { status: "applied"; recomputed: boolean; missingFields?: string[] }
+  | { status: "recorded_not_applied"; reason?: string }
+  | { status: "stale_context" }
+  | { status: "not_found" }
+  | { status: "error"; message: string }
+> {
+  const owner = await readVisitOwner();
+  if (!owner) return { status: "not_found" };
+  const service = caseService();
+  try {
+    const res = await service.answerAndApplyInquiry(inquiryId, owner, answer);
+    revalidatePath("/representative");
+    revalidatePath("/");
+    if (res.status === "applied") {
+      return res.missingFields && res.missingFields.length > 0
+        ? { status: "applied", recomputed: res.recomputed ?? false, missingFields: res.missingFields }
+        : { status: "applied", recomputed: res.recomputed ?? false };
+    }
+    if (res.status === "recorded_not_applied") {
+      return res.reason
+        ? { status: "recorded_not_applied", reason: res.reason }
+        : { status: "recorded_not_applied" };
+    }
+    if (res.status === "stale_context") return { status: "stale_context" };
+    return { status: "not_found" };
+  } catch (e) {
+    return { status: "error", message: e instanceof Error ? e.message : "שגיאה במענה לפנייה" };
   }
 }
