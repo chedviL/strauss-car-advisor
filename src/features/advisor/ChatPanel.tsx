@@ -12,31 +12,42 @@ import { DefaultChatTransport } from "ai";
 
 export interface ChatPanelProps {
   initialMessages?: Array<{ id: string; role: string; parts: unknown }>;
+  /** הצגת שאלות לדוגמה עדינות כשאין עדיין שיחה. */
+  showExamples?: boolean;
 }
 
-export function ChatPanel({ initialMessages = [] }: ChatPanelProps) {
+const EXAMPLES = [
+  "אם אעבור לרכב חשמלי, כמה זה ישנה לי בנטו?",
+  "יש לי 5 ילדים - מה נותן המסלול המשפחתי?",
+  "כמה אקבל אם אוותר על הרכב ואקבל אחזקה?",
+];
+
+export function ChatPanel({ initialMessages = [], showExamples = false }: ChatPanelProps) {
   const [input, setInput] = useState("");
   const router = useRouter();
   const { messages, sendMessage, status, error } = useChat({
     transport: new DefaultChatTransport({ api: "/api/chat" }),
-    // שחזור היסטוריה אחרי רענון (נטען מהמסד בצד השרת).
     messages: initialMessages as never,
   });
   const busy = status === "submitted" || status === "streaming";
   const lastSentText = useRef<string | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
 
-  // כשתור הסתיים, מרעננים את ה-Server Components כדי שכרטיס ההשוואה
-  // (אם נשמר בתור) יופיע/יתעדכן. רק במעבר מ-busy ל-ready.
   const wasBusy = useRef(false);
   useEffect(() => {
     if (wasBusy.current && status === "ready") router.refresh();
     wasBusy.current = busy;
   }, [status, busy, router]);
 
-  // מצב השמירה של התור האחרון מתוך data-saveStatus (השרת מנהל ניסיונות חוזרים).
-  //  saving/retrying -> חיווי שקט בלבד.  failed -> אזהרה + ניסיון ידני (מוצא אחרון).
+  // גלילה עדינה לתחתית כשמגיעות הודעות חדשות.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  }, [messages.length, busy]);
+
   const savePhase = lastTurnSavePhase(messages);
   const saveFailed = !busy && savePhase === "failed";
+  const empty = messages.length === 0;
 
   function sendText(text: string) {
     const clean = text.trim();
@@ -44,7 +55,6 @@ export function ChatPanel({ initialMessages = [] }: ChatPanelProps) {
     lastSentText.current = clean;
     void sendMessage({ text: clean });
   }
-
   function submit(e: React.FormEvent) {
     e.preventDefault();
     const text = input.trim();
@@ -52,84 +62,120 @@ export function ChatPanel({ initialMessages = [] }: ChatPanelProps) {
     setInput("");
     sendText(text);
   }
-
   function retrySave() {
-    // שולחים שוב את אותו טקסט אחרון; השרת מזהה dedup לפי מזהה ההודעה ולא יוצר כפל.
     if (lastSentText.current) sendText(lastSentText.current);
   }
 
   return (
     <section
+      className="card"
+      aria-label="שיחה עם היועץ"
       style={{
-        background: "var(--color-surface)",
-        border: "1px solid var(--color-border)",
         borderRadius: "var(--radius-lg)",
-        boxShadow: "var(--shadow)",
-        padding: "var(--space-3)",
         display: "flex",
         flexDirection: "column",
-        gap: "var(--space-2)",
-        maxHeight: 520,
+        overflow: "hidden",
+        // אזור קריאה מרווח; המחיצה אל הקומפוזר נשארת תמיד גלויה.
+        minHeight: empty ? "auto" : 420,
       }}
-      aria-label="שיחה עם היועץ"
     >
-      <div style={{ overflowY: "auto", display: "flex", flexDirection: "column", gap: "var(--space-2)", flex: 1 }}>
-        {messages.length === 0 && (
-          <div style={{ color: "var(--color-muted)", fontSize: "0.9rem" }}>
-            דברו איתי בחופשיות: מעבר לרכב חשמלי, ויתור על רכב, "מה יחסוך לי?", תיקון שכר ועוד.
-          </div>
-        )}
-        {messages.map((m) => (
-          <MessageBubble key={m.id} role={m.role} parts={m.parts} />
-        ))}
-        {busy && (
-          <div style={{ color: "var(--color-muted)", fontSize: "0.85rem" }} aria-live="polite">
-            חושב…
-          </div>
-        )}
-        {!busy && savePhase === "retrying" && (
-          // חיווי שקט בזמן התאוששות: המערכת מנסה לשמור שוב. ללא כפתור.
-          <div style={{ color: "var(--color-muted)", fontSize: "0.8rem" }} aria-live="polite">
-            שומר…
-          </div>
-        )}
-        {error && (
-          <div role="alert" style={{ color: "var(--color-danger, #b00)", fontSize: "0.85rem" }}>
-            שגיאה בשיחה. נסו שוב בעוד רגע.
-          </div>
-        )}
-        {saveFailed && (
-          // רק אחרי שכל הניסיונות האוטומטיים נכשלו: אזהרה + ניסיון ידני כמוצא אחרון.
-          <div role="alert" style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", color: "var(--color-danger, #b00)", fontSize: "0.85rem", border: "1px solid var(--color-danger, #b00)", borderRadius: "var(--radius-md)", padding: "var(--space-2)" }}>
-            <span>השיחה טרם נשמרה. ייתכן שלא תופיע אחרי רענון.</span>
-            <button type="button" className="btn" onClick={retrySave} disabled={busy} style={{ marginInlineStart: "auto" }}>
-              נסה לשמור שוב
-            </button>
+      {/* אזור קריאה */}
+      {!empty && (
+        <div
+          ref={scrollRef}
+          className="scroll-y"
+          aria-live="polite"
+          style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)", padding: "var(--space-4)", flex: 1, maxHeight: "56vh" }}
+        >
+          {messages.map((m) => (
+            <MessageBubble key={m.id} role={m.role} parts={m.parts} />
+          ))}
+          {busy && <TypingHint />}
+          {!busy && savePhase === "retrying" && (
+            <div style={{ color: "var(--color-muted)", fontSize: "var(--font-sm)" }} aria-live="polite">שומר…</div>
+          )}
+          {error && (
+            <div role="alert" style={{ color: "var(--color-loss)", fontSize: "var(--font-sm)" }}>
+              שגיאה בשיחה. נסו שוב בעוד רגע.
+            </div>
+          )}
+          {saveFailed && (
+            <div role="alert" style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", color: "var(--color-loss)", fontSize: "var(--font-sm)", background: "var(--color-loss-soft)", borderRadius: "var(--radius-sm)", padding: "var(--space-2) var(--space-3)" }}>
+              <span>השיחה טרם נשמרה. ייתכן שלא תופיע אחרי רענון.</span>
+              <button type="button" className="btn" onClick={retrySave} disabled={busy} style={{ marginInlineStart: "auto", padding: "4px 14px" }}>
+                נסה לשמור שוב
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* קומפוזר - תמיד בתחתית, אינו מסתיר הודעות */}
+      <div style={{ borderTop: empty ? "none" : "1px solid var(--color-border)", padding: "var(--space-3)", background: "var(--color-surface)" }}>
+        <form onSubmit={submit} style={{ display: "flex", gap: "var(--space-2)", alignItems: "flex-end" }}>
+          {/* צירוף תלוש - מושבת עד שההעלאה תעבוד (מופיע אפור עם הסבר) */}
+          <button
+            type="button"
+            className="icon-btn"
+            disabled
+            title="העלאת תלוש - בקרוב"
+            aria-label="העלאת תלוש (בקרוב)"
+          >
+            <PaperclipIcon />
+          </button>
+          <textarea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) submit(e); }}
+            rows={1}
+            placeholder="כתבו לי מה תרצו לבדוק…"
+            style={{ flex: 1, borderRadius: "var(--radius-md)", resize: "none", minHeight: 44, maxHeight: 160, lineHeight: 1.5 }}
+            disabled={busy}
+          />
+          <button type="submit" className="btn btn-primary" disabled={busy || input.trim() === ""}>
+            שליחה
+          </button>
+        </form>
+
+        {/* שאלות לדוגמה עדינות - רק במסך הפתיחה */}
+        {showExamples && empty && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-2)", marginTop: "var(--space-3)" }}>
+            {EXAMPLES.map((q) => (
+              <button
+                key={q}
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => sendText(q)}
+                disabled={busy}
+                style={{ border: "1px solid var(--color-border)", borderRadius: "var(--radius-pill)", fontWeight: 500, fontSize: "var(--font-sm)", color: "var(--color-muted)" }}
+              >
+                {q}
+              </button>
+            ))}
           </div>
         )}
       </div>
-
-      <form onSubmit={submit} style={{ display: "flex", gap: "var(--space-2)", alignItems: "flex-end" }}>
-        <textarea
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) submit(e); }}
-          rows={2}
-          placeholder="לדוגמה: אם אעבור לרכב חשמלי, כמה זה ישנה לי בנטו?"
-          style={{
-            flex: 1, border: "1px solid var(--color-border)", borderRadius: "var(--radius-md)",
-            padding: "var(--space-2)", font: "inherit", resize: "vertical", outline: "none",
-          }}
-          disabled={busy}
-        />
-        <button type="submit" className="btn" disabled={busy || input.trim() === ""}>
-          שליחה
-        </button>
-      </form>
     </section>
   );
 }
 
+function TypingHint() {
+  return (
+    <div style={{ display: "flex", justifyContent: "flex-end" }}>
+      <div style={{ color: "var(--color-muted)", fontSize: "var(--font-sm)", background: "var(--color-surface-2)", borderRadius: "var(--radius-md)", padding: "var(--space-2) var(--space-3)" }} aria-live="polite">
+        חושב…
+      </div>
+    </div>
+  );
+}
+
+function PaperclipIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M21.44 11.05 12.25 20.24a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+    </svg>
+  );
+}
 type SavePhaseUI = "saving" | "retrying" | "saved" | "failed" | null;
 
 // מצב השמירה של התור האחרון מתוך data-saveStatus בהודעת העוזר האחרונה.
@@ -150,21 +196,25 @@ function lastTurnSavePhase(messages: Array<{ role: string; parts: Array<Record<s
 function MessageBubble({ role, parts }: { role: string; parts: Array<Record<string, unknown>> }) {
   const isUser = role === "user";
   const textParts = parts.filter((p) => p.type === "text").map((p) => p.text as string);
+  const text = textParts.join("");
+  if (!text) return null; // הודעות ללא טקסט (data-parts בלבד) אינן מוצגות כבועה
 
+  // הבחנה נעימה: העובד/ת בצד ההתחלה עם משטח רך; היועץ בצד הסוף, ללא מסגרת.
   return (
     <div style={{ display: "flex", justifyContent: isUser ? "flex-start" : "flex-end" }}>
       <div
         style={{
-          maxWidth: "85%",
-          background: isUser ? "var(--color-bg, #f3f4f6)" : "var(--color-accent-soft, #eef2ff)",
-          border: "1px solid var(--color-border)",
+          maxWidth: "88%",
+          background: isUser ? "var(--color-accent-soft)" : "transparent",
+          color: "var(--color-text)",
           borderRadius: "var(--radius-md)",
-          padding: "var(--space-2) var(--space-3)",
+          padding: isUser ? "var(--space-2) var(--space-3)" : "var(--space-1) var(--space-2)",
           whiteSpace: isUser ? "pre-wrap" : "normal",
-          lineHeight: 1.5,
+          lineHeight: 1.65,
+          fontSize: "var(--font-base)",
         }}
       >
-        {isUser ? textParts.join("") : <Markdown text={textParts.join("")} />}
+        {isUser ? text : <Markdown text={text} />}
       </div>
     </div>
   );
@@ -201,20 +251,22 @@ function Markdown({ text }: { text: string }): React.ReactElement {
         i++;
       }
       blocks.push(
-        <table key={`t${key++}`} style={{ borderCollapse: "collapse", margin: "6px 0", fontSize: "0.9rem", width: "100%" }}>
-          <thead>
-            <tr>{header.map((h, hi) => (
-              <th key={hi} style={{ border: "1px solid var(--color-border)", padding: "3px 8px", textAlign: "start", background: "var(--color-bg, #f3f4f6)" }}>{renderInline(h, `h${hi}`)}</th>
-            ))}</tr>
-          </thead>
-          <tbody>
-            {rows.map((r, ri) => (
-              <tr key={ri}>{header.map((_, ci) => (
-                <td key={ci} style={{ border: "1px solid var(--color-border)", padding: "3px 8px", textAlign: "start" }}>{renderInline(r[ci] ?? "", `c${ri}-${ci}`)}</td>
+        <div key={`t${key++}`} style={{ margin: "var(--space-3) 0", border: "1px solid var(--color-border)", borderRadius: "var(--radius-sm)", overflow: "hidden" }}>
+          <table dir="rtl" style={{ borderCollapse: "collapse", fontSize: "var(--font-sm)", width: "100%" }}>
+            <thead>
+              <tr>{header.map((h, hi) => (
+                <th key={hi} style={{ padding: "8px 12px", textAlign: "start", background: "var(--color-surface-2)", borderBottom: "1px solid var(--color-border)", fontWeight: 600, color: "var(--color-muted)" }}>{renderInline(h, `h${hi}`)}</th>
               ))}</tr>
-            ))}
-          </tbody>
-        </table>,
+            </thead>
+            <tbody>
+              {rows.map((r, ri) => (
+                <tr key={ri} style={{ borderTop: ri === 0 ? "none" : "1px solid var(--color-border)" }}>{header.map((_, ci) => (
+                  <td key={ci} style={{ padding: "8px 12px", textAlign: "start", unicodeBidi: "plaintext" }}>{renderInline(r[ci] ?? "", `c${ri}-${ci}`)}</td>
+                ))}</tr>
+              ))}
+            </tbody>
+          </table>
+        </div>,
       );
       continue;
     }

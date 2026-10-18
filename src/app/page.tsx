@@ -1,6 +1,6 @@
 // src/app/page.tsx
-// מסך העובד/ת. השיחה והתוצאות במרכז; "הפרטים שלי" במגירה נפתחת (סגורה כברירת מחדל).
-// כרטיס השוואה מוצג כשנשמרה תוצאה. ששת העובדים נשארים כנתוני בדיקה בקוד.
+// מסך העובד/ת. השיחה והתוצאות במרכז; "הפרטים שלי" במגירה (סגורה כברירת מחדל).
+// כותרת-טקסט (wordmark) - אין לוגו מקורי בפרויקט, ולכן לא ממציאים סמל.
 import { readVisitOwner } from "../server/web/visit.js";
 import { caseService } from "../server/web/service.js";
 import { cookies } from "next/headers";
@@ -30,26 +30,35 @@ export default async function Page() {
     }
   }
   const facts = state?.facts ?? BLANK_FACTS;
+  const hasComparison = !!(state && state.latestComparison);
+  const hasHistory = initialMessages.length > 0;
 
   return (
-    <main style={{ minHeight: "100vh", position: "relative" }}>
+    <main style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
       <TopBar facts={facts} />
       <DemoBadge />
-      <div style={{ maxWidth: 1180, margin: "0 auto", padding: "var(--space-4)" }}>
-        <header style={{ textAlign: "center", marginBottom: "var(--space-4)" }}>
-          <h1 style={{ fontSize: "var(--font-xl)", margin: 0 }}>הרכב הבא שלך. מה הוא ישנה בנטו?</h1>
-          <p style={{ color: "var(--color-muted)", marginTop: "var(--space-1)", fontSize: "0.9rem" }}>
-            דברו איתי בחופשיות, או מלאו את הפרטים בעצמכם. אבדוק זכאות, אשלוף שווי שימוש ואחשב את ההפרש בנטו.
-          </p>
-        </header>
 
-        {/* השיחה והתוצאות במרכז המסך. "הפרטים שלי" במגירה (נפתחת מהסרגל העליון). */}
-        <div style={{ maxWidth: 760, margin: "0 auto", display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
-          {state && state.latestComparison ? (
-            <ComparisonView state={state} employee={null} />
-          ) : null}
-          <ChatPanel initialMessages={initialMessages} />
-        </div>
+      <div style={{ flex: 1, width: "100%", maxWidth: 820, margin: "0 auto", padding: "0 var(--space-4) var(--space-6)", display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
+        {/* כותרת פתיחה - מוצגת כשאין עדיין שיחה */}
+        {!hasHistory && !hasComparison && (
+          <header style={{ textAlign: "center", paddingTop: "var(--space-6)" }}>
+            <div style={{ color: "var(--color-muted)", fontSize: "var(--font-sm)", letterSpacing: "0.04em", marginBottom: "var(--space-2)" }}>
+              שטראוס · יועץ הרכב האישי
+            </div>
+            <h1>הרכב הבא שלך. מה הוא ישנה בנטו?</h1>
+            <p style={{ color: "var(--color-muted)", marginTop: "var(--space-3)", fontSize: "var(--font-lg)", maxWidth: 560, marginInline: "auto" }}>
+              ספרו לי מה תרצו לבדוק. אבדוק זכאות, אשלוף את שווי השימוש ואחשב את ההפרש בנטו.
+            </p>
+          </header>
+        )}
+
+        {hasComparison && (
+          <div className="anim-card">
+            <ComparisonView state={state!} employee={null} />
+          </div>
+        )}
+
+        <ChatPanel initialMessages={initialMessages} showExamples={!hasHistory && !hasComparison} />
       </div>
     </main>
   );
@@ -57,11 +66,14 @@ export default async function Page() {
 
 function TopBar({ facts }: { facts: CaseFacts }) {
   return (
-    <div style={{ display: "flex", justifyContent: "flex-start", padding: "var(--space-2) var(--space-3)" }}>
-      <div style={{ display: "flex", gap: "var(--space-2)" }}>
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "var(--space-3) var(--space-4)", maxWidth: 1100, margin: "0 auto", width: "100%" }}>
+      <div style={{ fontWeight: 800, fontSize: "var(--font-lg)", letterSpacing: "-0.01em" }}>
+        שטראוס<span style={{ color: "var(--color-primary)" }}> · יועץ הרכב</span>
+      </div>
+      <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "center" }}>
         <MyDetailsDrawer facts={facts} />
         <NewConversationButton />
-        <a className="btn" href="/representative" aria-label="אזור נציג">אזור נציג</a>
+        <a className="btn-ghost btn" href="/representative" aria-label="אזור נציג" style={{ borderRadius: "var(--radius-pill)" }}>אזור נציג</a>
       </div>
     </div>
   );

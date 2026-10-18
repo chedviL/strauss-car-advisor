@@ -1,30 +1,60 @@
-/* src/app/globals.css - design tokens (re-skinnable) + RTL base */
-/* עיצוב זמני נקי ב-RTL: טיפוגרפיה קריאה, ריווח נעים, צבעים מאופקים. */
+/* src/app/globals.css
+   מערכת עיצוב "יועץ רכב אישי": רקע בהיר-חמים, טקסט כהה, הדגשה מאופקת.
+   טיפוגרפיה עברית איכותית, ריווח עקבי, מצבי hover/focus, מעברים קצרים בלבד.
+   RTL מלא. כיבוד prefers-reduced-motion. */
+
 :root {
-  --color-bg: #f5f6f8;
-  --color-surface: #ffffff;
-  --color-text: #1a1d21;
-  --color-muted: #5b6472;
-  --color-primary: #0b5fff;
+  /* רקע חמים ובהיר + משטחים */
+  --color-bg: #f6f3ee;            /* קרם חמים */
+  --color-bg-tint: #efe9e1;       /* גוון עמוק יותר לרקעים משניים */
+  --color-surface: #fffdfb;       /* לבן חמים לכרטיסים */
+  --color-surface-2: #faf7f2;
+  --color-text: #221d18;          /* כמעט-שחור חמים */
+  --color-muted: #6b6258;         /* חום-אפור לטקסט משני */
+  --color-border: #e7ded2;        /* גבול עדין וחמים */
+  --color-border-strong: #d8ccba;
+
+  /* הדגשה מאופקת: כחול-פלדה עמוק (מתאים למיתוג מאופק, לא זוהר) */
+  --color-primary: #1f4e6b;
+  --color-primary-hover: #183d54;
   --color-primary-contrast: #ffffff;
-  --color-accent-soft: #eef2ff;
-  --color-gain: #0a7d3c;
-  --color-loss: #b4232a;
-  --color-danger: #b4232a;
-  --color-border: #e2e6eb;
-  --radius-sm: 8px;
-  --radius-md: 14px;
-  --radius-lg: 22px;
+  --color-accent-soft: #eaf0f4;   /* רקע רך להדגשה */
+
+  /* תוצאות */
+  --color-gain: #1f7a4d;          /* ירוק מאופק */
+  --color-gain-soft: #e9f3ec;
+  --color-loss: #a3362f;          /* אדום-חמרה מאופק */
+  --color-loss-soft: #f6eae8;
+  --color-danger: #a3362f;
+
+  /* רדיוסים וריווח */
+  --radius-sm: 10px;
+  --radius-md: 16px;
+  --radius-lg: 24px;
+  --radius-pill: 999px;
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 16px;
   --space-4: 24px;
-  --space-5: 36px;
+  --space-5: 40px;
+  --space-6: 64px;
+
+  /* טיפוגרפיה */
   --font-base: 1rem;
-  --font-lg: 1.3rem;
-  --font-xl: 1.9rem;
-  --shadow: 0 2px 14px rgba(16, 24, 40, 0.07);
-  --shadow-sm: 0 1px 4px rgba(16, 24, 40, 0.05);
+  --font-sm: 0.875rem;
+  --font-lg: 1.25rem;
+  --font-xl: 1.75rem;
+  --font-2xl: 2.4rem;
+  --line: 1.6;
+
+  /* צללים רכים */
+  --shadow-sm: 0 1px 3px rgba(34, 29, 24, 0.05);
+  --shadow: 0 4px 18px rgba(34, 29, 24, 0.07);
+  --shadow-lg: 0 12px 40px rgba(34, 29, 24, 0.12);
+
+  /* מעברים קצרים */
+  --t-fast: 120ms;
+  --t-med: 200ms;
 }
 
 * { box-sizing: border-box; }
@@ -34,45 +64,113 @@ html, body {
   padding: 0;
   background: var(--color-bg);
   color: var(--color-text);
-  font-family: "Segoe UI", "Arial Hebrew", Arial, sans-serif;
+  font-family: "Assistant", "Heebo", "Rubik", "Segoe UI", "Arial Hebrew", Arial, sans-serif;
   font-size: var(--font-base);
-  line-height: 1.55;
+  line-height: var(--line);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  font-feature-settings: "kern" 1;
 }
 
-h1, h2, h3 { line-height: 1.25; font-weight: 700; }
+h1, h2, h3 { line-height: 1.22; font-weight: 700; letter-spacing: -0.01em; margin: 0; }
+h1 { font-size: var(--font-2xl); }
+p { margin: 0; }
 
-a { color: var(--color-primary); text-underline-offset: 2px; }
+a { color: var(--color-primary); text-underline-offset: 3px; }
 
+/* כפתורים */
 .btn {
   font: inherit;
-  border: 1px solid var(--color-border);
+  font-weight: 600;
+  border: 1px solid var(--color-border-strong);
   background: var(--color-surface);
   color: var(--color-text);
-  border-radius: var(--radius-sm);
-  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-pill);
+  padding: var(--space-2) var(--space-4);
   cursor: pointer;
-  transition: background-color 0.12s ease, border-color 0.12s ease;
+  transition: background-color var(--t-fast) ease, border-color var(--t-fast) ease,
+              box-shadow var(--t-fast) ease, transform var(--t-fast) ease;
 }
-.btn:hover:not(:disabled) { background: var(--color-accent-soft); border-color: var(--color-primary); }
-.btn:disabled { opacity: 0.55; cursor: default; }
+.btn:hover:not(:disabled) { background: var(--color-surface-2); border-color: var(--color-primary); }
+.btn:active:not(:disabled) { transform: translateY(1px); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
 .btn-primary {
   background: var(--color-primary);
   color: var(--color-primary-contrast);
   border-color: var(--color-primary);
 }
-.btn-primary:hover:not(:disabled) { filter: brightness(0.95); background: var(--color-primary); }
-.btn:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
-  outline: 3px solid var(--color-primary);
+.btn-primary:hover:not(:disabled) { background: var(--color-primary-hover); border-color: var(--color-primary-hover); }
+
+.btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--color-muted);
+  padding: var(--space-1) var(--space-3);
+}
+.btn-ghost:hover:not(:disabled) { background: var(--color-bg-tint); color: var(--color-text); }
+
+/* icon-button (למשל צירוף קובץ) */
+.icon-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 40px; height: 40px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-muted);
+  cursor: pointer;
+  transition: background-color var(--t-fast) ease, color var(--t-fast) ease, border-color var(--t-fast) ease;
+}
+.icon-btn:hover:not(:disabled) { background: var(--color-surface-2); color: var(--color-text); }
+.icon-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* מיקוד נגיש אחיד */
+.btn:focus-visible, .icon-btn:focus-visible, a:focus-visible,
+input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible {
+  outline: 2px solid var(--color-primary);
   outline-offset: 2px;
 }
 
-/* שדות טופס: מיקוד עדין, ללא אנימציה שמעכבת שימוש */
-input, select, textarea { color: var(--color-text); }
-input:focus, select:focus, textarea:focus { border-color: var(--color-primary); }
+/* כרטיס גנרי */
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow);
+}
 
-/* מונעים אנימציות למי שמעדיף תנועה מופחתת */
+/* שדות טופס */
+input, select, textarea {
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  font: inherit;
+  transition: border-color var(--t-fast) ease, box-shadow var(--t-fast) ease;
+}
+input:focus, select:focus, textarea:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-accent-soft);
+  outline: none;
+}
+input::placeholder, textarea::placeholder { color: var(--color-muted); opacity: 0.7; }
+
+/* מגירה: החלקה קצרה מצד ההתחלה (ימין ב-RTL) + עמעום רקע */
+@keyframes drawerIn { from { transform: translateX(-100%); } to { transform: none; } }
+@keyframes backdropIn { from { opacity: 0; } to { opacity: 1; } }
+.drawer-panel { animation: drawerIn var(--t-med) cubic-bezier(0.22, 1, 0.36, 1) both; }
+.drawer-backdrop { animation: backdropIn var(--t-med) ease both; }
+
+/* מעברים עדינים (מופעלים רק כשאין העדפת תנועה מופחתת) */
+@keyframes fadeInUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.anim-card { animation: fadeInUp var(--t-med) ease both; }
+
+/* גלילה עדינה */
+.scroll-y { overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--color-border-strong) transparent; }
+.scroll-y::-webkit-scrollbar { width: 8px; }
+.scroll-y::-webkit-scrollbar-thumb { background: var(--color-border-strong); border-radius: var(--radius-pill); }
+
 @media (prefers-reduced-motion: reduce) {
-  * { animation: none !important; transition: none !important; }
+  *, *::before, *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
 }

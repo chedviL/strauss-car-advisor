@@ -11,11 +11,12 @@ export function DemoBadge() {
         insetInlineStart: "var(--space-3)",
         background: "var(--color-surface)",
         border: "1px solid var(--color-border)",
-        borderRadius: "var(--radius-sm)",
-        padding: "2px 10px",
-        fontSize: "0.8rem",
+        borderRadius: "var(--radius-pill)",
+        padding: "3px 12px",
+        fontSize: "var(--font-sm)",
         color: "var(--color-muted)",
-        boxShadow: "var(--shadow)",
+        boxShadow: "var(--shadow-sm)",
+        opacity: 0.9,
       }}
     >
       סביבת הדגמה

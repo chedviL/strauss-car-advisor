@@ -79,28 +79,39 @@ export function MyDetailsPanel({ facts }: { facts: Facts }) {
     persist({ reportedGroup: next });
   }
 
+  function renderField(f: { key: FieldKey; label: string; hint?: string; required?: boolean; step?: string; suffix?: string }) {
+    return (
+      <label key={f.key} style={fieldStyle}>
+        <span style={labelStyle}>
+          {f.label}{f.required ? <span style={{ color: "var(--color-danger)" }}> *</span> : null}
+        </span>
+        <span style={{ position: "relative", display: "flex", alignItems: "center" }}>
+          <input
+            type="number" inputMode="decimal" step={f.step ?? "1"}
+            defaultValue={toDisplay(f.key, values[f.key] as number | null)}
+            onBlur={(e) => onNumberBlur(f.key, e.target.value)}
+            placeholder="לא ידוע" style={{ ...inputStyle, paddingInlineEnd: f.suffix ? 28 : undefined }} aria-label={f.label}
+          />
+          {f.suffix ? <span style={{ position: "absolute", insetInlineEnd: 10, color: "var(--color-muted)", fontSize: "var(--font-sm)" }}>{f.suffix}</span> : null}
+        </span>
+        {f.hint ? <span style={hintStyle}>{f.hint}</span> : null}
+      </label>
+    );
+  }
+
   return (
-    <aside aria-label="הפרטים שלי" style={{
-      background: "var(--color-surface)", border: "1px solid var(--color-border)",
-      borderRadius: "var(--radius-lg)", padding: "var(--space-3)",
-      display: "flex", flexDirection: "column", gap: "var(--space-3)",
-    }}>
-      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
-        <h2 style={{ fontSize: "var(--font-lg)", margin: 0 }}>הפרטים שלי</h2>
+    <aside aria-label="הפרטים שלי" style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "var(--space-2)" }}>
+        <p style={{ color: "var(--color-muted)", fontSize: "var(--font-sm)", margin: 0 }}>
+          שדה ריק נשאר לא ידוע. אפס מפורש נחשב אפס. <span style={{ color: "var(--color-danger)" }}>*</span> נחוץ לחישוב.
+        </p>
         <SaveIndicator state={saveState} />
       </div>
-      <p style={{ color: "var(--color-muted)", fontSize: "0.8rem", margin: 0 }}>
-        שדה ריק נשאר לא ידוע. אפס מוזן במפורש נחשב אפס. <span style={{ color: "var(--color-danger, #b00)" }}>*</span> נחוץ לחישוב נטו.
-      </p>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-2) var(--space-3)" }}>
+      <Section title="זכאות">
         <label style={fieldStyle}>
-          <span style={labelStyle}>קבוצת זכאות <span style={{ color: "var(--color-danger, #b00)" }}>*</span></span>
-          <select
-            value={values.reportedGroup ?? ""}
-            onChange={(e) => onGroupChange(e.target.value)}
-            style={inputStyle}
-          >
+          <span style={labelStyle}>קבוצת זכאות <span style={{ color: "var(--color-danger)" }}>*</span></span>
+          <select value={values.reportedGroup ?? ""} onChange={(e) => onGroupChange(e.target.value)} style={inputStyle}>
             <option value="">— לא ידוע —</option>
             <option value="א">א</option>
             <option value="ב">ב</option>
@@ -108,29 +119,15 @@ export function MyDetailsPanel({ facts }: { facts: Facts }) {
             <option value="ד">ד</option>
           </select>
         </label>
+      </Section>
 
-        {NUMBER_FIELDS.map((f) => (
-          <label key={f.key} style={fieldStyle}>
-            <span style={labelStyle}>
-              {f.label}{f.required ? <span style={{ color: "var(--color-danger, #b00)" }}> *</span> : null}
-            </span>
-            <span style={{ position: "relative", display: "flex", alignItems: "center" }}>
-              <input
-                type="number"
-                inputMode="decimal"
-                step={f.step ?? "1"}
-                defaultValue={toDisplay(f.key, values[f.key] as number | null)}
-                onBlur={(e) => onNumberBlur(f.key, e.target.value)}
-                placeholder="לא ידוע"
-                style={inputStyle}
-                aria-label={f.label}
-              />
-              {f.suffix ? <span style={{ position: "absolute", insetInlineEnd: 8, color: "var(--color-muted)", fontSize: "0.8rem" }}>{f.suffix}</span> : null}
-            </span>
-            {f.hint ? <span style={hintStyle}>{f.hint}</span> : null}
-          </label>
-        ))}
-      </div>
+      <Section title="שכר והכנסה">
+        {NUMBER_FIELDS.filter((f) => ["baseSalary", "commission", "bonus"].includes(f.key)).map(renderField)}
+      </Section>
+
+      <Section title="הפרשות, זיכויים ומשפחה">
+        {NUMBER_FIELDS.filter((f) => ["pensionRate", "trainingRate", "creditPoints", "qualifyingChildren"].includes(f.key)).map(renderField)}
+      </Section>
 
       {saveState === "conflict" && (
         <div role="alert" style={{ color: "var(--color-danger, #b00)", fontSize: "0.8rem" }}>
@@ -138,6 +135,17 @@ export function MyDetailsPanel({ facts }: { facts: Facts }) {
         </div>
       )}
     </aside>
+  );
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <div style={{ fontSize: "var(--font-sm)", fontWeight: 700, color: "var(--color-muted)", marginBottom: "var(--space-2)", letterSpacing: "0.02em" }}>{title}</div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-2) var(--space-3)" }}>
+        {children}
+      </div>
+    </div>
   );
 }
 
@@ -151,6 +159,6 @@ const fieldStyle: React.CSSProperties = { display: "flex", flexDirection: "colum
 const labelStyle: React.CSSProperties = { fontSize: "0.82rem", fontWeight: 600 };
 const hintStyle: React.CSSProperties = { fontSize: "0.72rem", color: "var(--color-muted)" };
 const inputStyle: React.CSSProperties = {
-  width: "100%", border: "1px solid var(--color-border)", borderRadius: "var(--radius-md)",
-  padding: "var(--space-2)", font: "inherit", outline: "none", background: "var(--color-bg, #fff)",
+  width: "100%", borderRadius: "var(--radius-sm)", padding: "var(--space-2) var(--space-3)",
+  font: "inherit", background: "var(--color-surface)",
 };

@@ -32,91 +32,89 @@ export function ComparisonView({
   const baseline = state.scenarios.find((s) => s.role === "baseline")!;
   const alternative = state.scenarios.find((s) => s.role === "alternative")!;
 
+  // תוצאה מיושנת: גרסת-העובדות בהשוואה שונה מהנוכחית.
+  const stale = cmp.factsRevision !== state.case.factsRevision;
+  // הנחות (למשל השתתפות ברירת-מחדל) שזרמו לתוצאה.
+  const assumptions = [
+    ...(cmp.result.baseline.assumptions ?? []),
+    ...(cmp.result.alternative.assumptions ?? []),
+  ].filter((v, i, a) => a.indexOf(v) === i);
+
+  const baseTitle = baseline.route === "waiver" ? "ויתור על רכב" : (baseline.vehicleCode ?? "המצב הנוכחי");
+  const altTitle = alternative.route === "waiver" ? "ויתור על רכב" : (alternative.vehicleCode ?? "החלופה");
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
-      {/* כותרת התיק */}
-      <aside
-        style={{
-          background: "var(--color-surface)",
-          border: "1px solid var(--color-border)",
-          borderRadius: "var(--radius-md)",
-          padding: "var(--space-3)",
-          boxShadow: "var(--shadow)",
-          alignSelf: "start",
-        }}
-      >
-        <h2 style={{ marginTop: 0, fontSize: "var(--font-lg)" }}>
-          {employee ? employee.name : "התיק שלך"}
-        </h2>
-        {employee && (
-          <p style={{ color: "var(--color-muted)" }}>{employee.question}</p>
-        )}
-        <button
-          className="btn"
-          style={{ marginTop: "var(--space-3)" }}
-          disabled={pending}
-          onClick={() => startTransition(() => resetDemo())}
-        >
+    <section className="card" style={{ padding: "var(--space-4)", position: "relative" }}>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: "var(--space-2)" }}>
+        <h2 style={{ fontSize: "var(--font-lg)" }}>השוואת נטו חודשי</h2>
+        <button className="btn btn-ghost" disabled={pending} onClick={() => startTransition(() => resetDemo())}>
           התחל מחדש
         </button>
-      </aside>
+      </div>
 
-      {/* כרטיס ההשוואה */}
-      <section
+      {/* שינוי הנטו במרכז - האלמנט הבולט */}
+      <div
+        role="status"
         style={{
-          background: "var(--color-surface)",
-          border: "1px solid var(--color-border)",
-          borderRadius: "var(--radius-md)",
-          padding: "var(--space-4)",
-          boxShadow: "var(--shadow)",
+          textAlign: "center", marginTop: "var(--space-3)",
+          background: gain ? "var(--color-gain-soft)" : "var(--color-loss-soft)",
+          borderRadius: "var(--radius-md)", padding: "var(--space-4)",
         }}
       >
-        <div
-          role="status"
-          style={{
-            fontSize: "var(--font-lg)",
-            fontWeight: 700,
-            color: gain ? "var(--color-gain)" : "var(--color-loss)",
-          }}
-        >
-          <span aria-hidden="true">{gain ? "▲" : "▼"}</span>{" "}
-          {gain ? "הנטו החודשי יגדל ב-" : "הנטו החודשי יקטן ב-"}{shekel(Math.abs(delta))}
+        <div style={{ color: "var(--color-muted)", fontSize: "var(--font-sm)" }}>
+          {gain ? "הנטו החודשי צפוי לגדול" : "הנטו החודשי צפוי לקטון"}
         </div>
-        <p style={{ color: "var(--color-muted)", marginTop: "var(--space-1)" }}>
-          נטו מחושב לפי כללי האתגר (לוחות 2025, שווי שימוש 2026): מהיום ({shekel(baseNet)}) לחלופה ({shekel(altNet)}). ההפרש משקף שינוי בשווי
-          השימוש, בניכויי המס והביטוח ובהשתתפות - לא העברת מזומן.
-        </p>
-
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-3)", marginTop: "var(--space-4)" }}>
-          <ScenarioCol title={`היום · ${baseline.route === "waiver" ? "ויתור" : baseline.vehicleCode ?? ""}`} r={cmp.result.baseline} scen={baseline} />
-          <ScenarioCol title={`חלופה · ${alternative.route === "waiver" ? "ויתור" : alternative.vehicleCode ?? ""}`} r={cmp.result.alternative} scen={alternative} highlight />
+        <div style={{ fontSize: "var(--font-2xl)", fontWeight: 800, color: gain ? "var(--color-gain)" : "var(--color-loss)", lineHeight: 1.1, marginTop: "var(--space-1)", unicodeBidi: "plaintext" }}>
+          <span aria-hidden="true">{gain ? "▲ " : "▼ "}</span>{shekel(Math.abs(delta))}
         </div>
+      </div>
 
-        <details style={{ marginTop: "var(--space-3)" }}>
-          <summary style={{ cursor: "pointer", color: "var(--color-primary)" }}>פירוט מלא</summary>
-          <BreakdownTable base={cmp.result.baseline.breakdown} alt={cmp.result.alternative.breakdown} />
-        </details>
-      </section>
-    </div>
+      {/* שני עמודים: היום מול החלופה */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-3)", marginTop: "var(--space-4)" }}>
+        <ScenarioCol title={`היום · ${baseTitle}`} subtitle={shekel(baseNet)} r={cmp.result.baseline} scen={baseline} />
+        <ScenarioCol title={`חלופה · ${altTitle}`} subtitle={shekel(altNet)} r={cmp.result.alternative} scen={alternative} highlight />
+      </div>
+
+      {/* הנחות ותוצאה מיושנת - עדין וברור */}
+      {(stale || assumptions.length > 0) && (
+        <div style={{ marginTop: "var(--space-3)", display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
+          {stale && (
+            <div style={{ fontSize: "var(--font-sm)", color: "var(--color-loss)", background: "var(--color-loss-soft)", borderRadius: "var(--radius-sm)", padding: "var(--space-2) var(--space-3)" }}>
+              הנתונים השתנו מאז החישוב — כדאי לחשב מחדש לפני הסתמכות.
+            </div>
+          )}
+          {assumptions.map((a, i) => (
+            <div key={i} style={{ fontSize: "var(--font-sm)", color: "var(--color-muted)" }}>· {a}</div>
+          ))}
+        </div>
+      )}
+
+      <details style={{ marginTop: "var(--space-3)" }}>
+        <summary style={{ cursor: "pointer", color: "var(--color-primary)", fontWeight: 600, fontSize: "var(--font-sm)" }}>פירוט מלא של הרכיבים</summary>
+        <BreakdownTable base={cmp.result.baseline.breakdown} alt={cmp.result.alternative.breakdown} />
+      </details>
+    </section>
   );
 }
 
 function Row({ label, value }: { label: string; value: string }) {
   return (
-    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.9rem", padding: "2px 0" }}>
+    <div style={{ display: "flex", justifyContent: "space-between", gap: "var(--space-2)", fontSize: "var(--font-sm)", padding: "3px 0" }}>
       <span style={{ color: "var(--color-muted)" }}>{label}</span>
-      <span>{value}</span>
+      <span style={{ unicodeBidi: "plaintext", fontVariantNumeric: "tabular-nums" }}>{value}</span>
     </div>
   );
 }
 
 function ScenarioCol({
   title,
+  subtitle,
   r,
   scen,
   highlight,
 }: {
   title: string;
+  subtitle: string;
   r: ScenarioResult & { netDisplay: string };
   scen: { maintenanceAllowance: number; participation: number | null };
   highlight?: boolean;
@@ -124,14 +122,15 @@ function ScenarioCol({
   return (
     <div
       style={{
-        border: "1px solid var(--color-border)",
-        borderRadius: "var(--radius-sm)",
+        border: highlight ? "1px solid var(--color-primary)" : "1px solid var(--color-border)",
+        borderRadius: "var(--radius-md)",
         padding: "var(--space-3)",
-        background: highlight ? "rgba(11,95,255,0.04)" : "transparent",
+        background: highlight ? "var(--color-accent-soft)" : "var(--color-surface-2)",
       }}
     >
-      <div style={{ fontWeight: 600, marginBottom: "var(--space-2)" }}>{title}</div>
-      <Row label="שווי שימוש" value={shekelFromBreakdown(r.breakdown.taxableIncome, r.breakdown.cashSalary)} />
+      <div style={{ fontWeight: 700, fontSize: "var(--font-sm)", color: "var(--color-muted)" }}>{title}</div>
+      <div style={{ fontWeight: 800, fontSize: "var(--font-lg)", margin: "2px 0 var(--space-2)", unicodeBidi: "plaintext" }}>{subtitle}</div>
+      <Row label="שווי שימוש (זקיפה)" value={shekelFromBreakdown(r.breakdown.taxableIncome, r.breakdown.cashSalary)} />
       <Row label="שכר מזומן" value={fmt(r.breakdown.cashSalary)} />
       <Row label="מס הכנסה" value={fmt(r.breakdown.incomeTax)} />
       <Row label="ביטוח לאומי + בריאות" value={fmt(sum(r.breakdown.nationalInsurance, r.breakdown.health))} />
@@ -143,10 +142,6 @@ function ScenarioCol({
       {scen.maintenanceAllowance > 0 && (
         <Row label="אחזקת רכב" value={fmt(String(scen.maintenanceAllowance))} />
       )}
-      <div style={{ borderTop: "1px solid var(--color-border)", marginTop: "var(--space-2)", paddingTop: "var(--space-2)", fontWeight: 700, display: "flex", justifyContent: "space-between" }}>
-        <span>נטו משוער</span>
-        <span>{fmt(r.netDisplay)}</span>
-      </div>
     </div>
   );
 }
