@@ -94,6 +94,81 @@ describe("מסך נציג: מענה → החלה → חישוב מחדש → ה�
     expect(res.status).toBe("not_found");
   });
 
+  it("תחולה עתידית: נשמרת אך אינה מוחלת כאילו כבר בתוקף", async () => {
+    const owner = "visit-rep-future";
+    const { caseId, altId, inquiryId } = await setupCaseWithAltInquiry(owner);
+    // תחולה עתידית ברורה (today מוזרק כדי שהבדיקה תהיה דטרמיניסטית).
+    const res = await service.answerAndApplyInquiry(
+      inquiryId, owner,
+      { value: 900, note: null, effectiveFrom: "2030-01-01" },
+      { today: "2026-10-18" },
+    );
+    expect(res.status).toBe("future_effective");
+    expect(res.effectiveFrom).toBe("2030-01-01");
+    // לא הוחל: ההשתתפות נשארה 300, אך התשובה נרשמה.
+    const after = await service.getCaseState(caseId, owner);
+    const altAfter = after!.scenarios.find((s) => s.id === altId);
+    expect(altAfter!.participation).toBe(300);
+    const answered = after!.openInquiries.find((q) => q.id === inquiryId);
+    expect(answered!.status).toBe("answered");
+    expect(answered!.effectiveFrom).toBe("2030-01-01");
+  });
+
+  it("תחולה היום: אינה עתידית - מוחלת מיד", async () => {
+    const owner = "visit-rep-today";
+    const { caseId, altId, inquiryId } = await setupCaseWithAltInquiry(owner);
+    const res = await service.answerAndApplyInquiry(
+      inquiryId, owner,
+      { value: 900, note: null, effectiveFrom: "2026-10-18" },
+      { today: "2026-10-18" },
+    );
+    expect(res.status).toBe("applied");
+    const after = await service.getCaseState(caseId, owner);
+    expect(after!.scenarios.find((s) => s.id === altId)!.participation).toBe(900);
+  });
+
+  it("אין החלה כפולה: ניסיון חוזר עם אותה תשובה אינו מגדיל revision ואינו משנה תוצאה", async () => {
+    const owner = "visit-rep-idem";
+    const { caseId, altId, inquiryId } = await setupCaseWithAltInquiry(owner);
+    const r1 = await service.answerAndApplyInquiry(inquiryId, owner, { value: 900, note: null, effectiveFrom: null });
+    expect(r1.status).toBe("applied");
+    const mid = await service.getCaseState(caseId, owner);
+    const revAfter1 = mid!.scenarios.find((s) => s.id === altId)!.revision;
+    const deltaAfter1 = mid!.latestComparison!.result.netDeltaDisplay;
+
+    // ניסיון חוזר (כמו התאוששות מכשל חלקי) - אותה תשובה בדיוק.
+    const r2 = await service.answerAndApplyInquiry(inquiryId, owner, { value: 900, note: null, effectiveFrom: null });
+    expect(r2.status).toBe("applied");
+    const end = await service.getCaseState(caseId, owner);
+    const revAfter2 = end!.scenarios.find((s) => s.id === altId)!.revision;
+    const deltaAfter2 = end!.latestComparison!.result.netDeltaDisplay;
+
+    // ההשתתפות כבר הייתה 900 -> לא נכתב שוב -> revision לא גדל (אין החלה כפולה).
+    expect(revAfter2).toBe(revAfter1);
+    expect(deltaAfter2).toBe(deltaAfter1);
+  });
+
+  it("הבהרת זכאות: נרשמת כתשובה אך אינה ערך-החלה ואינה משנה תרחיש", async () => {
+    const owner = "visit-rep-elig";
+    const state = await service.createDemoCaseFromEmployee(owner, "E-001");
+    const caseId = state.case.id;
+    const alt = await service.pickAlternative(caseId, owner, {
+      role: "alternative", route: "company_car", vehicleCode: "CAR-10", participation: 300, maintenanceAllowance: 0,
+    });
+    await service.computeAndSaveComparison(caseId, owner);
+    const cur = await service.getCaseState(caseId, owner);
+    const { inquiry } = await service.openInquiry(caseId, owner, "occupation_eligibility_clarification", alt.id, {
+      type: "occupation_eligibility_clarification", route: alt.route, vehicle: alt.vehicleCode ?? "",
+      group: cur!.facts.reportedGroup ?? "", factsRevision: cur!.case.factsRevision,
+    });
+    const res = await service.answerAndApplyInquiry(inquiry.id, owner, { value: null, note: "זכאי/ת לקבוצה ג", effectiveFrom: null });
+    expect(res.status).toBe("recorded_not_applied");
+    expect(res.reason).toBe("not_participation");
+    const after = await service.getCaseState(caseId, owner);
+    expect(after!.scenarios.find((s) => s.id === alt.id)!.participation).toBe(300);
+    const answered = after!.openInquiries.find((q) => q.id === inquiry.id);
+    expect(answered!.answerNote).toBe("זכאי/ת לקבוצה ג");
+  });
   it("החלה-אם-רלוונטי: אם גרסת העובדות השתנתה מאז הפנייה - נרשם אך לא מוחל", async () => {
     const owner = "visit-rep-4";
     const { caseId, altId, inquiryId } = await setupCaseWithAltInquiry(owner);

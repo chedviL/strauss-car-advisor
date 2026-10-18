@@ -108,9 +108,16 @@ function InquiryCard({ q }: { q: RepInquiry }) {
               : "התשובה נרשמה והוחלה.",
         });
       } else if (res.status === "stale_context") {
-        setMsg({ tone: "warn", text: "התשובה נרשמה, אך פרטי התיק השתנו מאז הפנייה ולכן לא הוחלה אוטומטית. יש לבדוק מול הנתונים העדכניים." });
+        setMsg({ tone: "warn", text: "התשובה נרשמה, אך פרטי התיק השתנו מאז הפנייה ולכן לא הוחלה אוטומטית. כדי להמשיך: בקשו מהעובד/ת לפתוח בירור מחדש בהקשר העדכני, או עדכנו ידנית את הפרטים ואז שלחו שוב." });
+      } else if (res.status === "future_effective") {
+        setMsg({ tone: "warn", text: `התשובה נשמרה עם תחולה עתידית (${res.effectiveFrom}) ולכן טרם הוחלה. היא תיכנס לתוקף במועד התחולה. כדי להחיל כעת, הזינו תאריך תחולה של היום או השאירו ריק.` });
       } else if (res.status === "recorded_not_applied") {
-        setMsg({ tone: "warn", text: "התשובה נרשמה. לא נדרש ערך מספרי להחלה אוטומטית." });
+        const why = res.reason === "no_value"
+          ? "לא הוזן ערך השתתפות מספרי, ולכן נרשמה הערה בלבד."
+          : res.reason === "not_participation"
+            ? "פנייה זו אינה ערך-החלה (הבהרה בלבד); התשובה נרשמה."
+            : "התשובה נרשמה אך לא הוחלה (אין תרחיש מקושר).";
+        setMsg({ tone: "warn", text: why });
       } else if (res.status === "error") {
         setMsg({ tone: "err", text: res.message });
       } else {

@@ -145,9 +145,18 @@ export async function fillSampleData(
 }
 
 /**
- * אזור נציג (הדמיה): מחזיר את הפניות של אותו ביקור (owner) עם ההקשר המינימלי
- * הנחוץ להכרעה בלבד - סוג, מסלול/רכב/קבוצה, גרסת עובדות וערך השתתפות נוכחי.
- * אין שכר/נטו/פרטים אישיים. בשימוש אמיתי נדרשת הרשאת נציג מוקצית.
+ * --- מודל ההרשאה של אזור הנציג (חשוב, מתועד במפורש) ---
+ * זהו *מסלול הדגמה מבוסס-ביקור*, לא הרשאת נציג אמיתית (RBAC).
+ * - מי רשאי לקרוא/לענות: רק הבעלים של אותו ביקור (owner_id מתוך cookie httpOnly
+ *   בשם strauss_visit, שהשרת מזריק; הלקוח לעולם אינו קובע אותו). כל פנייה שאינה
+ *   בבעלות הביקור חסומה ב-RLS ומוחזרת כ-not_found - גם בקריאה ישירה לפעולת המענה.
+ * - עובד/ת רגיל/ה שתקרא ישירות ל-answerRepInquiry עם מזהה פנייה שאינו שלה תקבל
+ *   not_found (ראו tests/integration/pg-rep-inquiry.test.ts "בידוד בעלות").
+ * - בפריסת אמת: נדרשת הרשאת נציג נפרדת המוקצית במנגנון ניהולי מוגן, והרשאה
+ *   זו תחליף את בידוד-הביקור. אין להציג את מסלול ההדגמה כהרשאות נציג אמיתיות.
+ *
+ * loadRepInquiries: מחזיר את פניות הביקור עם ההקשר המינימלי להכרעה בלבד -
+ * סוג, מסלול/רכב/קבוצה, גרסת עובדות וערך השתתפות נוכחי. אין שכר/נטו/פרטים אישיים.
  */
 export async function loadRepInquiries() {
   const owner = await readVisitOwner();
@@ -168,6 +177,7 @@ export async function answerRepInquiry(
   | { status: "applied"; recomputed: boolean; missingFields?: string[] }
   | { status: "recorded_not_applied"; reason?: string }
   | { status: "stale_context" }
+  | { status: "future_effective"; effectiveFrom: string }
   | { status: "not_found" }
   | { status: "error"; message: string }
 > {
@@ -189,6 +199,7 @@ export async function answerRepInquiry(
         : { status: "recorded_not_applied" };
     }
     if (res.status === "stale_context") return { status: "stale_context" };
+    if (res.status === "future_effective") return { status: "future_effective", effectiveFrom: res.effectiveFrom ?? "" };
     return { status: "not_found" };
   } catch (e) {
     return { status: "error", message: e instanceof Error ? e.message : "שגיאה במענה לפנייה" };

@@ -17,10 +17,16 @@ export default async function RepresentativePage() {
           <h1 style={{ fontSize: "var(--font-xl)", margin: 0 }}>אזור נציג</h1>
           <a className="btn btn-ghost" href="/" style={{ borderRadius: "var(--radius-pill)" }}>חזרה למסך העובד/ת</a>
         </div>
+        <div style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-2)", alignSelf: "flex-start",
+          background: "var(--color-surface-2)", border: "1px solid var(--color-border)",
+          borderRadius: "var(--radius-pill)", padding: "2px var(--space-3)", fontSize: "0.72rem", color: "var(--color-muted)" }}>
+          מסלול הדגמה מבוסס-ביקור — אינו הרשאת נציג אמיתית
+        </div>
         <p style={{ color: "var(--color-muted)", margin: 0, fontSize: "var(--font-sm)" }}>
-          בסביבת הדגמה מוצגות רק פניות של אותו ביקור. התשובה שנרשמת מוחלת על התיק
-          ומעדכנת את ההשוואה אוטומטית — גם אם העובד/ת אינו/ה מחובר/ת כעת. מוצג
-          ההקשר הנחוץ להכרעה בלבד, ללא שכר או פרטים אישיים.
+          בסביבת הדגמה מוצגות רק פניות של אותו ביקור (אותו דפדפן). התשובה שנרשמת
+          מוחלת על התיק ומעדכנת את ההשוואה אוטומטית — גם אם העובד/ת אינו/ה מחובר/ת
+          כעת. מוצג ההקשר הנחוץ להכרעה בלבד, ללא שכר או פרטים אישיים. בפריסת אמת
+          תידרש הרשאת נציג נפרדת המוקצית במנגנון ניהולי מוגן.
         </p>
         <RepresentativePanel inquiries={inquiries} />
       </div>

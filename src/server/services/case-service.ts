@@ -390,15 +390,18 @@ export class CaseService {
     inquiryId: string,
     ownerId: string,
     answer: { value: number | null; note: string | null; effectiveFrom: string | null },
+    options?: { today?: string },
   ): Promise<{
-    status: "applied" | "recorded_not_applied" | "stale_context" | "not_found";
+    status: "applied" | "recorded_not_applied" | "stale_context" | "future_effective" | "not_found";
     inquiry?: import("../../domain/contracts/case.js").InquiryRecord;
     caseId?: string;
     recomputed?: boolean;
     missingFields?: string[];
     reason?: string;
+    effectiveFrom?: string;
   }> {
-    // 1) מאתרים את הפנייה בהקשרה (על פני תיקי הבעלים).
+    // 1) מאתרים את הפנייה בהקשרה (על פני תיקי הבעלים). אכיפת בעלות: בעלים אחר
+    //    לא יראה את הפנייה כאן (RLS/בידוד ברמת ה-repository) -> not_found.
     const all = await this.repo.listInquiriesByOwner(ownerId);
     const ctx = all.find((x) => x.inquiry.id === inquiryId);
     if (!ctx) return { status: "not_found" };
@@ -407,7 +410,8 @@ export class CaseService {
     const fpRev = parseFactsRevisionFromFingerprint(ctx.inquiry.contextFingerprint);
     const stale = fpRev !== null && fpRev !== ctx.currentFactsRevision;
 
-    // 3) רושמים את התשובה תמיד (תיעוד מה שהנציג מסר).
+    // 3) רושמים את התשובה תמיד (תיעוד מה שהנציג מסר). פעולה אידמפוטנטית:
+    //    רישום חוזר של אותה תשובה אינו משנה דבר פרט ל-answered_at.
     const inquiry = await this.repo.answerInquiry(inquiryId, ownerId, answer);
 
     // 4) הבהרת זכאות - תיעוד בלבד, אין ערך-החלה.
@@ -422,31 +426,45 @@ export class CaseService {
     if (!ctx.inquiry.scenarioId || ctx.scenarioRole === null) {
       return { status: "recorded_not_applied", inquiry, caseId: ctx.caseId, reason: "no_scenario" };
     }
-    // ההקשר השתנה (העובדות עודכנו מאז הפנייה) - לא מחילים אוטומטית.
+    // ההקשר השתנה (העובדות עודכנו מאז הפנייה) - לא מחילים אוטומטית. התשובה
+    // נשמרה; הדרך להמשיך: לפתוח פנייה מחדש בהקשר העדכני או לאשר ידנית.
     if (stale) {
       return { status: "stale_context", inquiry, caseId: ctx.caseId, reason: "facts_changed" };
     }
+    // תחולה עתידית: תשובה שתכנס לתוקף בעתיד נשמרת אך אינה מוחלת כעת כאילו
+    // כבר בתוקף. ההחלה תתבצע כשתגיע התחולה (או באישור ידני מפורש).
+    const future = isFutureDate(answer.effectiveFrom, options?.today);
+    if (future) {
+      return { status: "future_effective", inquiry, caseId: ctx.caseId, reason: "future_effective", effectiveFrom: answer.effectiveFrom! };
+    }
 
     // 5) מחילים את ההשתתפות על התרחיש המקושר (שמירה על שאר שדות התרחיש).
+    //    התאוששות מכשל חלקי + מניעת החלה כפולה: ההחלה היא set-to-value
+    //    (אידמפוטנטית). אם הערך כבר זהה - מדלגים על הכתיבה (לא מגדילים revision),
+    //    כך שניסיון חוזר אחרי כשל חלקי אינו "מחיל פעמיים" ואינו מרעיש גרסאות.
     const state = await this.repo.getCaseState(ctx.caseId, ownerId);
     if (!state) return { status: "not_found" };
     const scen = state.scenarios.find((s) => s.id === ctx.inquiry.scenarioId);
     if (!scen) return { status: "recorded_not_applied", inquiry, caseId: ctx.caseId, reason: "no_scenario" };
 
-    if (scen.role === "baseline") {
-      await this.repo.updateBaselineVehicle(ctx.caseId, ownerId, {
-        route: scen.route, vehicleCode: scen.vehicleCode,
-        participation: answer.value, maintenanceAllowance: scen.maintenanceAllowance,
-      });
-    } else {
-      await this.repo.upsertAlternative(ctx.caseId, ownerId, {
-        role: "alternative", route: scen.route, vehicleCode: scen.vehicleCode,
-        participation: answer.value, maintenanceAllowance: scen.maintenanceAllowance,
-        overrides: scen.overrides,
-      });
+    if (scen.participation !== answer.value) {
+      if (scen.role === "baseline") {
+        await this.repo.updateBaselineVehicle(ctx.caseId, ownerId, {
+          route: scen.route, vehicleCode: scen.vehicleCode,
+          participation: answer.value, maintenanceAllowance: scen.maintenanceAllowance,
+        });
+      } else {
+        await this.repo.upsertAlternative(ctx.caseId, ownerId, {
+          role: "alternative", route: scen.route, vehicleCode: scen.vehicleCode,
+          participation: answer.value, maintenanceAllowance: scen.maintenanceAllowance,
+          overrides: scen.overrides,
+        });
+      }
     }
 
     // 6) חישוב מחדש + שמירת ההשוואה (צד-שרת; עובד גם כשהעובדת מנותקת).
+    //    חישוב מחדש תמיד בטוח: הוא יוצר רשומת השוואה חדשה ממצב עדכני, ולכן
+    //    ניסיון חוזר אחרי כשל חלקי (אחרי החלה, לפני שמירה) משלים את השמירה.
     const recompute = await this.computeAndSaveComparison(ctx.caseId, ownerId);
     if (recompute.status === "missing_data") {
       return { status: "applied", inquiry, caseId: ctx.caseId, recomputed: false, missingFields: recompute.missingFields };
@@ -766,6 +784,19 @@ function parseFactsRevisionFromFingerprint(fp: string): number | null {
     }
   }
   return null;
+}
+
+/**
+ * האם תאריך התחולה הוא עתידי ביחס ל"היום" (ברירת מחדל: היום בפועל, UTC).
+ * השוואה ברמת יום (YYYY-MM-DD). תחולה == היום אינה עתידית (נכנסת לתוקף היום).
+ * ערך ריק/לא תקין -> לא עתידי (אין תחולה מגבילה).
+ */
+function isFutureDate(effectiveFrom: string | null, today?: string): boolean {
+  if (!effectiveFrom) return false;
+  const eff = effectiveFrom.slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(eff)) return false;
+  const now = (today ?? new Date().toISOString()).slice(0, 10);
+  return eff > now;
 }
 
 // --- types for search/compare ---
