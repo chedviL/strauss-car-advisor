@@ -187,3 +187,40 @@ describe("RT-5: זיהוי רכב לפי שם + אכיפת זכאות מקבוצ
     expect(r.status).toBe("not_found");
   });
 });
+
+describe("RT-6: זיהוי רכב לפי שם עברי (באג 'קורולה' לא נמצא)", () => {
+  let svc2: CaseService; let dir2: string;
+  beforeAll(() => { dir2 = mkdtempSync(pathJoin(tmpdir(), "strauss-rt6-")); svc2 = new CaseService(new FileCaseRepository(dir2)); });
+  afterAll(() => rmSync(dir2, { recursive: true, force: true }));
+  const g: import("../../src/domain/eligibility/engine.js").Occupation = {
+    code: "product_manager", name: "מנהל/ת מוצר", group: "ג", carMandatory: false, waiverAllowed: false, maintenanceAllowance: 0,
+  };
+
+  it("'אטו 3' בעברית -> מזוהה כ-ATTO 3 (CAR-10)", async () => {
+    const r = await svc2.lookupVehicleByName("אטו 3", g);
+    expect(r.status).toBe("found");
+    if (r.status === "found") expect(r.vehicle.id).toBe("CAR-10");
+  });
+
+  it("'דולפין' בעברית -> מזוהה כ-BYD DOLPHIN (CAR-03)", async () => {
+    const r = await svc2.lookupVehicleByName("דולפין", g);
+    expect(r.status).toBe("found");
+    if (r.status === "found") expect(r.vehicle.id).toBe("CAR-03");
+  });
+
+  it("'קורולה' בעברית -> עמום (COROLLA מול COROLLA CROSS), לא not_found ולא ניחוש", async () => {
+    const r = await svc2.lookupVehicleByName("קורולה", g);
+    expect(r.status).toBe("ambiguous");
+    if (r.status === "ambiguous") {
+      const ids = r.matches.map((m) => m.id).sort();
+      expect(ids).toContain("CAR-07"); // COROLLA
+      expect(ids).toContain("CAR-09"); // COROLLA CROSS
+    }
+  });
+
+  it("'קורולה קרוס' בעברית -> חד-משמעי CAR-09", async () => {
+    const r = await svc2.lookupVehicleByName("קורולה קרוס", g);
+    expect(r.status).toBe("found");
+    if (r.status === "found") expect(r.vehicle.id).toBe("CAR-09");
+  });
+});

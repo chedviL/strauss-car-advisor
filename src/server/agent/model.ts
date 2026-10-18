@@ -15,10 +15,13 @@ export const BUDGET = {
   // תקרת טוקני פלט לכל קריאה.
   // כולל טוקני thinking (1536) + תשובה. חייב להיות גדול מתקציב ה-thinking.
   maxOutputTokens: 3072,
-  // אומדן תמחור (USD per token). עדכני לנקודת הפתיחה; אכיפה היא אומדן, לא תקרת חיוב קשיחה.
-  // (יש לעדכן אם התמחור הרשמי שונה; הערך משמש רק להערכת צריכה מצטברת.)
-  usdPerInputToken: 3 / 1_000_000,
-  usdPerOutputToken: 15 / 1_000_000,
+  // תמחור מאומת ל-claude-sonnet-5-5 (Claude Sonnet 5.5, Models API: lifecycle=active,
+  // 1M context) נכון ל-2026: $2 למיליון קלט, $10 למיליון פלט. אומת מול המחיר הרשמי;
+  // תוקן מהערך הישן ($3/$15 של Sonnet 4.5) שלא תאם את המודל הפעיל.
+  usdPerInputToken: 2 / 1_000_000,
+  usdPerOutputToken: 10 / 1_000_000,
+  // מחיר קריאת מטמון (cache read) נמוך משמעותית; אם ה-SDK/ספק מדווח cachedInputTokens.
+  usdPerCachedInputToken: 0.1 / 1_000_000,
   // תקציב מצטבר מוערך לקבוצת ריצות אוטומטיות.
   maxEstimatedUsd: 1.0,
 };

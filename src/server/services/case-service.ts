@@ -460,7 +460,34 @@ export class CaseService {
   > {
     const dataset = await this.getDataset();
     const norm = (s: string) => s.replace(/[-\s]+/g, "").toLowerCase();
-    const q = norm(nameQuery);
+    // כינויים עבריים -> תת-מחרוזת בשם המסחרי הלטיני שבקטלוג. מבוסס-נתונים, לא ניחוש:
+    // ממפה כתיב עברי נפוץ לשם הקיים בקטלוג. אם אין התאמה - עדיין not_found.
+    const HE_ALIASES: Array<{ he: RegExp; latin: string }> = [
+      { he: /קורולה\s*קרוס|קורולהקרוס/, latin: "corollacross" },
+      { he: /קורולה/, latin: "corolla" },
+      { he: /אטו|אטו\s*3|אאטו/, latin: "atto" },
+      { he: /דולפין/, latin: "dolphin" },
+      { he: /סיל\b/, latin: "seal" },
+      { he: /טוסון/, latin: "tucson" },
+      { he: /קונה/, latin: "kona" },
+      { he: /נירו/, latin: "niro" },
+      { he: /פיקנטו/, latin: "picanto" },
+      { he: /יאריס/, latin: "yaris" },
+      { he: /לאון/, latin: "leon" },
+      { he: /מאזדה/, latin: "mazda" },
+      { he: /אוקטביה/, latin: "octavia" },
+      { he: /ספורטאז|ספורטג/, latin: "sportage" },
+      { he: /קרניבל/, latin: "carnival" },
+      { he: /סנטה\s*פה|סנטהפה/, latin: "santafe" },
+      { he: /ראב\s*4|ראב4|raf4/, latin: "rav4" },
+      { he: /מודל\s*3|טסלה/, latin: "model3" },
+    ];
+    // אם הקלט מכיל עברית, מנסים להמיר לכינוי לטיני תואם קטלוג.
+    let qRaw = nameQuery;
+    for (const a of HE_ALIASES) {
+      if (a.he.test(nameQuery)) { qRaw = a.latin; break; }
+    }
+    const q = norm(qRaw);
     if (!q) return { status: "not_found" };
     const all = [...dataset.vehiclesByCode.values()];
     const matches = all.filter((v) => norm(v.commercialName).includes(q));

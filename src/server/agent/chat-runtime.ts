@@ -144,6 +144,12 @@ function buildTools(service: CaseService, ctx: ToolContext) {
   };
 }
 
+export interface TurnMetrics {
+  modelCalls: number; toolCount: number;
+  ttftMs: number | null; cardMs: number | null; totalMs: number;
+  inputTokens: number; outputTokens: number; cachedInputTokens: number;
+}
+
 export interface StreamChatArgs {
   service: CaseService;
   ctx: ToolContext;
@@ -153,8 +159,8 @@ export interface StreamChatArgs {
 }
 
 /** מריץ תור שיחה עם streaming וכלים. מחזיר את תוצאת streamText. */
-export function streamChat(args: StreamChatArgs) {
-  const { service, ctx, state, messages, budget } = args;
+export function streamChat(args: StreamChatArgs & { onMetrics?: (m: TurnMetrics) => void }) {
+  const { service, ctx, state, messages, budget, onMetrics } = args;
   if (budget.estimatedUsd >= BUDGET.maxEstimatedUsd) {
     throw new Error(
       `תקציב הניסוי המוערך (~$${BUDGET.maxEstimatedUsd}) נוצל. צריכה מוערכת: $${budget.estimatedUsd.toFixed(4)} (אומדן, לא תקרת חיוב קשיחה).`,
@@ -219,15 +225,18 @@ export function streamChat(args: StreamChatArgs) {
     onFinish: (ev) => {
       const inTok = ev.usage?.inputTokens ?? 0;
       const outTok = ev.usage?.outputTokens ?? 0;
+      const cachedTok = (ev.usage as { cachedInputTokens?: number } | undefined)?.cachedInputTokens ?? 0;
       budget.estimatedUsd += estimateUsd(inTok, outTok);
       budget.calls += 1;
-      // מדידת תור בלוג (ללא מידע אישי): מסלול, קריאות מודל, כלים, זמנים.
-      // modelCalls כאן = צעדי מודל שהושלמו; budget.calls עולה פעם אחת לכל תור streamText.
       console.log(
         `[measure] path=B modelCalls=${modelCalls} tools=${toolCount} ` +
         `ttft_ms=${firstTextMs ?? "-"} card_ms=${cardMs ?? "-"} total_ms=${ms()} ` +
-        `tok_in=${inTok} tok_out=${outTok} turnBudget#=${callsBefore + 1}`,
+        `tok_in=${inTok} tok_out=${outTok} cached_in=${cachedTok} turnBudget#=${callsBefore + 1}`,
       );
+      onMetrics?.({
+        modelCalls, toolCount, ttftMs: firstTextMs, cardMs, totalMs: ms(),
+        inputTokens: inTok, outputTokens: outTok, cachedInputTokens: cachedTok,
+      });
     },
   });
 }
