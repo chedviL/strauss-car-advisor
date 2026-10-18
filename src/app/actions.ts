@@ -39,3 +39,51 @@ export async function newConversation(): Promise<void> {
   (await cookies()).delete("strauss_case");
   revalidatePath("/");
 }
+
+
+/**
+ * עדכון "הפרטים שלי" מהטופס. אותו תיק ואותם שירותים כמו השיחה.
+ * - שדה שנשלח כ-null -> clear (לא ידוע). שדה עם ערך (כולל 0) -> set מפורש.
+ * - שדה שלא נכלל ב-patch אינו משתנה.
+ * - אם אין תיק פעיל, נפתח תיק ריק (אותה זרימה כמו ההודעה הראשונה בשיחה).
+ * - שמירה בלבד: אין הפעלת מודל ואין חישוב. החישוב מתבצע דרך כפתור נפרד.
+ * מחזיר את גרסת העובדות החדשה (או conflict אם הגרסה השתנתה בינתיים).
+ */
+export async function updateMyFacts(
+  patch: Partial<{
+    occupationCode: string | null;
+    reportedGroup: string | null;
+    baseSalary: number | null;
+    commission: number | null;
+    bonus: number | null;
+    pensionRate: number | null;
+    trainingRate: number | null;
+    creditPoints: number | null;
+    qualifyingChildren: number | null;
+  }>,
+): Promise<{ status: "ok"; factsRevision: number } | { status: "conflict" } | { status: "no_case" }> {
+  const owner = await getOrCreateVisitOwner();
+  const service = caseService();
+  const { cookies } = await import("next/headers");
+  const store = await cookies();
+  let caseId = store.get("strauss_case")?.value ?? null;
+
+  // אין תיק פעיל -> פותחים תיק ריק (אותה זרימה כמו הודעת השיחה הראשונה).
+  let state = caseId ? await service.getCaseState(caseId, owner) : null;
+  if (!state) {
+    const created = await service.startBlankCase(owner);
+    caseId = created.case.id;
+    state = created;
+    store.set("strauss_case", caseId, {
+      httpOnly: true, sameSite: "lax", path: "/", maxAge: 60 * 60 * 24 * 7,
+    });
+  }
+
+  const res = await service.updateFacts(caseId!, owner, patch, state.case.factsRevision);
+  if (res.status === "conflict") {
+    revalidatePath("/");
+    return { status: "conflict" };
+  }
+  revalidatePath("/");
+  return { status: "ok", factsRevision: res.factsRevision };
+}

@@ -1,14 +1,16 @@
 /* src/app/globals.css - design tokens (re-skinnable) + RTL base */
+/* עיצוב זמני נקי ב-RTL: טיפוגרפיה קריאה, ריווח נעים, צבעים מאופקים. */
 :root {
-  --color-bg: #f6f7f9;
+  --color-bg: #f5f6f8;
   --color-surface: #ffffff;
   --color-text: #1a1d21;
   --color-muted: #5b6472;
   --color-primary: #0b5fff;
   --color-primary-contrast: #ffffff;
+  --color-accent-soft: #eef2ff;
   --color-gain: #0a7d3c;
   --color-loss: #b4232a;
-  --color-border: #e2e6 eb;
+  --color-danger: #b4232a;
   --color-border: #e2e6eb;
   --radius-sm: 8px;
   --radius-md: 14px;
@@ -19,9 +21,10 @@
   --space-4: 24px;
   --space-5: 36px;
   --font-base: 1rem;
-  --font-lg: 1.35rem;
-  --font-xl: 2rem;
-  --shadow: 0 2px 14px rgba(16, 24, 40, 0.08);
+  --font-lg: 1.3rem;
+  --font-xl: 1.9rem;
+  --shadow: 0 2px 14px rgba(16, 24, 40, 0.07);
+  --shadow-sm: 0 1px 4px rgba(16, 24, 40, 0.05);
 }
 
 * { box-sizing: border-box; }
@@ -33,10 +36,14 @@ html, body {
   color: var(--color-text);
   font-family: "Segoe UI", "Arial Hebrew", Arial, sans-serif;
   font-size: var(--font-base);
-  line-height: 1.5;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
-a { color: var(--color-primary); }
+h1, h2, h3 { line-height: 1.25; font-weight: 700; }
+
+a { color: var(--color-primary); text-underline-offset: 2px; }
 
 .btn {
   font: inherit;
@@ -46,17 +53,26 @@ a { color: var(--color-primary); }
   border-radius: var(--radius-sm);
   padding: var(--space-2) var(--space-3);
   cursor: pointer;
+  transition: background-color 0.12s ease, border-color 0.12s ease;
 }
+.btn:hover:not(:disabled) { background: var(--color-accent-soft); border-color: var(--color-primary); }
+.btn:disabled { opacity: 0.55; cursor: default; }
 .btn-primary {
   background: var(--color-primary);
   color: var(--color-primary-contrast);
   border-color: var(--color-primary);
 }
-.btn:focus-visible, a:focus-visible {
+.btn-primary:hover:not(:disabled) { filter: brightness(0.95); background: var(--color-primary); }
+.btn:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
   outline: 3px solid var(--color-primary);
   outline-offset: 2px;
 }
 
+/* שדות טופס: מיקוד עדין, ללא אנימציה שמעכבת שימוש */
+input, select, textarea { color: var(--color-text); }
+input:focus, select:focus, textarea:focus { border-color: var(--color-primary); }
+
+/* מונעים אנימציות למי שמעדיף תנועה מופחתת */
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }
