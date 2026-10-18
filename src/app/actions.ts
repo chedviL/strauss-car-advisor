@@ -87,3 +87,59 @@ export async function updateMyFacts(
   revalidatePath("/");
   return { status: "ok", factsRevision: res.factsRevision };
 }
+
+
+/**
+ * עזר בדיקה זמני: מילוי נתוני נועה (E-001) מהייחוס המאומת, דרך השירותים הקיימים,
+ * ללא קריאת מודל. הנתונים פיקטיביים (isDemo). לא דורס מידע שכבר הוזן בלי אישור:
+ * אם קיים שדה-עובדה שכבר מולא ו-force=false, מחזיר needs_confirm עם רשימת השדות.
+ * מאפשר לבדוק מיד COROLLA CROSS -> ATTO 3 (11,032 -> 11,693, +661 ₪).
+ */
+export async function fillSampleData(
+  force = false,
+): Promise<{ status: "ok" } | { status: "needs_confirm"; existing: string[] } | { status: "error"; message: string }> {
+  const owner = await getOrCreateVisitOwner();
+  const service = caseService();
+  const { cookies } = await import("next/headers");
+  const store = await cookies();
+  let caseId = store.get("strauss_case")?.value ?? null;
+
+  let state = caseId ? await service.getCaseState(caseId, owner) : null;
+  if (!state) {
+    const created = await service.startBlankCase(owner);
+    caseId = created.case.id;
+    state = created;
+    store.set("strauss_case", caseId, { httpOnly: true, sameSite: "lax", path: "/", maxAge: 60 * 60 * 24 * 7 });
+  }
+
+  // הגנה: לא לדרוס מידע קיים בלי אישור מפורש.
+  const FACT_LABELS: Record<string, string> = {
+    baseSalary: "שכר בסיס", commission: "עמלות", bonus: "בונוס", pensionRate: "פנסיה",
+    trainingRate: "קרן השתלמות", creditPoints: "נקודות זיכוי", qualifyingChildren: "ילדים",
+    reportedGroup: "קבוצת זכאות", occupationCode: "עיסוק",
+  };
+  const f = state.facts as unknown as Record<string, unknown>;
+  const existing = Object.keys(FACT_LABELS).filter((k) => f[k] !== null && f[k] !== undefined).map((k) => FACT_LABELS[k]!);
+  if (existing.length > 0 && !force) {
+    return { status: "needs_confirm", existing };
+  }
+
+  // נתוני נועה (E-001) מהייחוס המאומת.
+  const noa = {
+    occupationCode: "product_manager", reportedGroup: "ג", baseSalary: 18500,
+    commission: 0, bonus: 0, pensionRate: 0.06, trainingRate: 0.025, creditPoints: 2.75, qualifyingChildren: 2,
+  };
+  try {
+    const cur = await service.getCaseState(caseId!, owner); // גרסה עדכנית לבדיקת-גרסה
+    const res = await service.updateFacts(caseId!, owner, noa, cur!.case.factsRevision);
+    if (res.status === "conflict") return { status: "error", message: "הנתונים השתנו בינתיים; נסה/י שוב." };
+    // רכב נוכחי: COROLLA CROSS (CAR-09), השתתפות 300 - כדי שההשוואה ל-ATTO 3 תעבוד.
+    await service.updateBaselineVehicle(caseId!, owner, {
+      route: "company_car", vehicleCode: "CAR-09", participation: 300, maintenanceAllowance: 0,
+    });
+    revalidatePath("/");
+    return { status: "ok" };
+  } catch (e) {
+    return { status: "error", message: e instanceof Error ? e.message : "שגיאה במילוי נתוני הדוגמה" };
+  }
+}

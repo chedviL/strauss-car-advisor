@@ -7,7 +7,8 @@
 // - החישוב מתבצע דרך השיחה/כפתור, לא מעצם עריכת שדה.
 
 import { useState, useTransition } from "react";
-import { updateMyFacts } from "../../app/actions.js";
+import { useRouter } from "next/navigation";
+import { updateMyFacts, fillSampleData } from "../../app/actions.js";
 
 type Facts = {
   occupationCode: string | null;
@@ -55,7 +56,7 @@ type SaveState = "idle" | "saving" | "saved" | "conflict";
 export function MyDetailsPanel({ facts }: { facts: Facts }) {
   const [values, setValues] = useState<Facts>(facts);
   const [saveState, setSaveState] = useState<SaveState>("idle");
-  const [, startTransition] = useTransition();
+  const [pending, startTransition] = useTransition();
 
   function persist(patch: Partial<Facts>) {
     setSaveState("saving");
@@ -71,6 +72,27 @@ export function MyDetailsPanel({ facts }: { facts: Facts }) {
     if (next === values[key]) return; // לא השתנה - לא שומרים
     setValues((v) => ({ ...v, [key]: next }));
     persist({ [key]: next } as Partial<Facts>);
+  }
+
+  const router = useRouter();
+  const [sampleMsg, setSampleMsg] = useState<string | null>(null);
+  const [confirmOverwrite, setConfirmOverwrite] = useState<string[] | null>(null);
+
+  function runSampleFill(force: boolean) {
+    setSampleMsg(null);
+    startTransition(async () => {
+      const res = await fillSampleData(force);
+      if (res.status === "needs_confirm") {
+        setConfirmOverwrite(res.existing);
+      } else if (res.status === "ok") {
+        setConfirmOverwrite(null);
+        setSampleMsg("מולאו נתוני דוגמה (נועה). אפשר לשנות כל פרט ולשוחח.");
+        router.refresh(); // מרענן כדי שהשדות (uncontrolled) יציגו את הערכים החדשים
+      } else {
+        setConfirmOverwrite(null);
+        setSampleMsg(res.message);
+      }
+    });
   }
 
   function onGroupChange(group: string) {
@@ -130,10 +152,37 @@ export function MyDetailsPanel({ facts }: { facts: Facts }) {
       </Section>
 
       {saveState === "conflict" && (
-        <div role="alert" style={{ color: "var(--color-danger, #b00)", fontSize: "0.8rem" }}>
+        <div role="alert" style={{ color: "var(--color-danger)", fontSize: "var(--font-sm)" }}>
           הנתונים השתנו בינתיים ממקור אחר. רענן/י את העמוד ונסה/י שוב.
         </div>
       )}
+
+      {/* פעולה משנית: מילוי נתוני דוגמה (עזר בדיקה זמני, ללא קריאת מודל) */}
+      <div style={{ borderTop: "1px solid var(--color-border)", paddingTop: "var(--space-3)", display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
+        {!confirmOverwrite ? (
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={() => runSampleFill(false)}
+            disabled={pending}
+            style={{ alignSelf: "flex-start", border: "1px solid var(--color-border)", fontSize: "var(--font-sm)" }}
+          >
+            מילוי נתונים לדוגמה
+          </button>
+        ) : (
+          <div style={{ background: "var(--color-surface-2)", border: "1px solid var(--color-border)", borderRadius: "var(--radius-sm)", padding: "var(--space-3)", fontSize: "var(--font-sm)", display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
+            <span>כבר הזנת: {confirmOverwrite.join(", ")}. למלא נתוני דוגמה ולדרוס אותם?</span>
+            <div style={{ display: "flex", gap: "var(--space-2)" }}>
+              <button type="button" className="btn btn-primary" onClick={() => runSampleFill(true)} disabled={pending} style={{ fontSize: "var(--font-sm)" }}>כן, דרוס</button>
+              <button type="button" className="btn btn-ghost" onClick={() => setConfirmOverwrite(null)} disabled={pending} style={{ fontSize: "var(--font-sm)" }}>ביטול</button>
+            </div>
+          </div>
+        )}
+        <span style={{ fontSize: "0.72rem", color: "var(--color-muted)" }}>
+          נתוני נועה (מנהלת מוצר, קבוצה ג׳) — <strong>נתונים פיקטיביים</strong> לבדיקה. לאחר המילוי אפשר לשנות כל פרט ולשוחח חופשי.
+        </span>
+        {sampleMsg && <span role="status" style={{ fontSize: "var(--font-sm)", color: "var(--color-muted)" }}>{sampleMsg}</span>}
+      </div>
     </aside>
   );
 }
