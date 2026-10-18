@@ -71,23 +71,68 @@ export async function extractPayslip(bytes: Buffer, mime: AllowedMime): Promise<
   } catch (e) {
     // כשל מכסה/קצב (429/RESOURCE_EXHAUSTED): עוצרים מיד עם שגיאה ממוינת -
     // ללא ניסיון חוזר וללא מעבר לספק בתשלום. ה-route יציג הודעה מתאימה.
-    if (isQuotaError(e)) throw new PayslipQuotaError();
+    if (isQuotaError(e)) throw new PayslipQuotaError(quotaDetails(e));
     // אחרת (כשל פענוח/ולידציה) -> ניסיון חוזר אחד בלבד, עם דגש JSON תקין.
     try {
       return await once(" שים/י לב: החזר/י אך ורק אובייקט JSON יחיד ותקין, ללא טקסט נוסף.");
     } catch (e2) {
-      if (isQuotaError(e2)) throw new PayslipQuotaError();
+      if (isQuotaError(e2)) throw new PayslipQuotaError(quotaDetails(e2));
       throw e2;
     }
   }
 }
 
+/** פרטי כשל מכסה (לוג בלבד): המכסה שנחסמה וזמן ההמתנה המומלץ אם נמסר. */
+export interface QuotaDetails {
+  metric: string | null;       // למשל generate_content_free_tier_requests
+  retryAfterSeconds: number | null; // retryDelay מה-RetryInfo אם נמסר
+  raw: string;                 // קטע טקסט תמציתי של השגיאה (ללא סודות)
+}
+
 /** שגיאת מכסה/קצב של ספק החילוץ (Gemini). ה-route ממפה אותה ל-429 עם הודעה מתאימה. */
 export class PayslipQuotaError extends Error {
-  constructor() {
+  readonly details: QuotaDetails;
+  constructor(details: QuotaDetails) {
     super("payslip extraction quota exceeded");
     this.name = "PayslipQuotaError";
+    this.details = details;
   }
+}
+
+/** אוסף את הטקסט המלא של שרשרת השגיאה (message + cause + שדות body/data נפוצים). */
+function collectErrorText(e: unknown): string {
+  const parts: string[] = [];
+  let cur: unknown = e;
+  for (let i = 0; i < 5 && cur; i++) {
+    if (cur instanceof Error) {
+      parts.push(cur.message);
+      for (const key of ["responseBody", "data", "cause"] as const) {
+        const v = (cur as unknown as Record<string, unknown>)[key];
+        if (typeof v === "string") parts.push(v);
+        else if (v && typeof v === "object" && key === "data") { try { parts.push(JSON.stringify(v)); } catch { /* ignore */ } }
+      }
+      cur = (cur as { cause?: unknown }).cause;
+    } else {
+      parts.push(typeof cur === "string" ? cur : (() => { try { return JSON.stringify(cur); } catch { return String(cur); } })());
+      break;
+    }
+  }
+  return parts.join(" | ");
+}
+
+/** מחלץ פרטי מכסה (metric + retryDelay) מתוך השגיאה. ללא קריאת רשת/מודל. */
+export function quotaDetails(e: unknown): QuotaDetails {
+  const text = collectErrorText(e);
+  // metric: "Quota exceeded for metric: <...>/<name>" או "quota_metric: <name>"
+  const metricMatch = text.match(/metric[:\s"]+([A-Za-z0-9_.\/]+)/i);
+  // retryDelay: RetryInfo של Google מגיע כ-"retryDelay":"27s" או "retry after 27s".
+  const retryMatch = text.match(/retry(?:Delay|[ _-]?after)["':\s]+(\d+(?:\.\d+)?)s/i);
+  return {
+    metric: metricMatch ? metricMatch[1]! : null,
+    retryAfterSeconds: retryMatch ? Math.round(Number(retryMatch[1])) : null,
+    // קטע תמציתי לתיעוד; מסנן ערכי key=... ליתר ביטחון.
+    raw: text.replace(/key[=:]\S+/gi, "key=***").slice(0, 300),
+  };
 }
 
 /** זיהוי כשל מכסה/קצב מתוך השגיאה (כולל עטיפת AI_RetryError של ה-SDK). */

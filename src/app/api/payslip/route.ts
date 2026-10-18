@@ -89,22 +89,28 @@ export async function POST(req: Request): Promise<Response> {
       try {
         extraction = await extractPayslip(file.bytes, file.mime);
       } catch (e) {
-        const m = e instanceof Error ? e.message : String(e);
-        // פרטים טכניים ללוג בלבד (ללא תוכן התלוש וללא סודות).
-        console.warn(`[payslip] extract failed: ${m.replace(/key[=:]\S+/gi, "key=***").slice(0, 200)}`);
+        // מדיניות שמירה: *אין* מחיקה אוטומטית של הקובץ בגלל כשל חילוץ. ההעלאה
+        // נשמרת; המשתמשת יכולה לנסות שוב, להחליף או למחוק אותה ידנית (action=discard).
         if (e instanceof PayslipQuotaError) {
-          // כשל מכסה - הקובץ נשמר; אפשר לנסות שוב מאוחר יותר או להזין ידנית.
-          // *לא* מוחקים את ההעלאה (אין בעיית קובץ), ואין מעבר לספק בתשלום.
+          // פרטי מכסה ללוג בלבד (איזו מכסה, וזמן המתנה מומלץ אם נמסר). ללא סודות/תוכן.
+          const d = e.details;
+          console.warn(`[payslip] quota: metric=${d.metric ?? "?"} retryAfterSec=${d.retryAfterSeconds ?? "?"} raw=${d.raw}`);
           return json({
-            error: "מכסת החילוץ האוטומטי נוצלה כרגע. אפשר לנסות שוב מאוחר יותר, או להזין את הנתונים ידנית ב״הפרטים שלי״.",
+            error: d.retryAfterSeconds
+              ? `מכסת החילוץ האוטומטי נוצלה כרגע. אפשר לנסות שוב בעוד כ-${Math.ceil(d.retryAfterSeconds / 60)} דקות, או להזין ידנית ב״הפרטים שלי״.`
+              : "מכסת החילוץ האוטומטי נוצלה כרגע. אפשר לנסות שוב מאוחר יותר, או להזין ידנית ב״הפרטים שלי״.",
             kind: "quota",
+            retryAfterSeconds: d.retryAfterSeconds ?? null,
+            canRetry: true,
           }, 429);
         }
-        // כשל קריאה/פענוח של המסמך עצמו -> מוחקים את ההעלאה ומכוונים להתאוששות.
-        await discardPayslip({ connectionString: conn, ownerId: owner, uploadId: body.uploadId }).catch(() => {});
+        const m = e instanceof Error ? e.message : String(e);
+        console.warn(`[payslip] extract failed (unreadable): ${m.replace(/key[=:]\S+/gi, "key=***").slice(0, 200)}`);
+        // כשל קריאה/פענוח: הקובץ *נשאר* שמור; מציעים לנסות שוב/להחליף/למחוק.
         return json({
-          error: "לא הצלחתי לקרוא את המסמך. נסו קובץ ברור יותר (סריקה חדה, ללא חיתוך) או הזנה ידנית ב״הפרטים שלי״.",
+          error: "לא הצלחתי לקרוא את המסמך. אפשר לנסות שוב, להעלות קובץ ברור יותר (סריקה חדה, ללא חיתוך), או להזין ידנית ב״הפרטים שלי״.",
           kind: "unreadable",
+          canRetry: true,
         }, 422);
       }
       await saveExtraction({ connectionString: conn, ownerId: owner, uploadId: body.uploadId, extraction }).catch(() => {});

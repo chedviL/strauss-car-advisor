@@ -3,7 +3,7 @@
 // כולל עטיפת AI_RetryError של ה-SDK, מול כשל פענוח רגיל. מוודא שהודעת המכסה
 // לא מיוחסת בטעות לאיכות הקובץ.
 import { describe, it, expect } from "vitest";
-import { isQuotaError, PayslipQuotaError } from "../../src/server/agent/payslip-extract.js";
+import { isQuotaError, PayslipQuotaError, quotaDetails } from "../../src/server/agent/payslip-extract.js";
 
 describe("סיווג כשל חילוץ (ללא מודל)", () => {
   it("מזהה 429 לפי statusCode על גבי שרשרת cause", () => {
@@ -26,9 +26,36 @@ describe("סיווג כשל חילוץ (ללא מודל)", () => {
     expect(isQuotaError(e2)).toBe(false);
   });
 
-  it("PayslipQuotaError הוא שם מובחן לטיפול ב-route", () => {
-    const e = new PayslipQuotaError();
+  it("PayslipQuotaError הוא שם מובחן לטיפול ב-route, ונושא פרטי מכסה", () => {
+    const e = new PayslipQuotaError({ metric: "generate_content_free_tier_requests", retryAfterSeconds: 27, raw: "quota" });
     expect(e).toBeInstanceOf(Error);
     expect(e.name).toBe("PayslipQuotaError");
+    expect(e.details.metric).toContain("free_tier");
+    expect(e.details.retryAfterSeconds).toBe(27);
+  });
+});
+
+describe("חילוץ פרטי מכסה (ללא מודל): metric + זמן המתנה", () => {
+  it("מחלץ את שם המכסה (metric) ואת retryDelay בשניות", () => {
+    // דמוי גוף שגיאה של Google: metric + RetryInfo.
+    const inner = Object.assign(new Error("Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit 0"), {
+      responseBody: '{"error":{"code":429,"details":[{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"27s"}]}}',
+    });
+    const wrapped = Object.assign(new Error("Failed after 3 attempts"), { cause: inner });
+    const d = quotaDetails(wrapped);
+    expect(d.metric).toContain("generate_content_free_tier_requests");
+    expect(d.retryAfterSeconds).toBe(27);
+  });
+
+  it("מחזיר null לשדות כשאין פרטים, בלי לזרוק", () => {
+    const d = quotaDetails(new Error("RESOURCE_EXHAUSTED"));
+    expect(d.retryAfterSeconds).toBeNull();
+    expect(typeof d.raw).toBe("string");
+  });
+
+  it("מסנן ערכי key מהתיעוד (raw)", () => {
+    const d = quotaDetails(new Error("boom key=sk-secret-123 quota"));
+    expect(d.raw).not.toContain("sk-secret-123");
+    expect(d.raw).toContain("key=***");
   });
 });

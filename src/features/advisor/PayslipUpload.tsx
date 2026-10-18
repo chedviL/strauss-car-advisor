@@ -46,6 +46,14 @@ export function PayslipUpload({ onApplied }: { onApplied?: () => void }) {
   async function upload(file: File) {
     setPhase("uploading"); setMsg(file.name);
     try {
+      // החלפת קובץ: אם קיים קובץ קודם (למשל אחרי כשל), מוחקים אותו קודם כדי
+      // לא להשאיר "יתום" באחסון. מחיקה לפי בחירת המשתמשת, לא אוטומטית בכשל.
+      if (uploadId) {
+        await fetch("/api/payslip?action=discard", {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ uploadId }),
+        }).catch(() => {});
+        setUploadId(null); setDraft(null);
+      }
       const fd = new FormData(); fd.append("file", file);
       const res = await fetch("/api/payslip?action=upload", { method: "POST", body: fd });
       const data = await res.json();
@@ -100,12 +108,29 @@ export function PayslipUpload({ onApplied }: { onApplied?: () => void }) {
 
   async function reset() {
     // ביטול חילוץ שממתין (אם יש) כדי שלא יוצג שוב אחרי רענון.
+    // בכשל חילוץ (phase==="error") *אין* מחיקה אוטומטית — הקובץ נשמר למקרה של
+    // "נסה שוב". מחיקה מפורשת נעשית דרך discardAndReset().
     if (uploadId && (phase === "review" || phase === "uploaded")) {
       await fetch("/api/payslip?action=discard", {
         method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ uploadId }),
       }).catch(() => {});
     }
     setPhase("idle"); setMsg(""); setUploadId(null); setDraft(null);
+  }
+
+  // מחיקה מפורשת של הקובץ (לפי בחירת המשתמשת), ואז איפוס.
+  async function discardAndReset() {
+    if (uploadId) {
+      await fetch("/api/payslip?action=discard", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ uploadId }),
+      }).catch(() => {});
+    }
+    setPhase("idle"); setMsg(""); setUploadId(null); setDraft(null);
+  }
+
+  // "נסה שוב": הרצת חילוץ חוזרת על אותו קובץ ששמור (בלי העלאה מחדש).
+  function retryExtract() {
+    if (uploadId) { setMsg(""); void extract(); }
   }
 
   // שחזור אחרי רענון: אם יש חילוץ שממתין לאישור בתיק, מציגים מחדש את כרטיס האישור.
@@ -213,8 +238,16 @@ export function PayslipUpload({ onApplied }: { onApplied?: () => void }) {
               <button type="button" className="btn" onClick={reset}>סגור</button>
             )}
             {phase === "error" && (
-              <div style={{ display: "flex", gap: "var(--space-2)" }}>
-                <button type="button" className="btn" onClick={reset}>סגור</button>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-2)" }}>
+                {/* הקובץ אינו נמחק אוטומטית: אפשר לנסות שוב, להחליף או למחוק. */}
+                {uploadId && (
+                  <button type="button" className="btn btn-primary" onClick={retryExtract}>נסה שוב</button>
+                )}
+                <button type="button" className="btn" onClick={() => fileRef.current?.click()}>החלף קובץ</button>
+                {uploadId && (
+                  <button type="button" className="btn btn-ghost" onClick={discardAndReset}>מחק קובץ</button>
+                )}
+                <button type="button" className="btn btn-ghost" onClick={reset} style={{ marginInlineStart: "auto" }}>סגור</button>
               </div>
             )}
           </div>

@@ -17,7 +17,8 @@
 - `SUPABASE_URL`             — https://<project-ref>.supabase.co (בלי נתיב, בלי / בסוף).
 - `SUPABASE_SERVICE_ROLE_KEY`— מפתח service_role (סוד; צד שרת בלבד).
 - `MODEL_API_KEY`            — מפתח Claude (שיחה).
-- `MODEL_API_KEY2`           — מפתח Gemini (חילוץ תלושים בלבד).
+- `MODEL_API_KEY3`           — מפתח Gemini הפעיל לחילוץ תלושים (החליף את KEY2).
+- `MODEL_API_KEY2`           — מפתח Gemini גיבוי לחילוץ (אם KEY3 לא הוגדר). אופציונלי אם KEY3 קיים.
 
 אופציונלי (ברירות מחדל בקוד; הגדירו רק לשינוי):
 - `CHAT_FAST_PATH`           — מסלול השיחה. השאירו `0` (מסלול B) כפי שסוכם.

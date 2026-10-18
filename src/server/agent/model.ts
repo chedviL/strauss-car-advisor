@@ -69,14 +69,25 @@ export function getExtractionModelId(): string {
 }
 
 /**
- * מודל לחילוץ מסמכים בלבד: ספק Google (Gemini), מפתח נפרד MODEL_API_KEY2.
+ * מודל לחילוץ מסמכים בלבד: ספק Google (Gemini), מפתח נפרד.
  * *אינו* משמש לשיחה — השיחה נשארת Claude (getModel). הפרדה מכוונת: ספק/מפתח
  * שונים, כדי לא לערבב חיוב/מכסה בין השניים. זורק שגיאה מסוננת-סוד אם אין מפתח.
+ *
+ * מפתח החילוץ: MODEL_API_KEY3 הוא המפתח הפעיל (החליף את MODEL_API_KEY2);
+ * MODEL_API_KEY2 נשאר כגיבוי אם 3 לא הוגדר, כדי לא לשבור הגדרות קיימות.
  */
+export function getExtractionApiKey(): string | null {
+  const k3 = process.env.MODEL_API_KEY3;
+  if (k3 && k3.trim() !== "") return k3.trim();
+  const k2 = process.env.MODEL_API_KEY2;
+  if (k2 && k2.trim() !== "") return k2.trim();
+  return null;
+}
+
 export function getExtractionModel(): LanguageModel {
-  const key = process.env.MODEL_API_KEY2;
-  if (!key || key.trim() === "") {
-    throw new Error("MODEL_API_KEY2 (מפתח Gemini לחילוץ) אינו נטען. בדוק את .env.local (נוכחות בלבד).");
+  const key = getExtractionApiKey();
+  if (!key) {
+    throw new Error("מפתח Gemini לחילוץ אינו נטען (MODEL_API_KEY3 או MODEL_API_KEY2). בדוק את .env.local (נוכחות בלבד).");
   }
   const google = createGoogleGenerativeAI({ apiKey: key });
   return google(getExtractionModelId());

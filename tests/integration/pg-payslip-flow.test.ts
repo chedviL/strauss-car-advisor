@@ -18,7 +18,7 @@ import { PgCaseRepository } from "../../src/server/repositories/pg-case-reposito
 import { CaseService } from "../../src/server/services/case-service.js";
 import { findActiveDatasetId } from "../../src/server/services/dataset-provider.js";
 import {
-  storePayslip, saveExtraction, loadPendingExtraction, readPayslipBytes,
+  storePayslip, saveExtraction, loadPendingExtraction, readPayslipBytes, discardPayslip,
 } from "../../src/server/web/payslip-storage.js";
 import type { PayslipExtraction } from "../../src/server/agent/payslip-extract.js";
 
@@ -187,6 +187,24 @@ run("זרימת תלוש מלאה (חילוץ מדומה, ללא מודל) מו�
     // ועכשיו החלה חוזרת כן מחזירה already_applied (הסימון נשמר רק אחרי הצלחה).
     const again = await service.applyPayslip(caseId, owner, stored.id, { baseSalary: 18500 }, afterOk!.case.factsRevision);
     expect(again.status).toBe("already_applied");
+  });
+
+  it("מדיניות שמירה: כשל חילוץ אינו מוחק את הקובץ - אפשר לנסות שוב ואז למחוק ידנית", { timeout: 40000 }, async () => {
+    const owner = "payslip-keep-" + randomUUID();
+    owners.push(owner);
+    const c = await service.startBlankCase(owner);
+    const stored = await storePayslip({ connectionString: CONN!, ownerId: owner, caseId: c.case.id, bytes: PDF, mime: "application/pdf", originalName: "keep.pdf" });
+
+    // מדמים כשל חילוץ: פשוט לא קוראים saveExtraction. לפי המדיניות החדשה ה-route
+    // אינו מוחק את הקובץ בכשל -> הקובץ עדיין קריא (נסה שוב אפשרי).
+    const still = await readPayslipBytes({ connectionString: CONN!, ownerId: owner, uploadId: stored.id });
+    expect(still).not.toBeNull();
+    expect(Array.from(still!.bytes)).toEqual(Array.from(PDF));
+
+    // מחיקה מפורשת (בחירת המשתמשת) מסירה את הבייטים מהאחסון.
+    await discardPayslip({ connectionString: CONN!, ownerId: owner, uploadId: stored.id });
+    // אחרי מחיקה הבייטים אינם קיימים: קריאה חוזרת נכשלת (blob הוסר).
+    await expect(readPayslipBytes({ connectionString: CONN!, ownerId: owner, uploadId: stored.id })).rejects.toThrow();
   });
 
   it("בעלות: בעלים אחר אינו קורא את התלוש דרך פעולת האפליקציה (RLS, לא הורדה)", { timeout: 40000 }, async () => {
