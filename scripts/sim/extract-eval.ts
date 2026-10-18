@@ -21,19 +21,31 @@ function approxEq(a: number, b: number, key: string): boolean {
   return Math.abs(a - b) < 0.5; // שקלים/נקודות
 }
 
+type Variant = { suffix: string; mime: "application/pdf" | "image/png" | "image/jpeg"; label: string };
+const VARIANTS: Record<string, Variant> = {
+  pdf:           { suffix: ".pdf", mime: "application/pdf", label: "PDF (שכבת טקסט)" },
+  "scan-clear":  { suffix: "-scan-clear.png", mime: "image/png", label: "סריקה חדה (תמונה, ללא טקסט)" },
+  "scan-degraded": { suffix: "-scan-degraded.jpg", mime: "image/jpeg", label: "סריקה פחות איכותית (תמונה, ללא טקסט)" },
+};
+
 async function main() {
   const modelId = getExtractionModelId();
-  console.log(`extraction model=${modelId} (ספק Google, מסלול חינם בלבד)\n`);
-  const files = Object.keys(GROUND_TRUTH);
-  let totalFields = 0, correct = 0;
+  const variantKey = (process.argv.find((a) => a.startsWith("--variant="))?.split("=")[1]) ?? "pdf";
+  const variant = VARIANTS[variantKey];
+  if (!variant) { console.error("variant לא מוכר. אפשרויות: pdf | scan-clear | scan-degraded"); process.exit(1); }
+  console.log(`extraction model=${modelId} | variant=${variant.label}`);
+  console.log(`הערה: היעדר fallback בקוד אינו מונע חיוב אם פרויקט ה-Google מחובר למסלול בתשלום.\n`);
+  const bases = Object.keys(GROUND_TRUTH).map((f) => f.replace(/\.pdf$/, ""));
+  let readCorrect = 0, nullCorrect = 0, totalRead = 0, totalNull = 0, wrong = 0;
 
-  for (const file of files) {
-    const gt = (GROUND_TRUTH as Record<string, GT>)[file]!;
-    const bytes = readFileSync(join(dir, file));
+  for (const base of bases) {
+    const gt = (GROUND_TRUTH as Record<string, GT>)[base + ".pdf"]!;
+    const bytes = readFileSync(join(dir, base + variant.suffix));
+    const file = base + variant.suffix;
     const t0 = Date.now();
     let extraction;
     try {
-      extraction = await extractPayslip(bytes, "application/pdf");
+      extraction = await extractPayslip(bytes, variant.mime);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       // זיהוי מיצוי מכסה (429/RESOURCE_EXHAUSTED) -> עצירה ללא מעבר לתשלום.
@@ -51,26 +63,31 @@ async function main() {
       const expected = gt[key];
       const got = (extraction as unknown as Record<string, { value: number | null; confidence: string }>)[key];
       const gotVal = got?.value ?? null;
-      totalFields++;
       let ok: boolean;
       let note = "";
+      const kind = expected === null ? "null" : "read";
       if (expected === null) {
-        ok = gotVal === null; // חסר אמור להישאר null (לא הוסק אפס/אחוז)
-        if (!ok) note = `(אמור להיות null, חולץ ${gotVal})`;
+        totalNull++;
+        ok = gotVal === null; // חסר אמור לחזור null (לא הוסק אפס/אחוז)
+        if (ok) nullCorrect++; else { wrong++; note = `(אמור null, חולץ ${gotVal})`; }
       } else if (gotVal === null) {
-        ok = false; note = `(אמור ${expected}, חולץ null - חוסר)`;
+        totalRead++; ok = false; wrong++; note = `(אמור ${expected}, חולץ null - חוסר שגוי)`;
       } else {
+        totalRead++;
         ok = approxEq(gotVal, expected as number, key);
-        if (!ok) note = `(אמור ${expected}, חולץ ${gotVal})`;
+        if (ok) readCorrect++; else { wrong++; note = `(אמור ${expected}, חולץ ${gotVal})`; }
       }
-      if (ok) correct++;
-      console.log(`   [${ok ? "✓" : "✗"}] ${key}: ${gotVal ?? "null"} conf=${got?.confidence ?? "-"} ${note}`);
+      console.log(`   [${ok ? "✓" : "✗"}] ${key} [${kind}]: ${gotVal ?? "null"} conf=${got?.confidence ?? "-"} ${note}`);
     }
     if (extraction.notes) console.log(`   notes: ${extraction.notes}`);
     console.log("");
   }
 
-  console.log(`=== דיוק כולל: ${correct}/${totalFields} שדות (${Math.round((correct / totalFields) * 100)}%) ===`);
-  process.exit(0);
+  const total = totalRead + totalNull;
+  console.log(`=== סיכום (${variant.label}) ===`);
+  console.log(`ערכים שנקראו נכון: ${readCorrect}/${totalRead}`);
+  console.log(`שדות חסרים שהוחזרו נכון כ-null: ${nullCorrect}/${totalNull}`);
+  console.log(`בדיקות שדה שעברו: ${readCorrect + nullCorrect} מתוך ${total}` + (wrong ? `  (${wrong} נכשלו)` : ""));
+  process.exit(wrong === 0 ? 0 : 1);
 }
 main().catch((e) => { console.error(e instanceof Error ? e.message : String(e)); process.exit(1); });
