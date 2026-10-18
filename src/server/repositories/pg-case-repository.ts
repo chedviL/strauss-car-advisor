@@ -342,6 +342,13 @@ export class PgCaseRepository implements CaseRepository {
   ): Promise<void> {
     if (messages.length === 0) return;
     await this.withOwner(ownerId, async (c) => {
+      // נעילת שורת התיק מסרלת הקצאת seq בין בקשות חופפות לאותו תיק:
+      // בלי זה, שתי טרנזקציות ב-READ COMMITTED קוראות אותו max(seq) ומתנגשות
+      // על unique(case_id, seq). FOR UPDATE מכריח סדר - השנייה ממתינה ל-commit.
+      await c.query("select id from cases where id = $1 for update", [caseId]);
+
+      // seq מוקצה רק להודעות שבאמת ייכתבו. הודעה שכבר קיימת (אותו client_message_id)
+      // מדולגת ואינה "בולעת" מספר seq - כך הסדר נשמר גם בשליחות חוזרות.
       const maxRow = await c.query(
         "select coalesce(max(seq), -1) as m from messages where case_id = $1",
         [caseId],
@@ -352,14 +359,16 @@ export class PgCaseRepository implements CaseRepository {
         // אך "" מתנגש וגורם ל-do-nothing להפיל הודעות (באג שהתגלה בשחזור).
         const cid =
           m.clientMessageId && m.clientMessageId.trim() !== "" ? m.clientMessageId : null;
-        // dedup לפי client_message_id (אם קיים) כדי לא לשכפל בשליחה חוזרת.
-        await c.query(
+        // dedup יציב לפי client_message_id: אינו דורס היסטוריה קיימת. RETURNING
+        // מאפשר לדעת אם נכתבה שורה (ואז seq מתקדם) או שדולגה (seq נשאר).
+        const res = await c.query(
           `insert into messages (case_id, role, seq, client_message_id, content)
            values ($1,$2,$3,$4,$5)
-           on conflict (case_id, client_message_id) do nothing`,
+           on conflict (case_id, client_message_id) do nothing
+           returning seq`,
           [caseId, m.role, seq, cid, JSON.stringify(m.content)],
         );
-        seq += 1;
+        if (res.rowCount && res.rowCount > 0) seq += 1; // התקדם רק אם נכתבה שורה
       }
     });
   }

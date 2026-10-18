@@ -216,6 +216,53 @@ run("Postgres RLS + בידוד + שחזור + מקביליות", () => {
     const state = await repo.getCaseState(created.case.id, owner);
     expect(state!.scenarios.filter((s) => s.role === "alternative").length).toBeLessThanOrEqual(1);
   });
+
+  it("מקביליות שמירת הודעות: שתי שמירות חופפות לאותו תיק - seq ייחודי, בלי אובדן/כפל", { timeout: 30000 }, async () => {
+    const owner = "pg-msg-conc-" + randomUUID();
+    const created = await createCase(owner);
+    // שתי בקשות חופפות, כל אחת שומרת זוג משתמש+עוזר עם מזהים ייחודיים.
+    // FOR UPDATE על שורת התיק מסרל את הקצאת ה-seq -> אין התנגשות על unique(case_id,seq).
+    const batchA = [
+      { role: "user", clientMessageId: "cuA", content: [{ type: "text", text: "A-user" }] },
+      { role: "assistant", clientMessageId: "caA", content: [{ type: "text", text: "A-asst" }] },
+    ];
+    const batchB = [
+      { role: "user", clientMessageId: "cuB", content: [{ type: "text", text: "B-user" }] },
+      { role: "assistant", clientMessageId: "caB", content: [{ type: "text", text: "B-asst" }] },
+    ];
+    const results = await Promise.allSettled([
+      service.appendMessages(created.case.id, owner, batchA),
+      service.appendMessages(created.case.id, owner, batchB),
+    ]);
+    // שתיהן צריכות להצליח (לא כשל על unique seq)
+    expect(results.every((r) => r.status === "fulfilled")).toBe(true);
+    const msgs = await repo.loadMessages(created.case.id, owner);
+    // כל ארבע ההודעות נשמרו, בלי אובדן ובלי כפל
+    expect(msgs).toHaveLength(4);
+    const seqs = msgs.map((m) => m.seq);
+    expect(new Set(seqs).size).toBe(4); // seq ייחודי
+    // בתוך כל זוג, המשתמש לפני העוזר
+    const byCid = Object.fromEntries(msgs.map((m) => [m.clientMessageId, m.seq]));
+    expect(byCid["cuA"]!).toBeLessThan(byCid["caA"]!);
+    expect(byCid["cuB"]!).toBeLessThan(byCid["caB"]!);
+  });
+
+  it("שחזור אחרי שמירה: ההודעות נטענות בסדר seq", { timeout: 30000 }, async () => {
+    const owner = "pg-msg-restore-" + randomUUID();
+    const created = await createCase(owner);
+    await service.appendMessages(created.case.id, owner, [
+      { role: "user", clientMessageId: "r1", content: [{ type: "text", text: "שלום" }] },
+      { role: "assistant", clientMessageId: "r2", content: [{ type: "text", text: "היי" }] },
+    ]);
+    // שליחה חוזרת (כמו רענון מיד אחרי תשובה) - dedup, בלי כפל
+    await service.appendMessages(created.case.id, owner, [
+      { role: "user", clientMessageId: "r1", content: [{ type: "text", text: "שלום" }] },
+      { role: "assistant", clientMessageId: "r2", content: [{ type: "text", text: "היי" }] },
+    ]);
+    const msgs = await repo.loadMessages(created.case.id, owner);
+    expect(msgs).toHaveLength(2);
+    expect(msgs.map((m) => m.clientMessageId)).toEqual(["r1", "r2"]);
+  });
 });
 
 describe("סטטוס בדיקות Postgres", () => {
