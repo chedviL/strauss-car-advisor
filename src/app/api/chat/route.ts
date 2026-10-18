@@ -2,9 +2,10 @@
 // נתיב streaming לשיחה. זהות (owner/case) מה-cookie בלבד - לעולם לא מהלקוח.
 // משתמש ב-runtime (ששת הכלים + מודל). אין חישוב כאן; רק תזמור.
 //
-// שמירה: דפוס הסיום הנתמך של ה-SDK (onEnd/onFinish) עם await אמיתי לכתיבה -
-// לא void ללא מעקב. consumeSseStream + consumeStream מבטיחים שה-onEnd ירוץ גם
-// כשהלקוח מתנתק (ניתוק != קריסת שרת; ראה הערות למטה).
+// שמירה: await אמיתי לכתיבה בתוך ה-stream (לא void ללא מעקב). הטקסט מוזרם
+// ללקוח לפני שהכתיבה מסתיימת; לאחר הכתיבה נשלח data-saveStatus כדי שכשל
+// יגיע לממשק עם אפשרות ניסיון חוזר (ולא יישאר רק בלוג).
+// consumeSseStream מבטיח שהשמירה תרוץ גם כשהלקוח מתנתק (ניתוק != קריסת שרת).
 
 import { cookies } from "next/headers";
 import {
@@ -26,20 +27,17 @@ export const maxDuration = 60;
 // תקציב מצטבר לכל התהליך (אומדן, לא תקרת חיוב).
 const budget: ChatBudgetState = { estimatedUsd: 0, calls: 0 };
 
-/**
- * שמירת הודעת המשתמש בלבד (idempotent לפי client_message_id). נקראת כש:
- * - המודל נכשל לפני אירוע הסיום (אין onEnd) -> ההודעה חייבת להישמר/לקבל מצב
- *   שניתן להתאושש ממנו, בלי להסתמך על הודעה עתידית.
- * dedup מבטיח שאם גם onEnd ישמור אותה (מסלול רגיל) - לא ייווצר כפל.
- */
+/** שמירת הודעת המשתמש בלבד (idempotent), כש-המודל נכשל לפני אירוע הסיום. */
 async function saveUserMessage(
-  service: CaseService, caseId: string, owner: string,
-  lastUser: UIMessage,
+  service: CaseService, caseId: string, owner: string, lastUser: UIMessage,
 ): Promise<void> {
   await service.appendMessages(caseId, owner, [
     { role: "user", clientMessageId: lastUser.id, content: lastUser.parts },
   ]);
 }
+
+// data-part לחיווי מצב שמירה ללקוח. saved=false -> הממשק מציג כשל + ניסיון חוזר.
+type SaveStatusData = { saved: boolean; scope: "turn" };
 
 export async function POST(req: Request): Promise<Response> {
   const { messages }: { messages: UIMessage[] } = await req.json();
@@ -78,48 +76,39 @@ export async function POST(req: Request): Promise<Response> {
       console.log(
         `[chat] path=A did=${Object.entries(fp.did).filter(([, v]) => v).map(([k]) => k).join(",") || "none"} followup=${fp.needsFollowup}`,
       );
-      const planMs = Date.now() - tA0;
       const reply = fp.needsFollowup
         ? await narrateResult(userText, fp.actionResults)
         : fp.reply;
-      console.log(
-        `[measure] path=A modelCalls=${fp.needsFollowup ? 2 : 1} ` +
-        `card_ms=${fp.did.compared ? planMs : "-"} ttft_ms=${Date.now() - tA0} total_ms=${Date.now() - tA0}`,
-      );
+      console.log(`[measure] path=A modelCalls=${fp.needsFollowup ? 2 : 1} ttft_ms=${Date.now() - tA0}`);
       const asstId = "asst-" + randomUUID();
-      let saveOk = false;
       const stream = createUIMessageStream({
-        // הטקסט מוזרם ללקוח מיד; הכתיבה למסד מתרחשת ב-onEnd (אחרי flush/cancel).
-        execute: ({ writer }) => {
+        execute: async ({ writer }) => {
+          // 1) הטקסט נשלח מיד (לפני השמירה) -> אין עיכוב להופעת הטקסט.
           const id = "t-" + randomUUID();
           writer.write({ type: "start" });
           writer.write({ type: "text-start", id });
           writer.write({ type: "text-delta", id, delta: reply });
           writer.write({ type: "text-end", id });
-          writer.write({ type: "finish" });
-        },
-        // onEnd מואוחל ע"י ה-SDK (flush/cancel) לפני סגירת ה-stream. await אמיתי כאן:
-        // שומרים משתמש+עוזר יחד בקריאה אחת -> הקצאת seq אחת, סדר נכון (משתמש לפני עוזר).
-        onEnd: async () => {
+          // 2) כעת await אמיתי לשמירה; הטקסט כבר אצל הלקוח.
           const tSave = Date.now();
+          let saved = false;
           try {
             await service.appendMessages(cid, owner, [
               { role: "user", clientMessageId: lastUser.id, content: lastUser.parts },
               { role: "assistant", clientMessageId: asstId, content: [{ type: "text", text: reply }] },
             ]);
-            saveOk = true;
+            saved = true;
             console.log(`[measure] path=A turn-save_ms=${Date.now() - tSave} saved=ok`);
           } catch (e) {
-            // כשל כתיבה: לא מסמנים הצלחה. ההודעות יישמרו שוב בתור הבא (dedup).
             console.warn(`[measure] path=A turn-save FAILED: ${e instanceof Error ? e.message : String(e)} saved=no`);
           }
-          void saveOk;
+          // 3) חיווי מצב שמירה ללקוח (כשל -> ניסיון חוזר בממשק).
+          writer.write({ type: "data-saveStatus", data: { saved, scope: "turn" } satisfies SaveStatusData });
+          writer.write({ type: "finish" });
         },
       });
       return createUIMessageStreamResponse({ stream, consumeSseStream: consumeStream });
     } catch (e) {
-      // כשל מודל לפני אירוע הסיום: הודעת המשתמש עלולה ללכת לאיבוד.
-      // שומרים אותה כעת (await) כדי שלא תאבד ולא תידרש הודעה עתידית לשחזרה.
       await saveUserMessage(service, cid, owner, lastUser).catch((se) =>
         console.warn(`[chat] path=A user-save on model-fail FAILED: ${se instanceof Error ? se.message : String(se)}`),
       );
@@ -132,33 +121,37 @@ export async function POST(req: Request): Promise<Response> {
   try {
     console.log("[chat] path=B (full tool loop)");
     const result = streamChat({ service, ctx, state, messages: modelMessages, budget });
-    // consumeStream (ללא await) מסיר backpressure כך שה-LLM רץ עד הסוף גם אם
-    // הלקוח מתנתק -> onFinish יופעל והשמירה תתבצע. (ניתוק לקוח בלבד; לא קריסת שרת.)
+    // consumeStream (ללא await): מסיר backpressure כך שה-LLM רץ עד הסוף גם אם
+    // הלקוח מתנתק -> ה-merge מסתיים והשמירה תתבצע. (ניתוק לקוח בלבד; לא קריסת שרת.)
     void result.consumeStream();
-    return result.toUIMessageStreamResponse({
+
+    const stream = createUIMessageStream({
       originalMessages: messages,
-      consumeSseStream: consumeStream,
-      // onFinish מואוחל לפני סגירת ה-stream. await אמיתי: משתמש+עוזר יחד, סדר נכון.
-      onFinish: async ({ responseMessage }) => {
-        if (!responseMessage) return;
-        const aid =
-          responseMessage.id && responseMessage.id.trim() !== ""
-            ? responseMessage.id
-            : "asst-" + randomUUID();
+      execute: async ({ writer }) => {
+        // ממזגים את stream המודל (טקסט/כלים) -> מוזרם ללקוח מיד.
+        writer.merge(result.toUIMessageStream({ sendFinish: false }));
+        // ממתינים לסיום המודל כדי לקבל את הטקסט המלא של העוזר לשמירה.
+        let assistantText = "";
+        try { assistantText = await result.text; } catch { assistantText = ""; }
+        const aid = "asst-" + randomUUID();
         const tSave = Date.now();
+        let saved = false;
         try {
           await service.appendMessages(cid, owner, [
             ...(lastUser ? [{ role: "user" as const, clientMessageId: lastUser.id, content: lastUser.parts }] : []),
-            { role: "assistant" as const, clientMessageId: aid, content: responseMessage.parts },
+            { role: "assistant" as const, clientMessageId: aid, content: [{ type: "text", text: assistantText }] },
           ]);
+          saved = true;
           console.log(`[measure] path=B turn-save_ms=${Date.now() - tSave} saved=ok`);
         } catch (e) {
           console.warn(`[measure] path=B turn-save FAILED: ${e instanceof Error ? e.message : String(e)} saved=no`);
         }
+        writer.write({ type: "data-saveStatus", data: { saved, scope: "turn" } satisfies SaveStatusData });
+        writer.write({ type: "finish" });
       },
     });
+    return createUIMessageStreamResponse({ stream, consumeSseStream: consumeStream });
   } catch (e) {
-    // כשל מודל לפני אירוע הסיום במסלול B: שומרים את הודעת המשתמש כעת.
     if (lastUser) {
       await saveUserMessage(service, cid, owner, lastUser).catch((se) =>
         console.warn(`[chat] path=B user-save on model-fail FAILED: ${se instanceof Error ? se.message : String(se)}`),

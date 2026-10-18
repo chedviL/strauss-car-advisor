@@ -102,3 +102,50 @@ describe("דפוס סיום stream עם שמירה (onEnd, await אמיתי)", (
     expect(endRan).toBe(true);
   });
 });
+
+// --- חיווי מצב שמירה ללקוח (data-saveStatus), כפי שה-route שולח ---
+// משכפל את דפוס ה-route: טקסט -> await שמירה -> כתיבת data-saveStatus -> finish.
+function replyStreamWithStatus(reply: string, save: () => Promise<void>) {
+  return createUIMessageStream({
+    execute: async ({ writer }) => {
+      writer.write({ type: "start" });
+      writer.write({ type: "text-start", id: "t1" });
+      writer.write({ type: "text-delta", id: "t1", delta: reply });
+      writer.write({ type: "text-end", id: "t1" });
+      let saved = false;
+      try { await save(); saved = true; } catch { saved = false; }
+      writer.write({ type: "data-saveStatus", data: { saved, scope: "turn" } });
+      writer.write({ type: "finish" });
+    },
+  });
+}
+
+async function collect(stream: ReadableStream): Promise<Array<Record<string, unknown>>> {
+  const reader = stream.getReader();
+  const chunks: Array<Record<string, unknown>> = [];
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value as Record<string, unknown>);
+  }
+  return chunks;
+}
+
+describe("חיווי מצב שמירה ללקוח (data-saveStatus)", () => {
+  it("שמירה מצליחה -> data-saveStatus עם saved=true, אחרי הטקסט", async () => {
+    const chunks = await collect(replyStreamWithStatus("שלום", async () => { /* ok */ }));
+    const statusIdx = chunks.findIndex((c) => c.type === "data-saveStatus");
+    const deltaIdx = chunks.findIndex((c) => c.type === "text-delta");
+    expect(statusIdx).toBeGreaterThan(deltaIdx); // החיווי אחרי הטקסט
+    expect((chunks[statusIdx]!.data as { saved: boolean }).saved).toBe(true);
+  });
+
+  it("שמירה נכשלת -> data-saveStatus עם saved=false (כשל מגיע לממשק, לא רק ללוג)", async () => {
+    const chunks = await collect(replyStreamWithStatus("שלום", async () => { throw new Error("db down"); }));
+    const status = chunks.find((c) => c.type === "data-saveStatus");
+    expect(status).toBeTruthy();
+    expect((status!.data as { saved: boolean }).saved).toBe(false);
+    // הטקסט עדיין נשלח למרות כשל השמירה
+    expect(chunks.some((c) => c.type === "text-delta")).toBe(true);
+  });
+});
