@@ -4,6 +4,11 @@
 // inline styles מותרים (האפליקציה משתמשת ב-style props רבים); אין HTML גולמי
 // מהמודל. קריאות לספקים חיצוניים (Anthropic/Google/Supabase) מתבצעות בצד שרת,
 // ולכן connect-src 'self' מספיק לדפדפן (ה-streaming הוא מול /api באותו מקור).
+// מצב dev של Next (React Refresh/HMR) דורש eval; בפרודקשן אין צורך ולכן נשאר מחמיר.
+const isDev = process.env.NODE_ENV !== "production";
+const scriptSrc = isDev
+  ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
+  : "script-src 'self' 'unsafe-inline'";
 const csp = [
   "default-src 'self'",
   "base-uri 'self'",
@@ -11,8 +16,8 @@ const csp = [
   "object-src 'none'",
   "img-src 'self' data: blob:",
   "style-src 'self' 'unsafe-inline'",
-  "script-src 'self' 'unsafe-inline'",
-  "connect-src 'self'",
+  scriptSrc,
+  isDev ? "connect-src 'self' ws: wss:" : "connect-src 'self'",
   "font-src 'self' data:",
   "form-action 'self'",
 ].join("; ");
