@@ -33,9 +33,10 @@ export function ChatPanel({ initialMessages = [] }: ChatPanelProps) {
     wasBusy.current = busy;
   }, [status, busy, router]);
 
-  // כשל שמירה: השרת שולח data-saveStatus עם saved=false בהודעת העוזר האחרונה.
-  // אם לא נשמר - מציגים לעובד/ת אפשרות ניסיון חוזר (dedup בשרת מונע כפל).
-  const saveFailed = !busy && lastTurnSaveFailed(messages);
+  // מצב השמירה של התור האחרון מתוך data-saveStatus (השרת מנהל ניסיונות חוזרים).
+  //  saving/retrying -> חיווי שקט בלבד.  failed -> אזהרה + ניסיון ידני (מוצא אחרון).
+  const savePhase = lastTurnSavePhase(messages);
+  const saveFailed = !busy && savePhase === "failed";
 
   function sendText(text: string) {
     const clean = text.trim();
@@ -86,16 +87,23 @@ export function ChatPanel({ initialMessages = [] }: ChatPanelProps) {
             חושב…
           </div>
         )}
+        {!busy && savePhase === "retrying" && (
+          // חיווי שקט בזמן התאוששות: המערכת מנסה לשמור שוב. ללא כפתור.
+          <div style={{ color: "var(--color-muted)", fontSize: "0.8rem" }} aria-live="polite">
+            שומר…
+          </div>
+        )}
         {error && (
           <div role="alert" style={{ color: "var(--color-danger, #b00)", fontSize: "0.85rem" }}>
             שגיאה בשיחה. נסו שוב בעוד רגע.
           </div>
         )}
         {saveFailed && (
+          // רק אחרי שכל הניסיונות האוטומטיים נכשלו: אזהרה + ניסיון ידני כמוצא אחרון.
           <div role="alert" style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", color: "var(--color-danger, #b00)", fontSize: "0.85rem", border: "1px solid var(--color-danger, #b00)", borderRadius: "var(--radius-md)", padding: "var(--space-2)" }}>
-            <span>התשובה הוצגה אך לא נשמרה. ייתכן שלא תופיע אחרי רענון.</span>
+            <span>השיחה טרם נשמרה. ייתכן שלא תופיע אחרי רענון.</span>
             <button type="button" className="btn" onClick={retrySave} disabled={busy} style={{ marginInlineStart: "auto" }}>
-              שמירה חוזרת
+              נסה לשמור שוב
             </button>
           </div>
         )}
@@ -122,18 +130,21 @@ export function ChatPanel({ initialMessages = [] }: ChatPanelProps) {
   );
 }
 
-// מזהה כשל שמירה בתור האחרון: data-saveStatus עם saved=false בהודעת העוזר האחרונה.
-// ה-SDK ממפה data-part מסוג "saveStatus" ל-part.type === "data-saveStatus".
-function lastTurnSaveFailed(messages: Array<{ role: string; parts: Array<Record<string, unknown>> }>): boolean {
+type SavePhaseUI = "saving" | "retrying" | "saved" | "failed" | null;
+
+// מצב השמירה של התור האחרון מתוך data-saveStatus בהודעת העוזר האחרונה.
+// ה-SDK ממפה data-part מסוג "saveStatus" ל-part.type === "data-saveStatus";
+// ה-part האחרון משקף את ה-phase העדכני ביותר (saving -> retrying -> saved/failed).
+function lastTurnSavePhase(messages: Array<{ role: string; parts: Array<Record<string, unknown>> }>): SavePhaseUI {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     if (!m || m.role !== "assistant") continue;
     const statusParts = (m.parts ?? []).filter((p) => (p as { type?: string }).type === "data-saveStatus");
-    if (statusParts.length === 0) return false; // תור ללא חיווי - לא מציגים כשל
-    const last = statusParts[statusParts.length - 1] as { data?: { saved?: boolean } };
-    return last?.data?.saved === false;
+    if (statusParts.length === 0) return null; // תור ללא חיווי
+    const last = statusParts[statusParts.length - 1] as { data?: { phase?: SavePhaseUI } };
+    return last?.data?.phase ?? null;
   }
-  return false;
+  return null;
 }
 
 function MessageBubble({ role, parts }: { role: string; parts: Array<Record<string, unknown>> }) {

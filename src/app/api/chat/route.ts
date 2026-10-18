@@ -2,9 +2,10 @@
 // נתיב streaming לשיחה. זהות (owner/case) מה-cookie בלבד - לעולם לא מהלקוח.
 // משתמש ב-runtime (ששת הכלים + מודל). אין חישוב כאן; רק תזמור.
 //
-// שמירה: await אמיתי לכתיבה בתוך ה-stream (לא void ללא מעקב). הטקסט מוזרם
-// ללקוח לפני שהכתיבה מסתיימת; לאחר הכתיבה נשלח data-saveStatus כדי שכשל
-// יגיע לממשק עם אפשרות ניסיון חוזר (ולא יישאר רק בלוג).
+// שמירה = באחריות המערכת. הטקסט מוזרם ללקוח מיד; אחריו מתבצעת שמירה עם
+// ניסיונות חוזרים אוטומטיים ומוגבלים (backoff) לאותן הודעות ואותם מזהים -
+// בלי הפעלת מודל/חישוב/כלים מחדש. חיווי שקט בזמן התאוששות; רק אם כל
+// הניסיונות נכשלו מסומן failed (אזהרה + ניסיון ידני כמוצא אחרון).
 // consumeSseStream מבטיח שהשמירה תרוץ גם כשהלקוח מתנתק (ניתוק != קריסת שרת).
 
 import { cookies } from "next/headers";
@@ -19,6 +20,7 @@ import type { ToolContext } from "../../../server/agent/tool-contracts.js";
 import { fastPathEnabled } from "../../../server/agent/model.js";
 import { runFastPlan, narrateResult } from "../../../server/agent/fast-path.js";
 import type { CaseService } from "../../../server/services/case-service.js";
+import { saveTurnWithRetry, type SaveStatusData } from "../../../server/web/save-turn.js";
 import { randomUUID } from "node:crypto";
 
 export const runtime = "nodejs";
@@ -36,8 +38,6 @@ async function saveUserMessage(
   ]);
 }
 
-// data-part לחיווי מצב שמירה ללקוח. saved=false -> הממשק מציג כשל + ניסיון חוזר.
-type SaveStatusData = { saved: boolean; scope: "turn" };
 
 export async function POST(req: Request): Promise<Response> {
   const { messages }: { messages: UIMessage[] } = await req.json();
@@ -89,21 +89,13 @@ export async function POST(req: Request): Promise<Response> {
           writer.write({ type: "text-start", id });
           writer.write({ type: "text-delta", id, delta: reply });
           writer.write({ type: "text-end", id });
-          // 2) כעת await אמיתי לשמירה; הטקסט כבר אצל הלקוח.
-          const tSave = Date.now();
-          let saved = false;
-          try {
-            await service.appendMessages(cid, owner, [
-              { role: "user", clientMessageId: lastUser.id, content: lastUser.parts },
-              { role: "assistant", clientMessageId: asstId, content: [{ type: "text", text: reply }] },
-            ]);
-            saved = true;
-            console.log(`[measure] path=A turn-save_ms=${Date.now() - tSave} saved=ok`);
-          } catch (e) {
-            console.warn(`[measure] path=A turn-save FAILED: ${e instanceof Error ? e.message : String(e)} saved=no`);
-          }
-          // 3) חיווי מצב שמירה ללקוח (כשל -> ניסיון חוזר בממשק).
-          writer.write({ type: "data-saveStatus", data: { saved, scope: "turn" } satisfies SaveStatusData });
+          // 2) שמירה עם ניסיונות חוזרים אוטומטיים (רק השמירה חוזרת; לא המודל).
+          const saved = await saveTurnWithRetry(service, cid, owner, [
+            { role: "user", clientMessageId: lastUser.id, content: lastUser.parts },
+            { role: "assistant", clientMessageId: asstId, content: [{ type: "text", text: reply }] },
+          ], (s) => writer.write({ type: "data-saveStatus", data: s }), "path=A");
+          // 3) חיווי סופי: saved או failed (לא מבטיחים שמירה אם לא הצליחה).
+          writer.write({ type: "data-saveStatus", data: { phase: saved ? "saved" : "failed", scope: "turn" } satisfies SaveStatusData });
           writer.write({ type: "finish" });
         },
       });
@@ -134,19 +126,11 @@ export async function POST(req: Request): Promise<Response> {
         let assistantText = "";
         try { assistantText = await result.text; } catch { assistantText = ""; }
         const aid = "asst-" + randomUUID();
-        const tSave = Date.now();
-        let saved = false;
-        try {
-          await service.appendMessages(cid, owner, [
-            ...(lastUser ? [{ role: "user" as const, clientMessageId: lastUser.id, content: lastUser.parts }] : []),
-            { role: "assistant" as const, clientMessageId: aid, content: [{ type: "text", text: assistantText }] },
-          ]);
-          saved = true;
-          console.log(`[measure] path=B turn-save_ms=${Date.now() - tSave} saved=ok`);
-        } catch (e) {
-          console.warn(`[measure] path=B turn-save FAILED: ${e instanceof Error ? e.message : String(e)} saved=no`);
-        }
-        writer.write({ type: "data-saveStatus", data: { saved, scope: "turn" } satisfies SaveStatusData });
+        const saved = await saveTurnWithRetry(service, cid, owner, [
+          ...(lastUser ? [{ role: "user" as const, clientMessageId: lastUser.id, content: lastUser.parts }] : []),
+          { role: "assistant" as const, clientMessageId: aid, content: [{ type: "text", text: assistantText }] },
+        ], (s) => writer.write({ type: "data-saveStatus", data: s }), "path=B");
+        writer.write({ type: "data-saveStatus", data: { phase: saved ? "saved" : "failed", scope: "turn" } satisfies SaveStatusData });
         writer.write({ type: "finish" });
       },
     });
