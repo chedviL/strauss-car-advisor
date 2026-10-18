@@ -9,6 +9,7 @@ import { DemoBadge } from "../features/advisor/DemoBadge.js";
 import { ChatPanel } from "../features/advisor/ChatPanel.js";
 import { MyDetailsDrawer } from "../features/advisor/MyDetailsDrawer.js";
 import { NewConversationButton } from "../features/advisor/NewConversationButton.js";
+import { InquiryAnswersNotice } from "../features/advisor/InquiryAnswersNotice.js";
 import type { CaseState, CaseFacts } from "../domain/contracts/case.js";
 
 const BLANK_FACTS: CaseFacts = {
@@ -50,6 +51,10 @@ export default async function Page() {
               ספרו לי מה תרצו לבדוק. אבדוק זכאות, אשלוף את שווי השימוש ואחשב את ההפרש בנטו.
             </p>
           </header>
+        )}
+
+        {state && state.openInquiries.some((q) => q.status === "answered") && (
+          <InquiryAnswersNotice inquiries={state.openInquiries} />
         )}
 
         {hasComparison && (
