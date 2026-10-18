@@ -26,11 +26,14 @@ export class StorageConfigError extends Error {}
  * - חסרים, ואין DATABASE_URL (פיתוח מקומי טהור) → local.
  */
 export function activeBackend(): StorageBackend {
+  // הסכמה מקומית מפורשת גוברת תמיד: STRAUSS_ALLOW_FILE_STORE=1 מכריח אחסון
+  // מקומי (פיתוח/בדיקות), גם אם מוגדרים מפתחות Supabase. בפרודקשן אין מגדירים
+  // דגל זה, ולכן Supabase עדיין המסלול שם.
+  if (process.env.STRAUSS_ALLOW_FILE_STORE === "1") return "local";
+
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (url && url.trim() && key && key.trim()) return "supabase";
-
-  if (process.env.STRAUSS_ALLOW_FILE_STORE === "1") return "local";
 
   const dbUrl = process.env.DATABASE_URL;
   if (dbUrl && dbUrl.trim() !== "") {
@@ -50,10 +53,40 @@ export function objectPath(ownerId: string, storedKey: string): string {
   return `${ownerDir}/${storedKey}`;
 }
 
+/**
+ * מנרמל ומאמת את SUPABASE_URL: חייב להיות ה-URL של הפרויקט (https://<ref>.supabase.co),
+ * ללא נתיב וללא סלאש בסוף. כתובת לוח-הבקרה (supabase.com/dashboard/...) או http
+ * גורמים לשרת להחזיר HTML במקום JSON ("Unexpected token '<'"); עדיף כשל ברור מוקדם.
+ * אין הדפסת הערך עצמו.
+ */
+function resolveSupabaseUrl(): string {
+  const raw = (process.env.SUPABASE_URL ?? "").trim().replace(/\/+$/, "");
+  let host = "";
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== "https:") throw new Error("scheme");
+    if (u.pathname && u.pathname !== "/") throw new Error("path");
+    host = u.host;
+  } catch {
+    throw new StorageConfigError(
+      "SUPABASE_URL אינו תקין. נדרש ה-URL של הפרויקט בלבד, בצורה " +
+        "https://<project-ref>.supabase.co (ללא http, ללא נתיב, ללא / בסוף). " +
+        "אין להשתמש בכתובת לוח הבקרה (supabase.com/dashboard/...). ראו docs/supabase-setup.md.",
+    );
+  }
+  if (!/\.supabase\.(co|in|net)$/.test(host)) {
+    throw new StorageConfigError(
+      "SUPABASE_URL אינו מצביע על דומיין Supabase תקין (…​.supabase.co). " +
+        "העתיקו את 'Project URL' מ-Project Settings > API. ראו docs/supabase-setup.md.",
+    );
+  }
+  return raw;
+}
+
 // --- Supabase Storage client (service role; צד שרת בלבד) ---
 async function supa() {
   const { createClient } = await import("@supabase/supabase-js");
-  return createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
+  return createClient(resolveSupabaseUrl(), process.env.SUPABASE_SERVICE_ROLE_KEY!, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 }

@@ -63,29 +63,24 @@ export async function storePayslip(args: {
   // כותבים קודם את הבייטים ל-backend הפעיל (local/supabase); אם נכשל - לא נוצרת שורה.
   const backend: StorageBackend = await putBlob(ownerId, storedKey, bytes, mime);
 
-  const pool = getPool(connectionString);
-  const client = await pool.connect();
+  // ה-DB נפרד מ-I/O של האחסון: מחזור החיים של ה-client מנוהל כולו ב-withOwnerTx
+  // (begin/commit/release במקום אחד), כדי שלא יקרה double-release אם משהו אחרי
+  // ה-commit נכשל. אם ה-DB נכשל - מנקים את ה-blob שכבר נכתב.
   try {
-    await client.query("begin");
-    await client.query("select set_config('app.owner_id', $1, true)", [ownerId]);
-    // בדיקת בעלות בהעלאה: התיק חייב להיות של הבעלים (RLS). אחרת מוחקים את ה-blob.
-    const owned = await client.query("select 1 from cases where id = $1", [caseId]);
-    if (owned.rowCount === 0) {
-      await client.query("rollback"); client.release();
-      await deleteBlob(backend, ownerId, storedKey).catch(() => {});
-      throw new Error("case not found for owner");
-    }
-    const r = await client.query(
-      `insert into payslip_uploads (case_id, stored_key, mime, size_bytes, original_name, status, storage_backend)
-       values ($1,$2,$3,$4,$5,'uploaded',$6) returning id`,
-      [caseId, storedKey, mime, bytes.length, originalName, backend],
-    );
-    await client.query("commit");
-    client.release();
-    return { id: r.rows[0].id as string, storedKey, mime, sizeBytes: bytes.length, originalName };
+    const id = await withOwnerTx(connectionString, ownerId, async (client) => {
+      // בדיקת בעלות בהעלאה: התיק חייב להיות של הבעלים (RLS).
+      const owned = await client.query("select 1 from cases where id = $1", [caseId]);
+      if (owned.rowCount === 0) throw new Error("case not found for owner");
+      const r = await client.query(
+        `insert into payslip_uploads (case_id, stored_key, mime, size_bytes, original_name, status, storage_backend)
+         values ($1,$2,$3,$4,$5,'uploaded',$6) returning id`,
+        [caseId, storedKey, mime, bytes.length, originalName, backend],
+      );
+      return r.rows[0].id as string;
+    });
+    return { id, storedKey, mime, sizeBytes: bytes.length, originalName };
   } catch (e) {
-    try { await client.query("rollback"); } catch { /* ignore */ }
-    client.release(true);
+    await deleteBlob(backend, ownerId, storedKey).catch(() => { /* blob orphan cleanup best-effort */ });
     throw e;
   }
 }
@@ -95,25 +90,21 @@ export async function readPayslipBytes(args: {
   connectionString: string; ownerId: string; uploadId: string;
 }): Promise<{ bytes: Buffer; mime: AllowedMime } | null> {
   const { connectionString, ownerId, uploadId } = args;
-  const pool = getPool(connectionString);
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
-    await client.query("select set_config('app.owner_id', $1, true)", [ownerId]);
+  // קוראים את המטא-דאטה (עם בדיקת בעלות RLS) בטרנזקציה סגורה, ורק אחריה
+  // ניגשים ל-blob. כך I/O של האחסון אינו חלק ממחזור החיים של ה-client (אין
+  // double-release אם ההורדה נכשלת), ובעלות עדיין נאכפת לפני כל גישה לקובץ.
+  const meta = await withOwnerTx(connectionString, ownerId, async (client) => {
     const r = await client.query("select stored_key, mime, storage_backend from payslip_uploads where id = $1", [uploadId]);
-    await client.query("commit");
-    client.release();
-    if (r.rowCount === 0) return null; // RLS: לא שייך לבעלים -> אין שורה (בדיקת בעלות בקריאה)
-    const storedKey = r.rows[0].stored_key as string;
-    const mime = r.rows[0].mime as AllowedMime;
-    const backend = (r.rows[0].storage_backend as StorageBackend) ?? "local";
-    const bytes = await getBlob(backend, ownerId, storedKey);
-    return { bytes, mime };
-  } catch (e) {
-    try { await client.query("rollback"); } catch { /* ignore */ }
-    client.release(true);
-    throw e;
-  }
+    if (r.rowCount === 0) return null; // RLS: לא שייך לבעלים -> אין שורה
+    return {
+      storedKey: r.rows[0].stored_key as string,
+      mime: r.rows[0].mime as AllowedMime,
+      backend: (r.rows[0].storage_backend as StorageBackend) ?? "local",
+    };
+  });
+  if (!meta) return null; // בדיקת בעלות בקריאה: בעלים אחר -> null, ללא גישה ל-blob
+  const bytes = await getBlob(meta.backend, ownerId, meta.storedKey);
+  return { bytes, mime: meta.mime };
 }
 
 /** שמירת תוצאת החילוץ על השורה (status=extracted) - לשחזור אחרי רענון. */
@@ -183,20 +174,30 @@ export async function loadPendingExtraction(args: {
   });
 }
 
-/** עוטף פעולה בטרנזקציה עם app.owner_id (RLS). */
+/**
+ * עוטף פעולה בטרנזקציה עם app.owner_id (RLS). מחזור חיים של ה-client מנוהל
+ * כאן בלבד, עם דגל released יחיד כדי למנוע release כפול (באג שהתגלה כשפעולה
+ * אחרי ה-commit, כמו גישה ל-blob, נכשלה והקוד שחרר שוב את אותו client).
+ */
 async function withOwnerTx<T>(connectionString: string, ownerId: string, fn: (c: import("pg").PoolClient) => Promise<T>): Promise<T> {
   const pool = getPool(connectionString);
   const client = await pool.connect();
+  let released = false;
+  const release = (destroy?: boolean) => {
+    if (released) return;
+    released = true;
+    client.release(destroy);
+  };
   try {
     await client.query("begin");
     await client.query("select set_config('app.owner_id', $1, true)", [ownerId]);
     const out = await fn(client);
     await client.query("commit");
-    client.release();
+    release();
     return out;
   } catch (e) {
-    try { await client.query("rollback"); } catch { /* ignore */ }
-    client.release(true);
+    try { await client.query("rollback"); } catch { /* ignore - חיבור אולי מת */ }
+    release(true);
     throw e;
   }
 }
