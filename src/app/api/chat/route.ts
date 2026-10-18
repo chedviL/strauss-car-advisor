@@ -39,7 +39,35 @@ async function saveUserMessage(
 }
 
 
+/** מנקה פרטים רגישים משגיאה לפני לוג/החזרה (חיבורי DB, מפתחות). */
+function sanitizeError(e: unknown): string {
+  const m = e instanceof Error ? e.message : String(e);
+  return m
+    .replace(/postgres(ql)?:\/\/\S+/gi, "postgres://***")
+    .replace(/sk-[A-Za-z0-9_-]{8,}/g, "sk-***")
+    .replace(/AQ\.[A-Za-z0-9._-]{10,}/g, "AQ.***")
+    .replace(/(key|token|password)[=:]\S+/gi, "$1=***")
+    .slice(0, 200);
+}
+
+/**
+ * עוטף את כל הטיפול: כשל לפני תחילת המסלול (פתיחת תיק, הגדרת שירות, dataset)
+ * נרשם ללוג השרת ומוחזר כשגיאת JSON קריאה, במקום "Internal Server Error" כללי.
+ */
 export async function POST(req: Request): Promise<Response> {
+  try {
+    return await handleChat(req);
+  } catch (e) {
+    const detail = sanitizeError(e);
+    console.error(`[chat] unhandled ${e instanceof Error ? e.name : "Error"}: ${detail}`);
+    return new Response(
+      JSON.stringify({ error: "שגיאת שרת בשיחה.", code: e instanceof Error ? e.name : "Error", detail }),
+      { status: 500, headers: { "content-type": "application/json" } },
+    );
+  }
+}
+
+async function handleChat(req: Request): Promise<Response> {
   const { messages }: { messages: UIMessage[] } = await req.json();
   const owner = await getOrCreateVisitOwner();
   const store = await cookies();
