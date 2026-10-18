@@ -3,8 +3,8 @@
 // הכללים המעודכנים (strauss-rules.json) הם הפעילים.
 
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+
+import { join } from "node:path";
 import { parseRules } from "../../domain/calculation/rule-set-loader.js";
 import {
   parseValueOfUseCsv,
@@ -18,8 +18,10 @@ import { CATALOG } from "../../../data/source/catalog.js";
 import { DatasetRepository, datasetContentHash, type DatasetSeed } from "../repositories/dataset-repository.js";
 import type { RuleSet } from "../../domain/contracts/types.js";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const dataDir = join(here, "../../../data/source");
+// הנתיב מחושב בזמן ריצה מ-process.cwd(), *לא* מ-import.meta.url: webpack מקבע את
+// import.meta.url לנתיב של זמן הבנייה (/vercel/path0/...), שאינו קיים בזמן הריצה
+// של הפונקציה (/var/task) ← ENOENT בפריסה. הקובץ נארז דרך outputFileTracingIncludes.
+const dataDir = join(process.cwd(), "data", "source");
 
 export interface ActiveDataset {
   /** מזהה תוכן (hash) - יציב, לשימוש פנימי/קאשינג. אינו ה-UUID של רשומת המסד. */
