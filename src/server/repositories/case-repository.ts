@@ -256,6 +256,8 @@ export class FileCaseRepository implements CaseRepository {
       scenarios: stored.scenarios,
       latestComparison: latest,
       openInquiries: (stored.inquiries ?? []).filter((q) => q.status === "open" || q.status === "answered"),
+      // מסלול הקבצים אינו מנהל שורות payslip_uploads (זרימת התלוש דורשת Postgres).
+      payslipStatus: "none",
     };
   }
 

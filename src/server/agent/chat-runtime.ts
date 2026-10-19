@@ -15,6 +15,7 @@ import { createTurnMeter, type TurnMeterMetrics } from "./turn-meter.js";
 import { readCaseStateInput, readCaseState } from "./tools/read-case-state.js";
 import { updateCaseInput, updateCase } from "./tools/update-case.js";
 import { manageScenariosInput, manageScenarios } from "./tools/manage-scenarios.js";
+import { updateCurrentVehicleInput, updateCurrentVehicle } from "./tools/update-current-vehicle.js";
 import { searchVehiclesInput, searchVehicles } from "./tools/search-vehicles.js";
 import { compareScenariosInput, compareScenarios } from "./tools/compare-scenarios.js";
 import { openInquiryInput, openInquiry } from "./tools/open-inquiry.js";
@@ -31,7 +32,7 @@ const SYSTEM = `את/ה היועץ/ת של שטראוס לרכב ולנטו. מ�
 ## כלים ונתונים
 - השתמש/י בכלי המתאים כשצריך מידע או פעולה; אם אפשר לענות ישירות — ענה/י, בלי להפעיל כלי לחינם.
 - אם כלי החזיר שדה — השתמש/י בו. אם החזיר null/ריק — אמור/י שהערך לא נמסר/לא רשום; אל תטען/י שאין גישה.
-- "יש לי X" = הרכב הנוכחי (updateCase/baseline), לא רכב יעד להשוואה.
+- "יש לי X" / "הרכב שלי X" / "אני משלם/ת השתתפות Y" = המצב הנוכחי (baseline) -> updateCurrentVehicle. "לעבור ל-X" / "להשוות מול X" = חלופה -> manageScenarios. בקשת סימולציה לעולם לא משנה את ה-baseline.
 - עובדה מול סימולציה: "השכר שלי בעצם 15,000" = תיקון עובדה (updateCase). "מה אם השכר יעלה ל-20,000" = סימולציה: שמור/י override ברמת התרחיש (manageScenarios) ואז compareScenarios — אל תחשב/י נטו היפותטי בראש.
 
 ## זכאות
@@ -61,6 +62,18 @@ const SYSTEM = `את/ה היועץ/ת של שטראוס לרכב ולנטו. מ�
   להזין ידנית — אפשר דרך "הפרטים שלי".
 - אם מעדיפים לקרוא מהתלוש ידנית: שורת שכר הבסיס (ברוטו), שיעור ההפרשה לפנסיה ולקרן
   השתלמות (לרוב מופיע האחוז, לא רק הסכום), ונקודות הזיכוי. אל תניח/י מבנה תלוש קבוע.
+
+## סטטוס תלוש והקשר (מוזרק בתמונת המצב)
+- תמונת המצב כוללת 'סטטוס תלוש'. כבד/י אותו: אחרי שהתלוש *אושר/הוחל* (applied) אל תאמר/י 'לא הגיע תלוש' — העובדות כבר כוללות אותו. לפני אישור (extracted) אל תתייחס/י לחילוץ כעובדות מאושרות.
+- אינך מקבל/ת את המסמך עצמו שוב — רק את הסטטוס ואת העובדות המאושרות. אל תבקש/י להעלות שוב תלוש שכבר הוחל.
+- עמלות/בונוס בערך 0 מהתלוש הם ערך אמיתי (0), לא 'חסר'. אם הוחלו — התייחס/י אליהם כ-0, לא כחוסר.
+
+## בקשה ממתינה והשלמת החוסר
+- אם תמונת המצב מציינת 'בקשה ממתינה: השוואה' — המשתמש/ת כבר ביקש/ה השוואה שנעצרה על חוסר-נתונים. ברגע שיש נתונים מאושרים מספקים, *השלם/י את ההשוואה (compareScenarios) והצג/י כרטיס* — בלי לבקש להתחיל מחדש ובלי לשכוח את הבקשה.
+
+## כשל פעולה (בלי הצלחה כוזבת)
+- אם פעולה/כלי נכשל/ה או שאין פעולה נתמכת — אמור/י בקצרה שלא הושלמה והצע/י צעד המשך. אל תציג/י הצלחה כוזבת ('רשמתי/שמרתי') כשלא נשמר דבר.
+- לעולם אל תחשוף/י ניסוח פנימי כמו 'אין לי כלי' או 'נרשם כחלופה'. נסח/י למשתמש/ת תוצאה מובנת ('עדכנתי את הרכב הנוכחי' / 'לא הצלחתי לעדכן כרגע').
 
 ## פנייה מגדרית
 - ברירת מחדל: זכר. שינוי רק לפי רמז מפורש בהודעה (״אני מקבלת/שייכת/עובדת״ -> נקבה).
@@ -114,6 +127,14 @@ function buildTools(service: CaseService, ctx: ToolContext) {
         "משנה את העובדות המשותפות ומייַשן השוואות קודמות. אינו מריץ חישוב.",
       inputSchema: updateCaseInput,
       execute: (input) => updateCase(service, ctx, input),
+    }),
+    updateCurrentVehicle: tool({
+      description:
+        "עדכון הרכב וההשתתפות *הנוכחיים* (baseline) של העובד/ת - 'הרכב שלי X', 'אני משלם/ת השתתפות Y'. " +
+        "זו עובדת-מצב, לא בקשת השוואה ולא סימולציה. *אל* תשתמש/י בזה ל'לעבור ל-/להשוות מול רכב' (זו חלופה -> manageScenarios). " +
+        "שדה שלא נמסר נשמר כפי שהוא (אינו מאפס). לרכב בשם - קרא/י searchVehicles קודם לקבלת vehicleCode מאומת. אינו מריץ חישוב.",
+      inputSchema: updateCurrentVehicleInput,
+      execute: (input) => updateCurrentVehicle(service, ctx, input),
     }),
     manageScenarios: tool({
       description:

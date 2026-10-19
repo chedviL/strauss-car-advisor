@@ -590,7 +590,10 @@ export class PgCaseRepository implements CaseRepository {
          (select to_jsonb(x) from (select * from case_facts where case_id = $1) x) as facts,
          coalesce((select jsonb_agg(to_jsonb(x)) from (select * from scenarios where case_id = $1) x), '[]'::jsonb) as scenarios,
          (select to_jsonb(x) from (select * from comparisons where case_id = $1 order by completed_at desc limit 1) x) as latest_comparison,
-         coalesce((select jsonb_agg(to_jsonb(x)) from (select * from inquiries where case_id = $1 and status in ('open','answered') order by created_at) x), '[]'::jsonb) as open_inquiries`,
+         coalesce((select jsonb_agg(to_jsonb(x)) from (select * from inquiries where case_id = $1 and status in ('open','answered') order by created_at) x), '[]'::jsonb) as open_inquiries,
+         (select case when p.applied_at is not null then 'applied' else p.status end
+            from payslip_uploads p where p.case_id = $1 and p.status <> 'discarded'
+           order by p.created_at desc limit 1) as payslip_status`,
       [caseId],
     );
     const row = r.rows[0];
@@ -603,6 +606,7 @@ export class PgCaseRepository implements CaseRepository {
       scenarios: (row.scenarios as Record<string, unknown>[]).map(mapScenario),
       latestComparison: row.latest_comparison ? mapComparison(row.latest_comparison) : null,
       openInquiries: (row.open_inquiries as Record<string, unknown>[]).map(mapInquiry),
+      payslipStatus: ((row.payslip_status as string) ?? "none") as import("../../domain/contracts/case.js").PayslipStatus,
     };
   }
 }
