@@ -39,11 +39,22 @@ export async function manageScenarios(
         if (v !== undefined) (overrides as Record<string, number>)[k] = v;
       }
     }
+    // השתתפות: אם *לא נמסרה כלל* (undefined) - יורשת *במפורש* את ההשתתפות הנוכחית
+    // (baseline), ונשמרת כערך קונקרטי - לא null שמסתמך על ברירת מחדל מקרית של הקטלוג.
+    // כך "אותה השתתפות" נשמר כערך הנוכחי בפועל. null מפורש (נמסר) נשמר כ-null.
+    let participation: number | null;
+    if (input.participation !== undefined) {
+      participation = input.participation; // כולל null מפורש
+    } else {
+      const cur = await service.getCaseState(ctx.caseId, ctx.ownerId);
+      const baseP = cur?.scenarios.find((s) => s.role === "baseline")?.participation ?? null;
+      participation = baseP; // ירושה מפורשת מהמצב הנוכחי
+    }
     const scenario = await service.pickAlternative(ctx.caseId, ctx.ownerId, {
       role: "alternative",
       route: input.route,
       vehicleCode: input.vehicleCode ?? null,
-      participation: input.participation ?? null,
+      participation,
       maintenanceAllowance: input.maintenanceAllowance ?? 0,
       overrides,
     });

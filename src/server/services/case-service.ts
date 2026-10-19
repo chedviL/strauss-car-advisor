@@ -730,6 +730,8 @@ export class CaseService {
         name: cand.vehicleCode ? (dataset.vehiclesByCode.get(cand.vehicleCode)?.commercialName ?? cand.label) : cand.label,
         route: cand.route,
         vehicleCode: cand.vehicleCode,
+        participation: cand.participation,
+        maintenanceAllowance: cand.maintenanceAllowance,
         net,
         netDelta: net - baselineNet,
         result: calc.result,
@@ -773,8 +775,10 @@ export class CaseService {
         role: "alternative",
         route: top.route,
         vehicleCode: top.vehicleCode,
-        participation: null, // ברירת מחדל/ירושה; המנוע תיעד הנחה בעת החישוב
-        maintenanceAllowance: 0,
+        // שומרים את ההשתתפות/אחזקה בפועל שבהן חושבה החלופה המובילה, כדי שהתרחיש
+        // השמור יתאים למה שהוצג (ולא יתאפס ל-null ויסתמך על ברירת מחדל בחישוב חוזר).
+        participation: top.participation,
+        maintenanceAllowance: top.maintenanceAllowance,
         overrides: {},
       });
       const baselineScenario = state.scenarios.find((s) => s.role === "baseline")!;
@@ -878,6 +882,8 @@ export interface CompareRow {
   name: string;
   route: RouteKind;
   vehicleCode: string | null;
+  participation: number | null;
+  maintenanceAllowance: number;
   net: number;
   netDelta: number;
   result: ScenarioResult;

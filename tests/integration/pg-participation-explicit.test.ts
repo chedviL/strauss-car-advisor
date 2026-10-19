@@ -57,4 +57,18 @@ run("השתתפות 'אותו ערך' נשמרת מפורש (לא null/בריר�
     expect(alt.participation).not.toBeNull();
     expect(alt.vehicleCode).toBe("CAR-10");
   });
+
+  it("השמטת participation בחלופה יורשת מפורשות את הנוכחי (450), לא null ולא 300", { timeout: 90000 }, async () => {
+    const owner = "part-inherit-" + randomUUID();
+    const created = await service.startBlankCase(owner);
+    const caseId = created.case.id; caseIds.push(caseId);
+    const ctx: ToolContext = { ownerId: owner, caseId, staffRole: null, requestId: randomUUID(), messageId: null };
+    await updateCurrentVehicle(service, ctx, { route: "company_car", vehicleCode: "CAR-09", participation: 450 });
+    // חלופה *בלי* participation -> אמורה לרשת 450 מהמצב הנוכחי (ולא null/300).
+    await manageScenarios(service, ctx, { operation: "set_alternative", route: "company_car", vehicleCode: "CAR-10" });
+    const st = await service.getCaseState(caseId, owner);
+    const alt = st!.scenarios.find((s) => s.role === "alternative")!;
+    expect(alt.participation).toBe(450);
+    expect(alt.participation).not.toBeNull();
+  });
 });

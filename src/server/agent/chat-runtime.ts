@@ -143,7 +143,7 @@ function buildTools(service: CaseService, ctx: ToolContext) {
         "update_overrides מחיל שינוי היפותטי של שכר על החלופה הקיימת בלי לדרוש רכב/מסלול (לסימולציית שכר טהורה כמו 'מה אם השכר יעלה'); " +
         "overrides הוא שינוי היפותטי של שכר ברמת התרחיש בלבד ('מה אם השכר יעלה') — אינו משנה את העובדה האמיתית. " +
         "clear_overrides מסיר את השינוי ההיפותטי (חזרה לירושה מהעובדות; לא אפס). " +
-        "participation/maintenance בשקלים; participation=null פירושו 'לא נמסר' (המנוע עשוי להשתמש בברירת מחדל). " +
+        "participation בשקלים: אם *משמיטים* אותו בחלופה, הוא יורש *במפורש* את ההשתתפות הנוכחית (baseline) - כך 'אותה השתתפות' נשמר כערך הנוכחי בפועל, לא ברירת מחדל. ציין/י ערך רק אם הוא *שונה* מהנוכחי. maintenance בשקלים. " +
         "אינו מחשב נטו בעצמו — להשוואה השתמש/י ב-compareScenarios.",
       inputSchema: manageScenariosInput,
       execute: (input) => manageScenarios(service, ctx, input),
@@ -152,6 +152,7 @@ function buildTools(service: CaseService, ctx: ToolContext) {
       description:
         "חיפוש רכבים בקטלוג. " +
         "name=שם מסחרי לזיהוי רכב (Atto 3, Dolphin וכד') — מחזיר vehicleCode מאומת, עמום, או not_found. " +
+        "כשמוזכרים *כמה* רכבים (למשל 'לעבור מ-X ל-Y') — העבר/י את כולם ב-names:[\"X\",\"Y\"] בקריאה *אחת* (חוסך סבב), כל שם מזוהה בנפרד. " +
         "אין לנחש vehicleCode — use name לזיהוי ותקבל/י את הקוד הנכון. " +
         "propulsion=3 לחשמליים; group לסינון. כולל זכאות מחושבת. אינו משנה דבר.",
       inputSchema: searchVehiclesInput,
