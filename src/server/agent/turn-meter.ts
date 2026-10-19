@@ -16,6 +16,10 @@ export interface TurnMeterMetrics {
   inputTokens: number;
   outputTokens: number;
   cachedInputTokens: number;
+  /** זמן סיום כל סבב מודל (provider round) מתחילת התור, במ"ש. אורך המערך = מספר קריאות הספק בפועל. */
+  roundEndMs: number[];
+  /** זמן שבו כל כלי החזיר תוצאה (לפי שם), מתחילת התור. */
+  toolTimings: Array<{ tool: string; ms: number }>;
 }
 
 /** אירוע chunk מופשט (תואם ל-onChunk של ה-SDK). */
@@ -40,6 +44,8 @@ export function createTurnMeter(now: () => number = () => Date.now()) {
   let firstTextMs: number | null = null;
   let toolResultMs: number | null = null;
   let compareResultMs: number | null = null;
+  const roundEndMs: number[] = [];
+  const toolTimings: Array<{ tool: string; ms: number }> = [];
 
   return {
     onChunk(chunk: MeterChunk): void {
@@ -49,12 +55,15 @@ export function createTurnMeter(now: () => number = () => Date.now()) {
       }
     },
     onStepFinish(step: MeterStep): void {
-      modelCalls += 1;
+      const at = ms();
+      modelCalls += 1;          // כל onStepFinish = סבב ספק אחד (לא הפעלת runtime)
+      roundEndMs.push(at);
       for (const _c of step.toolCalls ?? []) toolCount += 1;
       for (const r of step.toolResults ?? []) {
+        toolTimings.push({ tool: r.toolName ?? "?", ms: at });
         if (isToolSuccess(r.output)) {
-          if (toolResultMs === null) toolResultMs = ms();
-          if (compareResultMs === null && r.toolName === "compareScenarios") compareResultMs = ms();
+          if (toolResultMs === null) toolResultMs = at;
+          if (compareResultMs === null && r.toolName === "compareScenarios") compareResultMs = at;
         }
       }
     },
@@ -65,6 +74,8 @@ export function createTurnMeter(now: () => number = () => Date.now()) {
         inputTokens: usage?.inputTokens ?? 0,
         outputTokens: usage?.outputTokens ?? 0,
         cachedInputTokens: usage?.cachedInputTokens ?? 0,
+        roundEndMs: [...roundEndMs],
+        toolTimings: [...toolTimings],
       };
     },
   };

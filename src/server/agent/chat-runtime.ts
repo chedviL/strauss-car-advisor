@@ -33,6 +33,7 @@ const SYSTEM = `את/ה היועץ/ת של שטראוס לרכב ולנטו. מ�
 - השתמש/י בכלי המתאים כשצריך מידע או פעולה; אם אפשר לענות ישירות — ענה/י, בלי להפעיל כלי לחינם.
 - אם כלי החזיר שדה — השתמש/י בו. אם החזיר null/ריק — אמור/י שהערך לא נמסר/לא רשום; אל תטען/י שאין גישה.
 - "יש לי X" / "הרכב שלי X" / "אני משלם/ת השתתפות Y" = המצב הנוכחי (baseline) -> updateCurrentVehicle. "לעבור ל-X" / "להשוות מול X" = חלופה -> manageScenarios. בקשת סימולציה לעולם לא משנה את ה-baseline.
+- "אותה השתתפות" / "אותם תנאים" ביחס לחלופה = העתק/י *במפורש* את הערך מהמצב הנוכחי (baseline.participation) אל participation של החלופה ב-manageScenarios. אל תשאיר/י null בהסתמך על ברירת מחדל - ברירת מחדל זהה היא מקרי; הוראת המשתמש/ת היא "אותו ערך נוכחי". אם ההשתתפות הנוכחית אינה ידועה, בקש/י אותה או ברר/י (openInquiry), אל תמציא/י.
 - עובדה מול סימולציה: "השכר שלי בעצם 15,000" = תיקון עובדה (updateCase). "מה אם השכר יעלה ל-20,000" = סימולציה: שמור/י override ברמת התרחיש (manageScenarios) ואז compareScenarios — אל תחשב/י נטו היפותטי בראש.
 
 ## זכאות
@@ -184,6 +185,8 @@ export interface TurnMetrics {
   ttftMs: number | null;        // אירוע טקסט ראשון שנשלח ללקוח (שרת; לא תצוגה בדפדפן)
   toolResultMs: number | null;  // תוצאת כלי ראשונה מוכנה בשרת (חליף cardMs השגוי)
   compareResultMs: number | null; // תוצאת compareScenarios מוכנה בשרת
+  roundEndMs: number[];           // זמן סיום כל סבב ספק (מספר קריאות הספק בפועל)
+  toolTimings: Array<{ tool: string; ms: number }>;
   totalMs: number;
   inputTokens: number; outputTokens: number; cachedInputTokens: number;
 }
@@ -197,8 +200,8 @@ export interface StreamChatArgs {
 }
 
 /** מריץ תור שיחה עם streaming וכלים. מחזיר את תוצאת streamText. */
-export function streamChat(args: StreamChatArgs & { onMetrics?: (m: TurnMetrics) => void }) {
-  const { service, ctx, state, messages, budget, onMetrics } = args;
+export function streamChat(args: StreamChatArgs & { onMetrics?: (m: TurnMetrics) => void; onComparisonReady?: () => void }) {
+  const { service, ctx, state, messages, budget, onMetrics, onComparisonReady } = args;
   if (budget.estimatedUsd >= BUDGET.maxEstimatedUsd) {
     throw new Error(
       `תקציב הניסוי המוערך (~$${BUDGET.maxEstimatedUsd}) נוצל. צריכה מוערכת: $${budget.estimatedUsd.toFixed(4)} (אומדן, לא תקרת חיוב קשיחה).`,
@@ -232,6 +235,13 @@ export function streamChat(args: StreamChatArgs & { onMetrics?: (m: TurnMetrics)
       meter.onChunk(ev.chunk as { type?: string });
     },
     onStepFinish: (step) => {
+      // אירוע כרטיס: ברגע ש-compareScenarios הצליח (תוצאה תקפה נשמרה במסד),
+      // משדרים ללקוח מיד - לפני סיום הניסוח - כדי שהכרטיס יתעדכן בלי להמתין לתור.
+      for (const r of (step.toolResults ?? []) as Array<{ toolName?: string; output?: { status?: string } }>) {
+        if (r.toolName === "compareScenarios" && r.output?.status === "success") {
+          try { onComparisonReady?.(); } catch { /* best-effort */ }
+        }
+      }
       for (const call of step.toolCalls ?? []) {
         const key = call.toolName + ":" + JSON.stringify(call.input);
         if (seenToolCalls.has(key)) {
@@ -249,14 +259,18 @@ export function streamChat(args: StreamChatArgs & { onMetrics?: (m: TurnMetrics)
       budget.estimatedUsd += estimateUsd(inTok, outTok);
       budget.calls += 1;
       const m: TurnMeterMetrics = meter.finalize({ inputTokens: inTok, outputTokens: outTok, cachedInputTokens: cachedTok });
+      const rounds = m.roundEndMs.map((e, i) => `r${i + 1}@${e}`).join(",");
+      const tools = m.toolTimings.map((x) => `${x.tool}@${x.ms}`).join(",");
       console.log(
-        `[measure] path=B modelCalls=${m.modelCalls} tools=${m.toolCount} ` +
+        `[measure] path=B providerRounds=${m.modelCalls} tools=${m.toolCount} ` +
         `ttft_ms=${m.firstTextMs ?? "-"} toolResult_ms=${m.toolResultMs ?? "-"} compare_ms=${m.compareResultMs ?? "-"} total_ms=${m.totalMs} ` +
+        `rounds=[${rounds}] toolTimings=[${tools}] ` +
         `tok_in=${inTok} tok_out=${outTok} cached_in=${cachedTok} turnBudget#=${callsBefore + 1}`,
       );
       onMetrics?.({
         modelCalls: m.modelCalls, toolCount: m.toolCount,
         ttftMs: m.firstTextMs, toolResultMs: m.toolResultMs, compareResultMs: m.compareResultMs,
+        roundEndMs: m.roundEndMs, toolTimings: m.toolTimings,
         totalMs: m.totalMs, inputTokens: inTok, outputTokens: outTok, cachedInputTokens: cachedTok,
       });
     },

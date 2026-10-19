@@ -41,6 +41,17 @@ export function ChatPanel({ initialMessages = [], showExamples = false }: ChatPa
     wasBusy.current = busy;
   }, [status, busy, router]);
 
+  // רענון מיידי של הכרטיס כשמגיע אירוע data-comparison מהשרת (באמצע התור,
+  // לפני סיום הניסוח). לא ממתינים ל-status="ready". מונה כדי לרענן פעם אחת לאירוע.
+  const cardEvents = countComparisonParts(messages as never);
+  const lastCardEvents = useRef(0);
+  useEffect(() => {
+    if (cardEvents > lastCardEvents.current) {
+      lastCardEvents.current = cardEvents;
+      router.refresh();
+    }
+  }, [cardEvents, router]);
+
   // גלילה עדינה לתחתית כשמגיעות הודעות חדשות.
   useEffect(() => {
     const el = scrollRef.current;
@@ -169,6 +180,18 @@ type SavePhaseUI = "saving" | "retrying" | "saved" | "failed" | null;
 // מצב השמירה של התור האחרון מתוך data-saveStatus בהודעת העוזר האחרונה.
 // ה-SDK ממפה data-part מסוג "saveStatus" ל-part.type === "data-saveStatus";
 // ה-part האחרון משקף את ה-phase העדכני ביותר (saving -> retrying -> saved/failed).
+// סופר את אירועי data-comparison בכל ההודעות (part.type === "data-comparison").
+// עלייה במספר = כרטיס חדש נשמר בשרת -> רענון מיידי.
+function countComparisonParts(messages: Array<{ parts?: Array<Record<string, unknown>> }>): number {
+  let n = 0;
+  for (const m of messages ?? []) {
+    for (const part of m.parts ?? []) {
+      if ((part as { type?: string }).type === "data-comparison") n += 1;
+    }
+  }
+  return n;
+}
+
 function lastTurnSavePhase(messages: Array<{ role: string; parts: Array<Record<string, unknown>> }>): SavePhaseUI {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
