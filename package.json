@@ -1,51 +1,52 @@
 {
-    "name": "strauss-car-advisor",
-    "version": "0.1.0",
-    "private": true,
-    "description": "יועץ הרכב של שטראוס — סימולטור נטו לבחירת רכב",
-    "scripts": {
-        "dev": "next dev",
-        "build": "next build",
-        "start": "next start",
-        "test": "vitest run",
-        "test:watch": "vitest",
-        "typecheck": "tsc --noEmit",
-        "import:data": "tsx scripts/import/import-dataset.ts",
-        "db:migrate": "tsx scripts/db/migrate.ts",
-        "db:set-app-password": "tsx scripts/db/set-app-password.ts",
-        "import:dataset": "tsx scripts/import/import-dataset.ts",
-        "sim": "tsx scripts/sim/run-sim.ts --sim"
-    },
-    "engines": {
-        "node": ">=20"
-    },
-    "dependencies": {
-        "@ai-sdk/anthropic": "4.0.79",
-        "@ai-sdk/google": "^4.0.99",
-        "@ai-sdk/react": "4.0.143",
-        "@supabase/ssr": "0.12.7",
-        "@supabase/supabase-js": "2.117.3",
-        "ai": "7.0.140",
-        "decimal.js": "10.6.0",
-        "dotenv": "^16.6.1",
-        "next": "15.5.27",
-        "nodemailer": "^6.9.16",
-        "pg": "8.23.1",
-        "react": "19.3.0",
-        "react-dom": "19.3.0",
-        "zod": "3.25.76"
-    },
-    "devDependencies": {
-        "@pdf-lib/fontkit": "^1.1.1",
-        "@types/node": "22.10.5",
-        "@types/nodemailer": "^6.4.17",
-        "@types/pg": "8.23.1",
-        "@types/react": "19.0.2",
-        "@types/react-dom": "19.0.2",
-        "fast-check": "3.23.2",
-        "pdf-lib": "^1.17.1",
-        "tsx": "4.23.15",
-        "typescript": "5.9.3",
-        "vitest": "2.1.9"
-    }
+  "name": "strauss-car-advisor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "יועץ הרכב של שטראוס — סימולטור נטו לבחירת רכב",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "import:data": "tsx scripts/import/import-dataset.ts",
+    "db:migrate": "tsx scripts/db/migrate.ts",
+    "db:set-app-password": "tsx scripts/db/set-app-password.ts",
+    "import:dataset": "tsx scripts/import/import-dataset.ts",
+    "sim": "tsx scripts/sim/run-sim.ts --sim",
+    "db:set-notifier-password": "tsx scripts/db/set-notifier-password.ts"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "4.0.79",
+    "@ai-sdk/google": "^4.0.99",
+    "@ai-sdk/react": "4.0.143",
+    "@supabase/ssr": "0.12.7",
+    "@supabase/supabase-js": "2.117.3",
+    "ai": "7.0.140",
+    "decimal.js": "10.6.0",
+    "dotenv": "^16.6.1",
+    "next": "15.5.27",
+    "nodemailer": "^6.9.16",
+    "pg": "8.23.1",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@pdf-lib/fontkit": "^1.1.1",
+    "@types/node": "22.10.5",
+    "@types/nodemailer": "^6.4.17",
+    "@types/pg": "8.23.1",
+    "@types/react": "19.0.2",
+    "@types/react-dom": "19.0.2",
+    "fast-check": "3.23.2",
+    "pdf-lib": "^1.17.1",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "vitest": "2.1.9"
+  }
 }

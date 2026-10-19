@@ -2,11 +2,21 @@
 // עיבוד תור ההתראות: תופס משימות שהגיע זמנן, מברר את המייל המאומת של הנמען
 // (Supabase Admin, service role - המייל לא נשמר אצלנו), בונה תוכן ללא פרטים
 // כספיים, שולח, ומסמן sent/failed. ניסיונות חוזרים: backoff מוכפל ב-claim.
-// רץ בחיבור worker (service role) שאינו כפוף ל-RLS.
+// רץ בחיבור worker מצומצם (strauss_notifier) שגישתו ל-notification_jobs בלבד.
 
 import { claimDueJobs, claimJobByInquiry, markSent, markFailed, type DueJob } from "./queue.js";
 import { buildContent, caseLink } from "./content.js";
 import { sendMail, mailConfigured } from "./mailer.js";
+
+/**
+ * חיבור ה-worker לתור ההתראות: *אך ורק* NOTIFY_DATABASE_URL (תפקיד strauss_notifier
+ * המצומצם ל-notification_jobs). אין fallback ל-MIGRATION_DATABASE_URL/DATABASE_URL
+ * כדי לא להריץ את ה-worker בהרשאות רחבות. לא מוגדר -> null, וה-worker אינו רץ.
+ */
+function notifierConn(): string | undefined {
+  const c = (process.env.NOTIFY_DATABASE_URL ?? "").trim();
+  return c !== "" ? c : undefined;
+}
 
 export interface WorkerResult { claimed: number; sent: number; failed: number; skipped: number; configured: boolean }
 
@@ -27,7 +37,7 @@ async function lookupEmail(userId: string): Promise<string | null> {
  * המשימה נשארת pending ותנוסה שוב, עד max_attempts (ואז failed).
  */
 export async function processNotifications(opts?: { limit?: number; baseUrl?: string }): Promise<WorkerResult> {
-  const workerConn = process.env.MIGRATION_DATABASE_URL ?? process.env.DATABASE_URL;
+  const workerConn = notifierConn();
   const configured = mailConfigured();
   if (!workerConn) return { claimed: 0, sent: 0, failed: 0, skipped: 0, configured };
   const baseUrl = (opts?.baseUrl ?? process.env.APP_BASE_URL ?? "").trim();
@@ -75,7 +85,7 @@ export async function sendOneJob(
  * ישלח בהמשך. אינו זורק. דורש service role (worker connection).
  */
 export async function sendForInquiryNow(inquiryId: string, opts?: { baseUrl?: string }): Promise<"sent" | "failed" | "skipped" | "no_job"> {
-  const workerConn = process.env.MIGRATION_DATABASE_URL ?? process.env.DATABASE_URL;
+  const workerConn = notifierConn();
   if (!workerConn) return "no_job";
   const configured = mailConfigured();
   const baseUrl = (opts?.baseUrl ?? process.env.APP_BASE_URL ?? "").trim();
