@@ -4,7 +4,7 @@
 // מסתיים ולפני finish. כך הלקוח יכול לרענן את הכרטיס מהאירוע בלי להמתין לסוף התור.
 // זו הוכחת *אירוע בזרם*, לא רק שמירה במסד.
 import { describe, it, expect } from "vitest";
-import { createUIMessageStream } from "ai";
+import { createUIMessageStream, createUIMessageStreamResponse } from "ai";
 
 async function drain(stream: ReadableStream): Promise<string[]> {
   const reader = stream.getReader();
@@ -64,5 +64,36 @@ describe("אירוע כרטיס מגיע לפני הניסוח הסופי", () =
     const iText = types.indexOf("text-delta");
     expect(iCard).toBeGreaterThanOrEqual(0);
     expect(iCard).toBeLessThan(iText);
+  });
+});
+
+describe("אירוע כרטיס דרך נתיב HTTP (SSE) עם ניסוח מדומה מושהה", () => {
+  it("בגוף ה-HTTP: data-comparison מופיע לפני טקסט הניסוח הסופי", async () => {
+    // משכפל את דפוס ה-route: גשר onComparisonReady -> data-comparison מיד,
+    // ואז ניסוח מושהה. מריצים דרך createUIMessageStreamResponse (אותו עוטף SSE של ה-route).
+    let emitCard: (() => void) | null = null;
+    let cardPending = false; let cardSent = false;
+    const fireCard = () => { if (cardSent) return; if (emitCard) { cardSent = true; emitCard(); } else { cardPending = true; } };
+    setTimeout(fireCard, 0);
+    const stream = createUIMessageStream({
+      execute: async ({ writer }) => {
+        writer.write({ type: "start" });
+        emitCard = () => writer.write({ type: "data-comparison", data: { ready: true, scope: "turn" } });
+        if (cardPending && !cardSent) { cardSent = true; emitCard(); }
+        await new Promise((r) => setTimeout(r, 40)); // ניסוח מושהה
+        writer.write({ type: "text-start", id: "t1" });
+        writer.write({ type: "text-delta", id: "t1", delta: "תוצאה סופית" });
+        writer.write({ type: "text-end", id: "t1" });
+        writer.write({ type: "finish" });
+      },
+    });
+    const resp = createUIMessageStreamResponse({ stream });
+    expect(resp.headers.get("content-type")).toContain("text/event-stream");
+    const body = await resp.text();
+    const iCard = body.indexOf("data-comparison");
+    const iText = body.indexOf("text-delta");
+    expect(iCard).toBeGreaterThanOrEqual(0);  // האירוע בגוף ה-HTTP
+    expect(iText).toBeGreaterThanOrEqual(0);
+    expect(iCard).toBeLessThan(iText);        // לפני הניסוח הסופי
   });
 });

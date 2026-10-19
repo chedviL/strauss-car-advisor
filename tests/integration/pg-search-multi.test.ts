@@ -44,10 +44,12 @@ run("searchVehicles: זיהוי כמה שמות בקריאה אחת", () => {
     const data = r.data as { status: string; results: Array<{ nameQuery: string; status: string; vehicleCode?: string }> };
     expect(data.status).toBe("multi");
     expect(data.results).toHaveLength(2);
-    const byName = Object.fromEntries(data.results.map((x) => [x.nameQuery, x]));
-    expect(byName["COROLLA CROSS"].status).toBe("found");
-    expect(byName["COROLLA CROSS"].vehicleCode).toBe("CAR-09");
-    expect(byName["ATTO 3"].status).toBe("found");
-    expect(byName["ATTO 3"].vehicleCode).toBe("CAR-10");
+    const find = (q: string) => data.results.find((x) => x.nameQuery === q);
+    const corolla = find("COROLLA CROSS");
+    const atto = find("ATTO 3");
+    expect(corolla?.status).toBe("found");
+    expect(corolla?.vehicleCode).toBe("CAR-09");
+    expect(atto?.status).toBe("found");
+    expect(atto?.vehicleCode).toBe("CAR-10");
   });
 });
