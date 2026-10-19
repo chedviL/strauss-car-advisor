@@ -13,7 +13,7 @@ import { userFromClient } from "./server/auth/claims.js";
 
 // נתיבים ציבוריים ברמת ה-middleware. /api/worker אוכף הרשאה עצמאית (CRON_SECRET)
 // ולכן אינו עובר דרך שער הסשן; שאר ה-API דורש סשן מאומת.
-const PUBLIC_PATHS = ["/login", "/api/worker"];
+const PUBLIC_PATHS = ["/login", "/api/worker", "/api/version"];
 
 export async function middleware(req: NextRequest): Promise<NextResponse> {
   const { pathname } = req.nextUrl;
