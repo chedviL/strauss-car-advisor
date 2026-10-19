@@ -165,7 +165,8 @@ function buildTools(service: CaseService, ctx: ToolContext) {
         "mode=discover: סורק את הקטלוג וממיין לפי הפרש נטו (minNetDelta לסינון; includeWaiver לכלול ויתור). " +
         "השתמש/י כשמבקשים השוואה/'מה יחסוך לי' ויש baseline מספיק. " +
         "תוצאות: status=missing_data (חסר קלט ל-baseline — אל תציג/י נטו), כיסוי חלקי (חלק נפסלו — לא 'הטוב מכל'), " +
-        "excluded (לא זכאי+סיבה). המספרים הם פלט המנוע — הצג/י אותם כפי שהם.",
+        "excluded (לא זכאי+סיבה). המספרים הם פלט המנוע — הצג/י אותם כפי שהם. " +
+        "*לביצוע השוואה ישירה לרכב יחיד אין צורך לקרוא manageScenarios קודם* — העבר/י את הרכב כ-candidate (עם participation אם נמסר) ישירות לכאן; הכלי שומר את החלופה המובילה בעצמו. חוסך סבב.",
       inputSchema: compareScenariosInput,
       execute: (input) => compareScenarios(service, ctx, input),
     }),

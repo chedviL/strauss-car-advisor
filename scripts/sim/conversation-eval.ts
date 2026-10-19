@@ -378,6 +378,28 @@ const scenarios: Scenario[] = [
     const showedNumber = /\d{2},?\d{3}/.test(r.text) || /הפרש|ירוויח|יחסוך|יעלה ב/.test(r.text);
     return [ check("מסקנה מספרית רק אם נשמרה השוואה", !showedNumber || !!st.latestComparison, "card=" + !!st.latestComparison + " num=" + showedNumber) ];
   } },
+﻿  { id: "S32-copy-vs-missing-text", tags: ["אותה השתתפות","מידע חסר","נאמנות טקסט"], run: async () => {
+    // המצב הנוכחי: השתתפות *450* (לא ברירת מחדל). ירושה לבדה אינה הוכחה להבנה -
+    // בודקים את *הטקסט*: "אותה השתתפות" -> הניסוח משקף 450; בלי אזכור -> לא מייחס
+    // למשתמש/ת ערך שלא נמסר.
+    const ctxA = await freshCase(GROUP_G, "CAR-09");
+    await service.updateBaselineVehicle(ctxA.caseId, ctxA.ownerId, { route: "company_car", vehicleCode: "CAR-09", participation: 450, maintenanceAllowance: 0 });
+    const a = await runTurn(ctxA, [], "לעבור ל-ATTO 3 עם אותה השתתפות שיש לי היום");
+    const stA = (await service.getCaseState(ctxA.caseId, ctxA.ownerId))!;
+    const altA = stA.scenarios.find((s) => s.role === "alternative");
+    const textMentions450 = /450/.test(a.text);
+
+    const ctxB = await freshCase(GROUP_G, "CAR-09");
+    await service.updateBaselineVehicle(ctxB.caseId, ctxB.ownerId, { route: "company_car", vehicleCode: "CAR-09", participation: 450, maintenanceAllowance: 0 });
+    const b = await runTurn(ctxB, [], "תשווי לי ATTO 3 מול הנוכחי");  // לא ביקש "אותה השתתפות"
+    // לא אמור להמציא מספר השתתפות *אחר* מ-450 בטקסט (למשל 300), ולא לטעון שהמשתמש מסר ערך.
+    const bInventedOther = /השתתפות של 300|השתתפות 300|בחרת .*300|שביקשת .*300/.test(b.text);
+
+    return [
+      check("[קריטי] 'אותה השתתפות' -> הניסוח משקף 450 (לא ברירת מחדל 300)", textMentions450 && (altA?.participation === 450), `text450=${textMentions450} p=${altA?.participation}`),
+      check("בלי אזכור -> לא ייחס למשתמש/ת ערך שלא נמסר (לא 'השתתפות 300' מומצאת)", !bInventedOther, b.text.slice(0, 110)),
+    ];
+  } },
 ];
 
 function pct(arr: number[], q: number): number { if (arr.length === 0) return 0; const s = [...arr].sort((a, b) => a - b); const i = Math.min(s.length - 1, Math.floor(q * (s.length - 1))); return s[i] ?? 0; }
