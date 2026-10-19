@@ -8,6 +8,9 @@ import { loadRepInquiries } from "../actions.js";
 import { redirect } from "next/navigation";
 import { getSessionUser } from "../../server/auth/next-session.js";
 
+// עמוד מאומת פר-משתמש: לעולם לא סטטי (קורא סשן/עוגיות). חובה לבנייה ב-Vercel.
+export const dynamic = "force-dynamic";
+
 export default async function RepresentativePage() {
   const user = await getSessionUser();
   if (!user) redirect("/login");

@@ -4,9 +4,11 @@
 // owner_id = המשתמש המאומת בשרת (סשן Supabase), לעולם לא מהלקוח.
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { caseService } from "../server/web/service.js";
 import { requireOwner, requireUser, AuthRequiredError } from "../server/auth/next-session.js";
 import { answerAsStaff, getStaffScope, listRepInquiries, ForbiddenError } from "../server/auth/staff.js";
+import { sendForInquiryNow } from "../server/notify/worker.js";
 
 export async function startDemoCase(employeeId: string): Promise<void> {
   const owner = await requireOwner();
@@ -221,6 +223,15 @@ export async function answerRepInquiry(
     const res = await answerAsStaff(caseService(), dbUrl(), user.id, inquiryId, answer);
     revalidatePath("/representative");
     revalidatePath("/");
+    // משלוח מיידי של ההתראה *אחרי* שהתגובה נשלחה לנציג (after של Next.js), כך
+    // שהנציג אינו ממתין ל-SMTP. המשימה כבר נשמרה במסד (enqueue ב-answerAsStaff),
+    // לכן גם אם ה-after נקטע/נכשל - המתזמן ישלח בניסיון הבא (התאוששות). timeouts
+    // ב-mailer מגבילים את זמן הריצה. רץ רק כשיש בירור אמיתי (לא not_found).
+    if (res.status !== "not_found" && res.caseId) {
+      after(() => sendForInquiryNow(inquiryId).catch((e) => {
+        console.warn("[notify] immediate send failed: " + (e instanceof Error ? e.name : "Error"));
+      }));
+    }
     if (res.status === "applied") {
       return res.missingFields && res.missingFields.length > 0
         ? { status: "applied", recomputed: res.recomputed ?? false, missingFields: res.missingFields }

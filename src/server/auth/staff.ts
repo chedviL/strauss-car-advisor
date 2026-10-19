@@ -7,6 +7,8 @@
 import { getPool } from "../repositories/pg-pool.js";
 import type { InquiryRecord, InquiryType } from "../../domain/contracts/case.js";
 import type { CaseService } from "../services/case-service.js";
+import { enqueueNotification } from "../notify/queue.js";
+import { sendForInquiryNow } from "../notify/worker.js";
 
 export interface StaffScope { inquiryTypes: InquiryType[] }
 
@@ -117,5 +119,15 @@ export async function answerAsStaff(
     // audit: מי ענה. מתבצע בהקשר הבעלים כי טבלת inquiries כפופה ל-RLS שלו.
     await c.query("update inquiries set answered_by = $2 where id = $1", [inquiryId, staffUserId]);
   }).catch(() => { /* audit best-effort; התשובה כבר נרשמה */ });
+
+  // התראת מייל עמידה: נוצרת בהקשר הבעלים (RLS), idempotent לפי (inquiry, kind).
+  // comparison_ready רק כשהתשובה הוחלה *וחושבה מחדש* בפועל; אחרת answer_recorded
+  // (תשובה נרשמה אך טרם הוחלה - לעולם לא "ההשוואה מוכנה"). כשל כאן אינו מבטל את
+  // התשובה/החישוב שכבר נשמרו.
+  if (res.status !== "not_found" && res.caseId) {
+    const kind = res.status === "applied" && res.recomputed === true ? "comparison_ready" : "answer_recorded";
+    await enqueueNotification(conn, ownerId, { caseId: res.caseId, inquiryId, kind })
+      .catch((e) => { console.warn("[notify] enqueue failed: " + (e instanceof Error ? e.name : "Error")); });
+  }
   return res;
 }

@@ -1,0 +1,17 @@
+name: notify-worker
+# מתזמן חינמי לניסיונות החוזרים של תור ההתראות. הניסיון הראשון כבר יוצא מיד
+# אחרי תשובת הנציג (after של Next.js); כאן רק retry למשימות שנשארו pending.
+# דורש Repository Secret בשם CRON_SECRET עם אותו ערך שב-Vercel Production.
+on:
+  schedule:
+    - cron: "*/5 * * * *"   # כל 5 דקות (המינימום הנתמך ב-GitHub Actions)
+  workflow_dispatch: {}
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger notification worker
+        run: >
+          curl -fsS -X POST
+          -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
+          https://strauss-car-advisor.vercel.app/api/worker/notifications
