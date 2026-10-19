@@ -84,6 +84,22 @@ export function getExtractionApiKey(): string | null {
   return null;
 }
 
+// מודל שיחה גיבוי במכסה החינמית של Gemini (תומך כלים). *אינו* ברירת המחדל -
+// השיחה נשארת Claude; זה רק fallback לכשל ספק. מפתח צד-שרת בלבד (MODEL_API_KEY3/2),
+// בלי חיוב. gemini-2.5-flash הוא free-tier ותומך function-calling.
+export const DEFAULT_FALLBACK_CHAT_MODEL_ID = "gemini-2.5-flash";
+export function getFallbackChatModelId(): string {
+  const id = process.env.FALLBACK_CHAT_MODEL_ID;
+  return id && id.trim() !== "" ? id.trim() : DEFAULT_FALLBACK_CHAT_MODEL_ID;
+}
+/** מחזיר מודל גיבוי לשיחה (Gemini free-tier) או null אם אין מפתח. לא זורק. */
+export function getFallbackChatModel(): LanguageModel | null {
+  const key = getExtractionApiKey(); // אותו מפתח Gemini צד-שרת (MODEL_API_KEY3/2)
+  if (!key) return null;
+  const google = createGoogleGenerativeAI({ apiKey: key });
+  return google(getFallbackChatModelId());
+}
+
 export function getExtractionModel(): LanguageModel {
   const key = getExtractionApiKey();
   if (!key) {

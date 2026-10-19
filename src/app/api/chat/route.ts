@@ -16,6 +16,8 @@ import {
 import { caseService } from "../../../server/web/service.js";
 import { getSessionUser } from "../../../server/auth/next-session.js";
 import { streamChat, stripReasoning, type ChatBudgetState } from "../../../server/agent/chat-runtime.js";
+import { getFallbackChatModel, getFallbackChatModelId } from "../../../server/agent/model.js";
+import { isQuotaError } from "../../../server/agent/payslip-extract.js";
 import type { ToolContext } from "../../../server/agent/tool-contracts.js";
 import { fastPathEnabled } from "../../../server/agent/model.js";
 import { runFastPlan, narrateResult } from "../../../server/agent/fast-path.js";
@@ -26,12 +28,10 @@ import { randomUUID } from "node:crypto";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-// תקציב מצטבר לכל התהליך (אומדן, לא תקרת חיוב).
-const budget: ChatBudgetState = { estimatedUsd: 0, calls: 0 };
-
 // הודעות שגיאה ידידותיות למשתמש/ת (בלי ניסוח פנימי/טכני).
 const ERR_FULL = "מצטער/ת, משהו השתבש בעיבוד התשובה. הנתונים שכבר נשמרו נשמרו. אפשר לנסות שוב בעוד רגע.";
 const ERR_SUFFIX = "(ההמשך נקטע עקב תקלה זמנית. אפשר לנסות שוב.)";
+const ERR_BOTH_BLOCKED = "השירות עמוס כרגע גם בגיבוי. הנתונים שנשמרו נשמרו. אפשר לנסות שוב בעוד מספר דקות.";
 function nlErr(): string { return "\n\n"; }
 
 /** שמירת הודעת המשתמש בלבד (idempotent), כש-המודל נכשל לפני אירוע הסיום. */
@@ -53,6 +53,20 @@ function sanitizeError(e: unknown): string {
     .replace(/AQ\.[A-Za-z0-9._-]{10,}/g, "AQ.***")
     .replace(/(key|token|password)[=:]\S+/gi, "$1=***")
     .slice(0, 200);
+}
+
+/** כשל ספק זמני שמצדיק גיבוי: 5xx/overloaded/timeout/unavailable. לא שגיאת קוד/כלי. */
+function isProviderUnavailable(e: unknown): boolean {
+  let cur: unknown = e; const parts: string[] = [];
+  for (let i = 0; i < 4 && cur; i++) {
+    if (cur instanceof Error) {
+      parts.push(cur.message);
+      const sc = (cur as { statusCode?: number }).statusCode;
+      if (sc && sc >= 500) return true;
+      cur = (cur as { cause?: unknown }).cause;
+    } else { parts.push(String(cur)); break; }
+  }
+  return /overloaded|unavailable|503|502|500|timeout|timed out|ETIMEDOUT|ECONNRESET|service is temporarily/i.test(parts.join(" "));
 }
 
 /**
@@ -79,6 +93,9 @@ async function handleChat(req: Request): Promise<Response> {
     return new Response(JSON.stringify({ error: "auth_required" }), { status: 401, headers: { "content-type": "application/json" } });
   }
   const owner = user.id;
+  // תקציב *לכל בקשה* (לא מצטבר על פני מופע חם): מונע נעילה קבועה של השיחה
+  // כשסכום האומדן על המופע חוצה תקרה. תור בודד עדיין חסום ע"י maxSteps/maxOutputTokens.
+  const budget: ChatBudgetState = { estimatedUsd: 0, calls: 0 };
   const body = (await req.json()) as { messages: UIMessage[]; caseId?: string };
   const messages = body.messages;
   const store = await cookies();
@@ -159,7 +176,10 @@ async function handleChat(req: Request): Promise<Response> {
     let cardPending = false;
     let cardSent = false;
     const fireCard = () => { if (cardSent) return; if (emitCard) { cardSent = true; emitCard(); } else { cardPending = true; } };
-    const result = streamChat({ service, ctx, state, messages: modelMessages, budget, onComparisonReady: fireCard });
+    // מעקב אם רצה פעולה/כלי (כתיבה/פנייה) - גיבוי מותר *רק* אם כלום עדיין לא בוצע,
+    // כדי לא לשכפל כתיבות/פניות. provider error בלבד מפעיל גיבוי - לא שגיאת קוד/כלי/מסד.
+    let toolRan = false;
+    const result = streamChat({ service, ctx, state, messages: modelMessages, budget, onComparisonReady: fireCard, onToolCalled: () => { toolRan = true; } });
     // consumeStream (ללא await): מסיר backpressure כך שה-LLM רץ עד הסוף גם אם
     // הלקוח מתנתק -> ה-merge מסתיים והשמירה תתבצע. (ניתוק לקוח בלבד; לא קריסת שרת.)
     void result.consumeStream();
@@ -179,24 +199,46 @@ async function handleChat(req: Request): Promise<Response> {
         // כשל מודל אינו "שמירה שנכשלה", ולהפך. שומרים טקסט חלקי אם הגיע.
         let assistantText = "";
         let answerOk = true;
+        let fellBack = false;
         try {
           assistantText = (await result.text) ?? "";
         } catch (e) {
           answerOk = false;
-          console.warn(`[chat] path=B model stream failed: ${sanitizeError(e)}`);
+          const providerFail = isQuotaError(e) || isProviderUnavailable(e);
+          console.warn(`[chat] path=B primary(claude) failed providerFail=${providerFail} toolRan=${toolRan}: ${sanitizeError(e)}`);
+          // גיבוי Gemini (ניסיון *אחד*) רק אם: כשל ספק (מכסה/זמינות), *ולא* רצה כלי
+          // (אין סיכון לשכפל כתיבה/פנייה), ויש מפתח Gemini. לא מסתיר שגיאת קוד/כלי/מסד.
+          const fb = providerFail && !toolRan ? getFallbackChatModel() : null;
+          if (fb) {
+            try {
+              console.log(`[chat] path=B fallback -> ${getFallbackChatModelId()} (one attempt)`);
+              const fbBudget: ChatBudgetState = { estimatedUsd: 0, calls: 0 };
+              const fbRes = streamChat({ service, ctx, state, messages: modelMessages, budget: fbBudget, model: fb, onComparisonReady: fireCard });
+              void fbRes.consumeStream();
+              writer.merge(fbRes.toUIMessageStream({ sendFinish: false }));
+              assistantText = (await fbRes.text) ?? "";
+              answerOk = assistantText.trim().length > 0;
+              fellBack = true;
+            } catch (e2) {
+              // גם הגיבוי נכשל (למשל מכסת Gemini חסומה) -> הודעה ברורה, סיום המתנה.
+              console.warn(`[chat] path=B fallback(gemini) also failed: ${sanitizeError(e2)}`);
+            }
+          }
         }
         // כשל מודל *או* תשובה ריקה -> הודעת שגיאה ברורה (לא תור ריק שקט).
         // טקסט חלקי שכבר הוזרם נשמר כפי שהוא; אם אין טקסט כלל, מזריקים הודעה.
         const hadText = assistantText.trim().length > 0;
         if (!answerOk || !hadText) {
+          // אם גם הגיבוי נוצל/חסום - הודעה ברורה שמסיימת את ההמתנה, בלי ניסיון נוסף.
+          const baseErr = fellBack ? ERR_BOTH_BLOCKED : ERR_FULL;
           const errText = hadText
             ? assistantText + nlErr() + ERR_SUFFIX
-            : ERR_FULL;
+            : baseErr;
           if (!hadText) {
             // אין טקסט כלל -> כותבים הודעת שגיאה כחלק טקסט חדש (הממשק יציג אותה).
             const eid = "t-err-" + randomUUID();
             writer.write({ type: "text-start", id: eid });
-            writer.write({ type: "text-delta", id: eid, delta: ERR_FULL });
+            writer.write({ type: "text-delta", id: eid, delta: baseErr });
             writer.write({ type: "text-end", id: eid });
           }
           assistantText = errText;

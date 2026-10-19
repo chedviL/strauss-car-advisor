@@ -202,8 +202,10 @@ export interface StreamChatArgs {
 }
 
 /** מריץ תור שיחה עם streaming וכלים. מחזיר את תוצאת streamText. */
-export function streamChat(args: StreamChatArgs & { onMetrics?: (m: TurnMetrics) => void; onComparisonReady?: () => void }) {
+export function streamChat(args: StreamChatArgs & { onMetrics?: (m: TurnMetrics) => void; onComparisonReady?: () => void; onToolCalled?: () => void; model?: import("ai").LanguageModel }) {
   const { service, ctx, state, messages, budget, onMetrics, onComparisonReady } = args;
+  const modelOverride = args.model;
+  const onToolCalled = args.onToolCalled;
   if (budget.estimatedUsd >= BUDGET.maxEstimatedUsd) {
     throw new Error(
       `תקציב הניסוי המוערך (~$${BUDGET.maxEstimatedUsd}) נוצל. צריכה מוערכת: $${budget.estimatedUsd.toFixed(4)} (אומדן, לא תקרת חיוב קשיחה).`,
@@ -218,7 +220,7 @@ export function streamChat(args: StreamChatArgs & { onMetrics?: (m: TurnMetrics)
   const callsBefore = budget.calls;
 
   return streamText({
-    model: getModel(),
+    model: modelOverride ?? getModel(),
     system,
     messages,
     tools: buildTools(service, ctx),
@@ -244,6 +246,7 @@ export function streamChat(args: StreamChatArgs & { onMetrics?: (m: TurnMetrics)
           try { onComparisonReady?.(); } catch { /* best-effort */ }
         }
       }
+      if ((step.toolCalls ?? []).length > 0) { try { onToolCalled?.(); } catch { /* best-effort */ } }
       for (const call of step.toolCalls ?? []) {
         const key = call.toolName + ":" + JSON.stringify(call.input);
         if (seenToolCalls.has(key)) {
