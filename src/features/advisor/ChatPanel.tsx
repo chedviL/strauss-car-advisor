@@ -48,6 +48,12 @@ export function ChatPanel({ initialMessages = [], showExamples = false }: ChatPa
   useEffect(() => {
     if (cardEvents > lastCardEvents.current) {
       lastCardEvents.current = cardEvents;
+      // מדידה אופציונלית (?cardtiming=1): חותמת זמן בעת קבלת אירוע הכרטיס,
+      // כדי למדוד בדפדפן את הפער בין קבלת האירוע לבין רינדור הכרטיס בפועל.
+      if (typeof window !== "undefined" && new URLSearchParams(window.location.search).has("cardtiming")) {
+        // eslint-disable-next-line no-console
+        console.log(`[card] event received at ${Math.round(performance.now())}ms -> router.refresh()`);
+      }
       router.refresh();
     }
   }, [cardEvents, router]);
