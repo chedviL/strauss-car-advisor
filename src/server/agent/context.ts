@@ -72,6 +72,21 @@ export function buildContext(state: CaseState): string {
     return `  - [${q.id}] ${q.type}: ממתינה לתשובת נציג. אפשר להמשיך בבירורים אחרים בינתיים.`;
   });
 
+  // סטטוס זרימת התלוש - כדי שהמודל יידע אם הנתונים כבר אושרו/הוחלו, בלי לקבל
+  // את המסמך עצמו שוב. אחרי apply אסור לומר 'לא הגיע תלוש'; לפני apply החילוץ
+  // אינו עובדות מאושרות.
+  const ps = state.payslipStatus;
+  const payslipLine =
+    ps === "applied" ? "תלוש: הועלה, חולץ, ואושר/הוחל. העובדות שלמעלה כוללות את נתוני התלוש. אל תאמר/י שלא הגיע תלוש."
+    : ps === "extracted" ? "תלוש: הועלה וחולץ, אך *טרם אושר*. אל תתייחס/י לחילוץ כעובדות מאושרות עד שהמשתמש/ת מאשר/ת (הערכים מוצגים לאישור/עריכה בממשק)."
+    : ps === "uploaded" ? "תלוש: הועלה וממתין לחילוץ. אל תתייחס/י אליו כאל עובדות עדיין."
+    : "תלוש: לא הועלה.";
+  // בקשת השוואה שנעצרה על חוסר-נתונים (עמידה, שורדת רענון) - יש להשלים ולהמשיך.
+  const pend = state.case.pendingRequest;
+  const pendLine = pend && pend.kind === "compare"
+    ? `בקשה ממתינה: השוואה (${pend.mode}${pend.vehicleCodes && pend.vehicleCodes.length ? ": " + pend.vehicleCodes.join(", ") : ""}) נעצרה על חוסר-נתונים. כשיש נתונים מאושרים - השלם/י את ההשוואה והצג/י כרטיס, בלי לבקש מהמשתמש/ת להתחיל מחדש.`
+    : "אין בקשה ממתינה.";
+
   const lines = [
     `# תמונת מצב התיק (מקור אמת: המסד; גרסת עובדות ${state.case.factsRevision})`,
     `## עובדות מאושרות`,
@@ -86,6 +101,9 @@ export function buildContext(state: CaseState): string {
     cmpLine,
     `## פניות לנציג`,
     ...(inqLines.length > 0 ? inqLines : ["  אין פניות."]),
+    `## תלוש ובקשה ממתינה`,
+    `  ${payslipLine}`,
+    `  ${pendLine}`,
   ];
   return lines.join("\n");
 }

@@ -107,10 +107,19 @@ export interface InquiryRecord {
   answeredAt: string | null;
 }
 
+/**
+ * סטטוס זרימת התלוש של התיק (לסנכרון הקשר השיחה). משקף את המסמך העדכני ביותר:
+ * none=לא הועלה; uploaded=הועלה, טרם חולץ; extracted=חולץ וממתין לאישור (לא עובדות
+ * מאושרות!); applied=אושר והוחל (העובדות עודכנו).
+ */
+export type PayslipStatus = "none" | "uploaded" | "extracted" | "applied";
+
 export interface CaseState {
   case: CaseRecord;
   facts: CaseFacts;
   scenarios: Scenario[];
   latestComparison: ComparisonRecord | null;
   openInquiries: InquiryRecord[];
+  /** סטטוס זרימת התלוש של המסמך העדכני (לסנכרון הקשר; ראו PayslipStatus). */
+  payslipStatus: PayslipStatus;
 }
