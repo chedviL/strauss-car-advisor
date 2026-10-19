@@ -11,7 +11,9 @@ import { NextResponse, type NextRequest } from "next/server";
 import { authConfigured, createAuthClient, type CookieToSet } from "./server/auth/supabase.js";
 import { userFromClient } from "./server/auth/claims.js";
 
-const PUBLIC_PATHS = ["/login"];
+// נתיבים ציבוריים ברמת ה-middleware. /api/worker אוכף הרשאה עצמאית (CRON_SECRET)
+// ולכן אינו עובר דרך שער הסשן; שאר ה-API דורש סשן מאומת.
+const PUBLIC_PATHS = ["/login", "/api/worker"];
 
 export async function middleware(req: NextRequest): Promise<NextResponse> {
   const { pathname } = req.nextUrl;
