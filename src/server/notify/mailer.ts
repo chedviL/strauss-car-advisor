@@ -54,6 +54,12 @@ async function transporter(): Promise<Transporter> {
   cached = nodemailer.createTransport({
     host: env.host, port: env.port, secure: env.secure,
     auth: { user: env.user, pass: env.pass },
+    // זמני ריצה מוגבלים: מחייבים את המשלוח המיידי (סמוך לתשובת הנציג, בתוך מחזור
+    // הבקשה של Next.js/Vercel) שלא לתלות את הפעולה אם ה-SMTP נתקע. בחריגה מזמן,
+    // sendMail מחזיר שגיאה (אינו זורק) והמשימה נשארת pending ל-retry ע"י המתזמן.
+    connectionTimeout: 10_000, // חיבור TCP
+    greetingTimeout: 10_000,   // קבלת banner מה-SMTP
+    socketTimeout: 20_000,     // חוסר-פעילות על ה-socket
   });
   return cached;
 }

@@ -128,10 +128,6 @@ export async function answerAsStaff(
     const kind = res.status === "applied" && res.recomputed === true ? "comparison_ready" : "answer_recorded";
     await enqueueNotification(conn, ownerId, { caseId: res.caseId, inquiryId, kind })
       .catch((e) => { console.warn("[notify] enqueue failed: " + (e instanceof Error ? e.name : "Error")); });
-    // משלוח מיידי best-effort סמוך לתשובה (אחרי שנשמרה). כשל/חוסר-הגדרה אינם
-    // מפילים את התשובה - המשימה נשארת ל-retry ע"י המתזמן.
-    await sendForInquiryNow(inquiryId)
-      .catch((e) => { console.warn("[notify] immediate send failed: " + (e instanceof Error ? e.name : "Error")); });
   }
   return res;
 }
