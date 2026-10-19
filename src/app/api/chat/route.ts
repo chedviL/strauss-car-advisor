@@ -150,7 +150,13 @@ async function handleChat(req: Request): Promise<Response> {
   // --- מסלול B: שיחה טבעית + כלים. ---
   try {
     console.log("[chat] path=B (full tool loop)");
-    const result = streamChat({ service, ctx, state, messages: modelMessages, budget });
+    // גשר לאירוע הכרטיס: onComparisonReady נורה בתוך הרַצת המודל (onStepFinish),
+    // שעשוי לקרות לפני שה-writer קיים. מחזיקים דגל/פונקציה ומשדרים ברגע שאפשר.
+    let emitCard: (() => void) | null = null;
+    let cardPending = false;
+    let cardSent = false;
+    const fireCard = () => { if (cardSent) return; if (emitCard) { cardSent = true; emitCard(); } else { cardPending = true; } };
+    const result = streamChat({ service, ctx, state, messages: modelMessages, budget, onComparisonReady: fireCard });
     // consumeStream (ללא await): מסיר backpressure כך שה-LLM רץ עד הסוף גם אם
     // הלקוח מתנתק -> ה-merge מסתיים והשמירה תתבצע. (ניתוק לקוח בלבד; לא קריסת שרת.)
     void result.consumeStream();
@@ -160,6 +166,10 @@ async function handleChat(req: Request): Promise<Response> {
       execute: async ({ writer }) => {
         // ממזגים את stream המודל (טקסט/כלים) -> מוזרם ללקוח מיד.
         writer.merge(result.toUIMessageStream({ sendFinish: false }));
+        // אירוע כרטיס: משדרים data-comparison מיד כשההשוואה נשמרה (מתוך onStepFinish),
+        // לפני סיום הניסוח. הלקוח מרענן את הכרטיס מהאירוע בלי להמתין לסוף התור.
+        emitCard = () => writer.write({ type: "data-comparison", data: { ready: true, scope: "turn" } });
+        if (cardPending && !cardSent) { cardSent = true; emitCard(); }
         // ממתינים לסיום המודל. *סטטוס התשובה* (המודל) נפרד מ*סטטוס השמירה* (persistence):
         // כשל מודל אינו "שמירה שנכשלה", ולהפך. שומרים טקסט חלקי אם הגיע.
         let assistantText = "";

@@ -13,6 +13,8 @@ export const searchVehiclesInput = z.object({
   group: z.enum(["א", "ב", "ג", "ד", "משפחתי"]).optional(),
   /** חיפוש לפי שם מסחרי (חלקי, case-insensitive). מחזיר vehicleCode מזוהה או שגיאת "עמום/לא נמצא". */
   name: z.string().optional(),
+  /** זיהוי *כמה* רכבים בקריאה אחת (חוסך סבב): כל שם מזוהה בנפרד (found/ambiguous/not_found). */
+  names: z.array(z.string().min(1)).min(1).optional(),
 });
 export type SearchVehiclesInput = z.infer<typeof searchVehiclesInput>;
 
@@ -38,6 +40,23 @@ export async function searchVehicles(
   if (!occupation) {
     // אין עיסוק ואין קבוצה -> באמת חסר מידע לקביעת זכאות.
     return missing(["reportedGroup"], "כדי לבדוק זכאות לרכבים צריך לדעת את קבוצת הזכאות (או את העיסוק)");
+  }
+  // זיהוי מרובה-שמות בקריאה אחת: מצמצם סבב ספק מיותר כשמוזכרים שני רכבים
+  // (למשל "לעבור מ-X ל-Y"), בלי לאחד כתיבות ובלי לוותר על זיהוי מדויק פר-שם.
+  if (input.names && input.names.length > 0) {
+    const results = [] as Array<Record<string, unknown>>;
+    for (const q of input.names) {
+      const nr = await service.lookupVehicleByName(q, occupation);
+      if (nr.status === "found") {
+        const v = nr.vehicle;
+        results.push({ nameQuery: q, status: "found", vehicleCode: v.id, name: v.commercialName, group: v.group, propulsion: v.propulsion, valueOfUse: v.valueOfUse, eligibility: nr.eligibility, reasons: nr.reasons });
+      } else if (nr.status === "ambiguous") {
+        results.push({ nameQuery: q, status: "ambiguous", candidates: nr.matches.map((v) => ({ vehicleCode: v.id, name: v.commercialName, group: v.group })) });
+      } else {
+        results.push({ nameQuery: q, status: "not_found", candidates: [] });
+      }
+    }
+    return ok({ status: "multi", results }, { message: "זוהו " + results.length + " שמות בקריאה אחת." });
   }
   // זיהוי רכב לפי שם: מחזיר vehicleCode מאומת, or "ambiguous/not_found" — אין ניחוש.
   if (input.name) {
