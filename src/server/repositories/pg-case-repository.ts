@@ -179,7 +179,11 @@ export class PgCaseRepository implements CaseRepository {
       throw new Error("upsertAlternative requires role=alternative");
     }
     return this.withOwner(ownerId, async (c) => {
-      const owned = await c.query("select 1 from cases where id = $1", [caseId]);
+      // נעילת שורת התיק (FOR UPDATE) מסרלת upsert מקביל לאותו תיק: בלי זה שתי
+      // טרנזקציות קוראות "אין alternative" ושתיהן מכניסות -> כפילות. עם הנעילה
+      // השנייה ממתינה, רואה את השורה, ולוקחת את מסלול ה-UPDATE. (אינדקס ייחודי
+      // חלקי ב-0017 = הגנת-אמת נוספת ברמת המסד.)
+      const owned = await c.query("select 1 from cases where id = $1 for update", [caseId]);
       if (owned.rowCount === 0) throw new Error("case not found for owner");
       const existing = await c.query(
         "select * from scenarios where case_id = $1 and role = 'alternative'",

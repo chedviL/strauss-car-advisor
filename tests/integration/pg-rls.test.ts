@@ -212,7 +212,9 @@ run("Postgres RLS + בידוד + שחזור + מקביליות", () => {
         role: "alternative", route: "company_car", vehicleCode: code,
         participation: 300, maintenanceAllowance: 0,
       });
-    await Promise.allSettled([alt("CAR-10"), alt("CAR-11")]);
+    // חמש קריאות מקבילות: עם הנעילה (FOR UPDATE) + האינדקס הייחודי החלקי, לכל
+    // היותר alternative אחת נשארת. חלק מהקריאות עשויות להידחות - זה תקין.
+    await Promise.allSettled([alt("CAR-10"), alt("CAR-11"), alt("CAR-12"), alt("CAR-10"), alt("CAR-11")]);
     const state = await repo.getCaseState(created.case.id, owner);
     expect(state!.scenarios.filter((s) => s.role === "alternative").length).toBeLessThanOrEqual(1);
   });
