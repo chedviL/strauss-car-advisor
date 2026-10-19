@@ -28,7 +28,15 @@ export function ChatPanel({ initialMessages = [], showExamples = false }: ChatPa
   const [input, setInput] = useState("");
   const router = useRouter();
   const { messages, sendMessage, status, error } = useChat({
-    transport: new DefaultChatTransport({ api: "/api/chat" }),
+    transport: new DefaultChatTransport({
+      api: "/api/chat",
+      // שולחים את מזהה הבירור הפעיל מה-URL (?c=). הבעלות נאכפת בשרת; מזהה מהלקוח
+      // אינו הרשאה. בלי ?c= (מסך נקי) לא נשלח מזהה -> השרת פותח בירור חדש בהודעה.
+      prepareSendMessagesRequest: ({ body, messages: ms }) => {
+        const c = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("c") : null;
+        return { body: { ...body, messages: ms, ...(c ? { caseId: c } : {}) } };
+      },
+    }),
     messages: initialMessages as never,
   });
   const busy = status === "submitted" || status === "streaming";
@@ -36,8 +44,13 @@ export function ChatPanel({ initialMessages = [], showExamples = false }: ChatPa
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const wasBusy = useRef(false);
+  const cardRefreshedThisTurn = useRef(false);
   useEffect(() => {
-    if (wasBusy.current && status === "ready") router.refresh();
+    // רענון בסיום התור רק אם אירוע הכרטיס *לא* כבר רענן השיחה (מניעת שליפה כפולה).
+    if (wasBusy.current && status === "ready") {
+      if (!cardRefreshedThisTurn.current) router.refresh();
+      cardRefreshedThisTurn.current = false;
+    }
     wasBusy.current = busy;
   }, [status, busy, router]);
 
@@ -54,9 +67,22 @@ export function ChatPanel({ initialMessages = [], showExamples = false }: ChatPa
         // eslint-disable-next-line no-console
         console.log(`[card] event received at ${Math.round(performance.now())}ms -> router.refresh()`);
       }
+      cardRefreshedThisTurn.current = true;
       router.refresh();
     }
   }, [cardEvents, router]);
+
+  // סנכרון ה-URL למזהה הבירור הפעיל שהשרת החזיר (data-activeCase): כך רענון
+  // ישחזר את אותה שיחה. replaceState - בלי ניווט/טעינה מחדש.
+  const activeCase = latestActiveCase(messages as never);
+  useEffect(() => {
+    if (!activeCase || typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("c") !== activeCase) {
+      url.searchParams.set("c", activeCase);
+      window.history.replaceState(null, "", url.toString());
+    }
+  }, [activeCase]);
 
   // גלילה עדינה לתחתית כשמגיעות הודעות חדשות.
   useEffect(() => {
@@ -186,6 +212,18 @@ type SavePhaseUI = "saving" | "retrying" | "saved" | "failed" | null;
 // מצב השמירה של התור האחרון מתוך data-saveStatus בהודעת העוזר האחרונה.
 // ה-SDK ממפה data-part מסוג "saveStatus" ל-part.type === "data-saveStatus";
 // ה-part האחרון משקף את ה-phase העדכני ביותר (saving -> retrying -> saved/failed).
+// מחזיר את מזהה הבירור הפעיל האחרון מאירועי data-activeCase (לסנכרון ה-URL).
+function latestActiveCase(messages: Array<{ parts?: Array<Record<string, unknown>> }>): string | null {
+  for (let i = (messages?.length ?? 0) - 1; i >= 0; i--) {
+    const parts = messages[i]?.parts ?? [];
+    for (let j = parts.length - 1; j >= 0; j--) {
+      const part = parts[j] as { type?: string; data?: { caseId?: string } };
+      if (part.type === "data-activeCase" && part.data?.caseId) return part.data.caseId;
+    }
+  }
+  return null;
+}
+
 // סופר את אירועי data-comparison בכל ההודעות (part.type === "data-comparison").
 // עלייה במספר = כרטיס חדש נשמר בשרת -> רענון מיידי.
 function countComparisonParts(messages: Array<{ parts?: Array<Record<string, unknown>> }>): number {

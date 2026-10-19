@@ -79,21 +79,23 @@ async function handleChat(req: Request): Promise<Response> {
     return new Response(JSON.stringify({ error: "auth_required" }), { status: 401, headers: { "content-type": "application/json" } });
   }
   const owner = user.id;
-  const { messages }: { messages: UIMessage[] } = await req.json();
+  const body = (await req.json()) as { messages: UIMessage[]; caseId?: string };
+  const messages = body.messages;
   const store = await cookies();
-  let caseId = store.get("strauss_case")?.value ?? null;
   const service = caseService();
-
-  // שימוש אמיתי: אם אין תיק פעיל, פותחים תיק ריק מהשיחה (עובדות ריקות).
+  // הבירור הפעיל: מזהה מפורש מהלקוח (מה-URL ?c=) קודם - *מאומת בעלות בשרת* (מזהה
+  // מהלקוח אינו הרשאה: תיק שאינו של המשתמש -> לא נמצא, וייפתח חדש). עוגייה היא
+  // גיבוי תאימות בלבד. אין fallback שמחבר הודעה חדשה לתיק ישן של מסך נקי.
+  const reqCaseId = typeof body.caseId === "string" && /^[0-9a-f-]{36}$/i.test(body.caseId) ? body.caseId : null;
+  let caseId = reqCaseId;
   let state = caseId ? await service.getCaseState(caseId, owner) : null;
   if (!state) {
     const created = await service.startBlankCase(owner);
     caseId = created.case.id;
     state = created;
-    store.set("strauss_case", caseId, {
-      httpOnly: true, sameSite: "lax", path: "/", maxAge: 60 * 60 * 24 * 7,
-    });
   }
+  // סנכרון עוגייה למצב הפעיל (ל-payslip/תאימות). לא מקור ההרשאה.
+  store.set("strauss_case", caseId!, { httpOnly: true, sameSite: "lax", path: "/", maxAge: 60 * 60 * 24 * 7 });
   const cid = caseId!;
 
   const ctx: ToolContext = {
@@ -124,6 +126,7 @@ async function handleChat(req: Request): Promise<Response> {
           // 1) הטקסט נשלח מיד (לפני השמירה) -> אין עיכוב להופעת הטקסט.
           const id = "t-" + randomUUID();
           writer.write({ type: "start" });
+          writer.write({ type: "data-activeCase", data: { caseId: cid, scope: "turn" } });
           writer.write({ type: "text-start", id });
           writer.write({ type: "text-delta", id, delta: reply });
           writer.write({ type: "text-end", id });
@@ -166,6 +169,8 @@ async function handleChat(req: Request): Promise<Response> {
       execute: async ({ writer }) => {
         // ממזגים את stream המודל (טקסט/כלים) -> מוזרם ללקוח מיד.
         writer.merge(result.toUIMessageStream({ sendFinish: false }));
+        // מזהה הבירור הפעיל ללקוח - לסנכרון ה-URL ל-?c=<id> (רענון ישחזר).
+        writer.write({ type: "data-activeCase", data: { caseId: cid, scope: "turn" } });
         // אירוע כרטיס: משדרים data-comparison מיד כשההשוואה נשמרה (מתוך onStepFinish),
         // לפני סיום הניסוח. הלקוח מרענן את הכרטיס מהאירוע בלי להמתין לסוף התור.
         emitCard = () => writer.write({ type: "data-comparison", data: { ready: true, scope: "turn" } });

@@ -26,5 +26,5 @@ export async function continueInquiry(formData: FormData): Promise<void> {
   (await cookies()).set(CASE_COOKIE, state.case.id, {
     httpOnly: true, sameSite: "lax", path: "/", maxAge: 60 * 60 * 24 * 7,
   });
-  redirect("/");
+  redirect("/?c=" + state.case.id); // URL מפורש לשחזור ברענון
 }

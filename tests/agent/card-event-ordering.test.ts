@@ -97,3 +97,24 @@ describe("אירוע כרטיס דרך נתיב HTTP (SSE) עם ניסוח מד�
     expect(iCard).toBeLessThan(iText);        // לפני הניסוח הסופי
   });
 });
+
+describe("אירוע בירור פעיל (data-activeCase) לסנכרון URL", () => {
+  it("data-activeCase נשלח ומכיל caseId, לפני סיום התור", async () => {
+    const cid = "6c96f9ba-5747-40fc-9786-200745abec78";
+    const stream = createUIMessageStream({
+      execute: async ({ writer }) => {
+        writer.write({ type: "start" });
+        writer.write({ type: "data-activeCase", data: { caseId: cid, scope: "turn" } });
+        writer.write({ type: "text-start", id: "t1" });
+        writer.write({ type: "text-delta", id: "t1", delta: "תשובה" });
+        writer.write({ type: "text-end", id: "t1" });
+        writer.write({ type: "finish" });
+      },
+    });
+    const resp = createUIMessageStreamResponse({ stream });
+    const body = await resp.text();
+    expect(body.indexOf("data-activeCase")).toBeGreaterThanOrEqual(0);
+    expect(body).toContain(cid);
+    expect(body.indexOf("data-activeCase")).toBeLessThan(body.indexOf("finish"));
+  });
+});

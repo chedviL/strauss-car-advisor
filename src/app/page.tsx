@@ -6,7 +6,6 @@ import { redirect } from "next/navigation";
 import { AccountMenu } from "../features/auth/AccountMenu.js";
 import { myStaffScope } from "./actions.js";
 import { caseService } from "../server/web/service.js";
-import { cookies } from "next/headers";
 import { ComparisonView } from "../features/advisor/ComparisonView.js";
 import { DemoBadge } from "../features/advisor/DemoBadge.js";
 import { ChatPanel } from "../features/advisor/ChatPanel.js";
@@ -23,13 +22,18 @@ const BLANK_FACTS: CaseFacts = {
   bonus: null, pensionRate: null, trainingRate: null, creditPoints: null, qualifyingChildren: null,
 };
 
-export default async function Page() {
+export default async function Page({ searchParams }: { searchParams: Promise<{ c?: string }> }) {
   // הבעלות = המשתמש המאומת. הרשאה נקבעת בשרת; עוגיית strauss_case היא מצביע בלבד.
   const user = await getSessionUser();
   if (!user) redirect("/login");
   const owner = user.id;
   const staff = await myStaffScope();
-  const caseId = (await cookies()).get("strauss_case")?.value ?? null;
+  // הבירור הפעיל נקבע ע"י מזהה מפורש ב-URL (?c=<caseId>) בלבד - לא ע"י עוגייה.
+  // כניסה רגילה ל-/ (בלי הפרמטר) פותחת מסך שיחה נקי, בלי לשחזר שיחה קודמת ובלי
+  // למחוק אותה. רענון בתוך שיחה פעילה שומר את ?c= ולכן משחזר אותה.
+  const sp = await searchParams;
+  const rawC = (sp?.c ?? "").trim();
+  const caseId = /^[0-9a-f-]{36}$/i.test(rawC) ? rawC : null;
 
   let state: CaseState | null = null;
   let initialMessages: Array<{ id: string; role: string; parts: unknown }> = [];

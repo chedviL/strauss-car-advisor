@@ -21,7 +21,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ caseId: str
   const state = await caseService().getCaseState(caseId, user.id);
   if (!state) return to("/inquiries"); // לא בבעלות / לא קיים - בלי חשיפה
 
-  const res = to("/");
+  const res = to("/?c=" + caseId); // URL מפורש -> רענון ישחזר את הבירור
   res.cookies.set("strauss_case", caseId, {
     httpOnly: true, sameSite: "lax", path: "/", maxAge: 60 * 60 * 24 * 7,
   });
