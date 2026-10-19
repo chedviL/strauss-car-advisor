@@ -494,6 +494,16 @@ export class CaseService {
     return await this.repo.loadMessages(caseId, ownerId);
   }
 
+  /** מפת קוד-רכב -> שם מסחרי מהקטלוג, לתצוגה (CAR-10 -> ATTO 3). */
+  async vehicleNames(): Promise<Record<string, string>> {
+    const dataset = await this.getDataset();
+    const out: Record<string, string> = {};
+    for (const v of dataset.vehiclesByCode.values()) {
+      if (v.commercialName) out[v.id] = v.commercialName;
+    }
+    return out;
+  }
+
   /** קביעה/ניקוי של הבקשה הפעילה הממתינה לנתונים. */
   async setPendingRequest(caseId: string, ownerId: string, req: import("../../domain/contracts/case.js").PendingRequest | null) {
     return await this.repo.setPendingRequest(caseId, ownerId, req);

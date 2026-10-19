@@ -42,6 +42,7 @@ export default async function Page() {
   }
   const facts = state?.facts ?? BLANK_FACTS;
   const hasComparison = !!(state && state.latestComparison);
+  const vehicleNames = hasComparison ? await caseService().vehicleNames() : {};
   const hasHistory = initialMessages.length > 0;
 
   return (
@@ -69,7 +70,7 @@ export default async function Page() {
 
         {hasComparison && (
           <div className="anim-card">
-            <ComparisonView state={state!} employee={null} />
+            <ComparisonView state={state!} employee={null} vehicleNames={vehicleNames} />
           </div>
         )}
 

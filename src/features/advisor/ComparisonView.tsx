@@ -18,9 +18,11 @@ function shekel(s: string | number): string {
 export function ComparisonView({
   state,
   employee,
+  vehicleNames = {},
 }: {
   state: CaseState;
   employee: SampleEmployee | null;
+  vehicleNames?: Record<string, string>;
 }) {
   const [pending, startTransition] = useTransition();
   const cmp = state.latestComparison!;
@@ -40,8 +42,9 @@ export function ComparisonView({
     ...(cmp.result.alternative.assumptions ?? []),
   ].filter((v, i, a) => a.indexOf(v) === i);
 
-  const baseTitle = baseline.route === "waiver" ? "ויתור על רכב" : (baseline.vehicleCode ?? "המצב הנוכחי");
-  const altTitle = alternative.route === "waiver" ? "ויתור על רכב" : (alternative.vehicleCode ?? "החלופה");
+  const nameOf = (code: string | null, fallback: string) => (code ? (vehicleNames[code] ?? code) : fallback);
+  const baseTitle = baseline.route === "waiver" ? "ויתור על רכב" : nameOf(baseline.vehicleCode, "המצב הנוכחי");
+  const altTitle = alternative.route === "waiver" ? "ויתור על רכב" : nameOf(alternative.vehicleCode, "החלופה");
 
   return (
     <section className="card" style={{ padding: "var(--space-4)", position: "relative" }}>
