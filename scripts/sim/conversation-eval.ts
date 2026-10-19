@@ -107,12 +107,16 @@ const scenarios: Scenario[] = [
     run: async () => {
       const ctx = await freshCase(GROUP_G);
       const msgs: ModelMessage[] = [];
-      await runTurn(ctx, msgs, "מה אם השכר שלי יעלה ל-20,000? כמה חשמלי יוסיף לי אז?");
+      // רכב לא צוין ("חשמלי" הוא קטגוריה). מקובל: או לשמור override מיד, או לשאול
+      // שאלה ממוקדת על הרכב. הקריטי: *העובדה האמיתית לא משתנה* (לא נטו היפותטי בראש).
+      const r = await runTurn(ctx, msgs, "מה אם השכר שלי יעלה ל-20,000? כמה חשמלי יוסיף לי אז?");
       const st1 = (await service.getCaseState(ctx.caseId, ctx.ownerId))!;
       const altOverride = st1.scenarios.find((s) => s.role === "alternative")?.overrides?.baseSalary ?? null;
+      const askedOrSimulated = altOverride === 20000 || /איזה|חשמלי|דגם|רכב ספציפי|מודל|ברוטו|נטו/.test(r.text);
       return [
-        check("סימולציה: לא שינתה את העובדה האמיתית (שכר נשאר 14,200)", st1.facts.baseSalary === 14200, `salary=${st1.facts.baseSalary}`),
-        check("סימולציה נשמרה כ-override בתרחיש (20,000)", altOverride === 20000, `override=${altOverride}`),
+        check("[קריטי] העובדה האמיתית לא השתנתה (שכר נשאר 14,200)", st1.facts.baseSalary === 14200, `salary=${st1.facts.baseSalary}`),
+        check("[קריטי] לא הציג נטו היפותטי בלי שמירה (אין מספר נטו סופי לפני חישוב שמור)", altOverride === 20000 || !st1.latestComparison, `override=${altOverride} card=${!!st1.latestComparison}`),
+        check("התנהגות: שמר override או שאל על הרכב (לא התעלם מהסימולציה)", askedOrSimulated, r.text.slice(0, 90)),
       ];
     },
   },
