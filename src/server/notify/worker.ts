@@ -4,7 +4,7 @@
 // כספיים, שולח, ומסמן sent/failed. ניסיונות חוזרים: backoff מוכפל ב-claim.
 // רץ בחיבור worker (service role) שאינו כפוף ל-RLS.
 
-import { claimDueJobs, markSent, markFailed } from "./queue.js";
+import { claimDueJobs, claimJobByInquiry, markSent, markFailed, type DueJob } from "./queue.js";
 import { buildContent, caseLink } from "./content.js";
 import { sendMail, mailConfigured } from "./mailer.js";
 
@@ -36,19 +36,54 @@ export async function processNotifications(opts?: { limit?: number; baseUrl?: st
   let sent = 0, failed = 0, skipped = 0;
 
   for (const job of jobs) {
-    if (!configured) { await markFailed(workerConn, job.id, "mail_not_configured"); skipped++; continue; }
-    try {
-      const email = await lookupEmail(job.recipientUserId);
-      if (!email) { await markFailed(workerConn, job.id, "recipient_email_not_found"); failed++; continue; }
-      const link = caseLink(baseUrl || "", job.caseId);
-      const content = buildContent(job.kind, link);
-      const r = await sendMail({ to: email, subject: content.subject, text: content.text, html: content.html });
-      if (r.ok) { await markSent(workerConn, job.id); sent++; }
-      else { await markFailed(workerConn, job.id, r.error ?? "send_failed"); failed++; }
-    } catch (e) {
-      await markFailed(workerConn, job.id, e instanceof Error ? e.message : "worker_error").catch(() => {});
-      failed++;
-    }
+    const r = await sendOneJob(workerConn, job, baseUrl, configured);
+    if (r === "sent") sent++;
+    else if (r === "skipped") skipped++;
+    else failed++;
   }
   return { claimed: jobs.length, sent, failed, skipped, configured };
+}
+
+/**
+ * שולח משימה אחת ומסמן את תוצאתה. מופרד כדי שישמש גם את המסלול המיידי (סמוך
+ * לתשובת הנציג) וגם את המתזמן. *חלון הכפילות* (ראו docs): הסימון sent מתבצע
+ * רק אחרי ש-Gmail קיבל את המייל. אם השרת קורס בין קבלת המייל לסימון, המייל
+ * כבר נשלח אך המשימה תישאר pending ותישלח שוב בניסיון הבא. אין דה-דופ מוחלט.
+ */
+export async function sendOneJob(
+  workerConn: string, job: DueJob, baseUrl: string, configured: boolean,
+): Promise<"sent" | "failed" | "skipped"> {
+  if (!configured) { await markFailed(workerConn, job.id, "mail_not_configured"); return "skipped"; }
+  try {
+    const email = await lookupEmail(job.recipientUserId);
+    if (!email) { await markFailed(workerConn, job.id, "recipient_email_not_found"); return "failed"; }
+    const link = caseLink(baseUrl || "", job.caseId);
+    const content = buildContent(job.kind, link);
+    const r = await sendMail({ to: email, subject: content.subject, text: content.text, html: content.html });
+    if (r.ok) { await markSent(workerConn, job.id); return "sent"; }
+    await markFailed(workerConn, job.id, r.error ?? "send_failed");
+    return "failed";
+  } catch (e) {
+    await markFailed(workerConn, job.id, e instanceof Error ? e.message : "worker_error").catch(() => {});
+    return "failed";
+  }
+}
+
+/**
+ * ניסיון משלוח מיידי של ההתראה לבירור נתון, סמוך לתשובת הנציג (אחרי שנשמרה).
+ * best-effort ולא-חוסם: אם ה-SMTP/הרשת נכשלים, המשימה נשארת pending והמתזמן
+ * ישלח בהמשך. אינו זורק. דורש service role (worker connection).
+ */
+export async function sendForInquiryNow(inquiryId: string, opts?: { baseUrl?: string }): Promise<"sent" | "failed" | "skipped" | "no_job"> {
+  const workerConn = process.env.MIGRATION_DATABASE_URL ?? process.env.DATABASE_URL;
+  if (!workerConn) return "no_job";
+  const configured = mailConfigured();
+  const baseUrl = (opts?.baseUrl ?? process.env.APP_BASE_URL ?? "").trim();
+  try {
+    const job = await claimJobByInquiry(workerConn, inquiryId);
+    if (!job) return "no_job";
+    return await sendOneJob(workerConn, job, baseUrl, configured);
+  } catch {
+    return "failed";
+  }
 }

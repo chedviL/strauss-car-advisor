@@ -11,7 +11,7 @@ import { PgCaseRepository } from "../../src/server/repositories/pg-case-reposito
 import { CaseService } from "../../src/server/services/case-service.js";
 import { findActiveDatasetId } from "../../src/server/services/dataset-provider.js";
 import { answerAsStaff } from "../../src/server/auth/staff.js";
-import { claimDueJobs, markFailed, enqueueNotification } from "../../src/server/notify/queue.js";
+import { claimDueJobs, claimJobByInquiry, markSent, markFailed, enqueueNotification } from "../../src/server/notify/queue.js";
 
 const APP = process.env.DATABASE_URL;
 const ADMIN = process.env.MIGRATION_DATABASE_URL;
@@ -120,22 +120,55 @@ run("תור התראות מול Postgres", () => {
   });
 
   it("claim + backoff: תפיסת משימה דוחה את next_attempt_at ומגדילה attempts; max -> failed", { timeout: 60000 }, async () => {
-    const e = await employeeWithInquiry();
-    const rep = uid(); await grantRep(rep, ["employee_participation"]);
-    await answerAsStaff(service, APP!, rep, e.inquiryId, { value: 900, note: null, effectiveFrom: null });
-    const claimed = await claimDueJobs(ADMIN!, 10);
-    const mine = claimed.find((j) => j.recipientUserId === e.owner);
+    // בודקים את מנגנון ה-claim בבידוד: יוצרים משימה ישירות (בלי המשלוח המיידי
+    // של answerAsStaff, שהיה תופס אותה כבר בזמן התשובה).
+    const owner = uid();
+    const created = await service.startBlankCase(owner);
+    // פנייה אמיתית נדרשת ל-FK; יוצרים דרך openInquiry על baseline.
+    const st0 = await service.getCaseState(created.case.id, owner);
+    const base = st0!.scenarios.find((s) => s.role === "baseline")!;
+    const { inquiry } = await service.openInquiry(created.case.id, owner, "employee_participation", base.id, { type: "employee_participation", factsRevision: st0!.case.factsRevision });
+    await enqueueNotification(APP!, owner, { caseId: created.case.id, inquiryId: inquiry.id, kind: "comparison_ready" });
+    const claimed = await claimDueJobs(ADMIN!, 20);
+    const mine = claimed.find((j) => j.recipientUserId === owner);
     expect(mine).toBeTruthy();
     expect(mine!.attempts).toBe(1);
-    // אחרי ה-claim, next_attempt_at בעתיד -> claim מיידי נוסף לא יתפוס אותה שוב.
-    const again = (await claimDueJobs(ADMIN!, 10)).find((j) => j.recipientUserId === e.owner);
-    expect(again).toBeFalsy();
-    // סימון כשל חוזר עד המיצוי -> status=failed, לא יישלח יותר.
-    await admin.query("update notification_jobs set attempts = max_attempts where recipient_user_id = $1", [e.owner]);
+    const again = (await claimDueJobs(ADMIN!, 20)).find((j) => j.recipientUserId === owner);
+    expect(again).toBeFalsy(); // backoff דחה את הניסיון הבא
+    await admin.query("update notification_jobs set attempts = max_attempts where recipient_user_id = $1", [owner]);
     await markFailed(ADMIN!, mine!.id, "smtp down");
-    const st = await admin.query("select status, last_error from notification_jobs where id = $1", [mine!.id]);
-    expect(st.rows[0].status).toBe("failed");
-    expect(st.rows[0].last_error).toContain("smtp");
+    const stf = await admin.query("select status, last_error from notification_jobs where id = $1", [mine!.id]);
+    expect(stf.rows[0].status).toBe("failed");
+    expect(stf.rows[0].last_error).toContain("smtp");
+  });
+
+  it("התאוששות מקריסה אחרי claim: המשימה חוזרת לזמינות אחרי החלון, ואז נשלחת", { timeout: 60000 }, async () => {
+    const owner = uid();
+    const created = await service.startBlankCase(owner);
+    const st0 = await service.getCaseState(created.case.id, owner);
+    const base = st0!.scenarios.find((s) => s.role === "baseline")!;
+    const { inquiry } = await service.openInquiry(created.case.id, owner, "employee_participation", base.id, { type: "employee_participation", factsRevision: st0!.case.factsRevision });
+    await enqueueNotification(APP!, owner, { caseId: created.case.id, inquiryId: inquiry.id, kind: "comparison_ready" });
+    const inquiryId = inquiry.id;
+    // claim ראשון (כאילו נתפס, ואז השרת "קרס" לפני markSent): המשימה נשארת pending.
+    const first = await claimJobByInquiry(ADMIN!, inquiryId);
+    expect(first).toBeTruthy();
+    let row = (await admin.query("select status, attempts, next_attempt_at > now() as future from notification_jobs where id=$1", [first!.id])).rows[0];
+    expect(row.status).toBe("pending");   // לא אבוד - עדיין ממתינה
+    expect(row.attempts).toBe(1);
+    expect(row.future).toBe(true);        // backoff דחה את הניסיון הבא
+    // claim מיידי נוסף לא יתפוס אותה (בתוך חלון ה-backoff) - אין משלוח כפול מיידי.
+    expect(await claimJobByInquiry(ADMIN!, inquiryId)).toBeNull();
+    // מדמים שחלון ה-backoff עבר (במקום להמתין): המשימה חוזרת לזמינות.
+    await admin.query("update notification_jobs set next_attempt_at = now() - interval '1 second' where id=$1", [first!.id]);
+    const second = await claimJobByInquiry(ADMIN!, inquiryId);
+    expect(second).toBeTruthy();
+    expect(second!.attempts).toBe(2);      // המשך מהמונה, לא מתאפס
+    // סימון הצלחה (כאילו נשלח כעת) -> לא יישלח יותר.
+    await markSent(ADMIN!, second!.id);
+    expect(await claimJobByInquiry(ADMIN!, inquiryId)).toBeNull();
+    const done = (await admin.query("select status from notification_jobs where id=$1", [first!.id])).rows[0];
+    expect(done.status).toBe("sent");
   });
 
   it("enqueue ישיר: סוג לא חוקי נדחה ע\"י CHECK (הגנת מסד)", { timeout: 40000 }, async () => {

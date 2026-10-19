@@ -79,6 +79,40 @@ export async function claimDueJobs(workerConnection: string, limit = 10): Promis
   });
 }
 
+/**
+ * תופס משימה בודדת של בירור+סוג אם היא ממתינה והגיע זמנה (למשלוח מיידי סמוך
+ * לתשובה). אותה סמנטיקה כמו claimDueJobs: מגדיל attempts ודוחה next_attempt_at,
+ * עם FOR UPDATE SKIP LOCKED כדי שלא יתנגש עם מתזמן שרץ במקביל. מחזיר null אם
+ * אין משימה מתאימה או שכבר נתפסה. רץ בחיבור worker (service role).
+ */
+export async function claimJobByInquiry(workerConnection: string, inquiryId: string): Promise<DueJob | null> {
+  return withClient(workerConnection, async (c) => {
+    const r = await c.query(
+      `with due as (
+         select id from notification_jobs
+          where inquiry_id = $1 and status = 'pending' and next_attempt_at <= now()
+          order by next_attempt_at
+          for update skip locked
+          limit 1
+       )
+       update notification_jobs n
+          set attempts = n.attempts + 1,
+              next_attempt_at = now() + (interval '1 minute' * power(2, least(n.attempts, 6)))
+         from due
+        where n.id = due.id
+       returning n.id, n.recipient_user_id, n.case_id, n.inquiry_id, n.kind, n.attempts, n.max_attempts`,
+      [inquiryId],
+    );
+    if (r.rowCount === 0) return null;
+    const x = r.rows[0];
+    return {
+      id: x.id as string, recipientUserId: x.recipient_user_id as string,
+      caseId: x.case_id as string, inquiryId: (x.inquiry_id as string) ?? null,
+      kind: x.kind as NotifyKind, attempts: x.attempts as number, maxAttempts: x.max_attempts as number,
+    };
+  });
+}
+
 export async function markSent(workerConnection: string, id: string): Promise<void> {
   await withClient(workerConnection, async (c) => {
     await c.query("update notification_jobs set status = 'sent', sent_at = now(), last_error = null where id = $1", [id]);

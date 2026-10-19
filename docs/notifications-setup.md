@@ -9,6 +9,9 @@
    - `answer_recorded` — כשהתשובה נרשמה אך טרם הוחלה (הקשר מיושן / תחולה עתידית /
      הערה בלבד). לעולם לא נכתב "ההשוואה מוכנה".
 2. כשל במייל אינו מבטל את התשובה/החישוב שכבר נשמרו. המשימה נשארת ותנוסה שוב.
+   *מיד אחרי שמירת התשובה* מתבצע ניסיון משלוח מיידי (best-effort, לא-חוסם) כדי
+   שהמייל הראשון יצא סמוך לתשובה בלי להמתין למתזמן. אם הוא נכשל או שה-SMTP לא
+   מוגדר, המשימה נשארת pending והמתזמן ישלח בניסיון הבא.
 3. ה-worker (`/api/worker/notifications`) תופס משימות שהגיע זמנן, מברר את המייל
    המאומת של הנמען (Supabase Admin), שולח, ומסמן sent/failed. המייל עצמו אינו נשמר אצלנו.
 4. הקישור עובר דרך `/go/case/<id>` — מחייב התחברות ומאמת בעלות לפני פתיחת הבירור.
@@ -32,20 +35,54 @@ APP_BASE_URL=https://strauss-car-advisor.vercel.app
 - `MAIL_FROM` חייב להשתמש בכתובת ה-Gmail עצמה (Gmail לא מאפשר התחזות לכתובת אחרת).
 - `SMTP_PASS` = סיסמת אפליקציה (App Password), לא הסיסמה הרגילה. אותה סיסמה ששמת ב-Supabase תעבוד.
 
-## הפעלת הניסיונות החוזרים בפריסה (Vercel Cron)
-`vercel.json` כבר כולל cron שמריץ את ה-worker כל 2 דקות:
-```json
-"crons": [{ "path": "/api/worker/notifications", "schedule": "*/2 * * * *" }]
+## הפעלת הניסיונות החוזרים בפריסה (מתזמן חיצוני חינמי)
+בוטל ה-cron מ-`vercel.json` (ב-Hobby ה-cron מוגבל לרוב להרצה יומית, ואין כוונה
+לשדרג לתשלום). הניסיון הראשון כבר יוצא *מיד* אחרי התשובה (משלוח מיידי), והניסיונות
+החוזרים מופעלים ממתזמן חיצוני חינמי שקורא לנתיב ה-worker.
+
+הנתיב: `POST https://strauss-car-advisor.vercel.app/api/worker/notifications`
+עם הכותרת `Authorization: Bearer <CRON_SECRET>`. הנתיב פתוח למתזמן (ב-PUBLIC_PATHS
+של ה-middleware, לא נחסם בשער ההתחברות של המשתמשים), אך מוגן ע"י `CRON_SECRET`:
+בלי הכותרת הנכונה הוא מחזיר 401 ולא רץ.
+
+### אפשרות א' — cron-job.org (הכי פשוט)
+1. צור חשבון חינמי ב-cron-job.org.
+2. Create cronjob → URL = הנתיב למעלה, Method = POST.
+3. Headers → הוסף `Authorization` עם הערך `Bearer <CRON_SECRET>`.
+4. Schedule = כל 2–5 דקות. שמור.
+
+### אפשרות ב' — GitHub Actions (אם המאגר ב-GitHub)
+צור `.github/workflows/notify-worker.yml`:
+```yaml
+name: notify-worker
+on:
+  schedule:
+    - cron: "*/5 * * * *"   # כל 5 דקות (המינימום הנתמך ב-Actions)
+  workflow_dispatch: {}
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - run: >
+          curl -fsS -X POST
+          -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
+          https://strauss-car-advisor.vercel.app/api/worker/notifications
 ```
-- Vercel Cron שולח את `CRON_SECRET` בכותרת `Authorization: Bearer`. בלי `CRON_SECRET`
-  מוגדר, ה-worker מחזיר 401 ולא רץ (אין הפעלה פתוחה).
-- ניסיונות חוזרים: כל תפיסה מגדילה `attempts` ודוחה את הניסיון הבא ב-backoff מוכפל
-  (1,2,4,8… דקות). אחרי `max_attempts` (5) המשימה מסומנת `failed` וגלויה לתפעול.
-- להרצה ידנית (בדיקה): `POST /api/worker/notifications` עם הכותרת
-  `Authorization: Bearer <CRON_SECRET>`.
-- **הערה על תוכנית Vercel**: cron ב-Hobby מוגבל (לרוב הרצה יומית). אם נדרש כל 2 דקות,
-  צריך תוכנית Pro, או להפעיל את ה-worker ממתזמן חיצוני (GitHub Actions/cron-job.org)
-  שקורא ל-POST עם ה-Bearer. הלוגיקה זהה.
+והוסף `CRON_SECRET` כ-Repository Secret (Settings → Secrets and variables → Actions),
+עם *אותו* ערך שב-Vercel. הערה: תזמון ב-Actions לא מדויק לשנייה ועשוי להתעכב בדקות.
+
+### ניסיונות חוזרים ומניעת כפילות
+- כל תפיסה מגדילה `attempts` ודוחה את הניסיון הבא ב-backoff מוכפל (1,2,4,8… דקות).
+  אחרי `max_attempts` (5) המשימה מסומנת `failed` וגלויה לתפעול.
+- `FOR UPDATE SKIP LOCKED` מונע שני תהליכים מלתפוס את אותה משימה במקביל (למשל
+  המשלוח המיידי והמתזמן), כך שלא נשלח פעמיים בו-זמנית.
+
+### מגבלת כפילות ידועה (לא דה-דופ מוחלט)
+`SKIP LOCKED` אינו הבטחה למניעת *כל* כפילות. סימון `sent` מתבצע רק *אחרי*
+ש-Gmail קיבל את המייל. אם Gmail קיבל את המייל אך השרת קרס/נקטע *לפני* הסימון,
+המשימה תישאר `pending`, והניסיון הבא ישלח שוב — כלומר ייתכן מייל כפול בודד
+בתרחיש קריסה נדיר זה. זו החלטה מודעת: עדיף מייל כפול נדיר על פני אובדן התראה.
+לא מומש דה-דופ חזק (כמו idempotency key אצל ספק המייל) כי אינו נדרש כרגע.
 
 ## בדיקה אמיתית (בתיאום)
 משלוח המייל האמיתי טרם נבדק. נבצע אותו למייל שלך: נציג יענה לבירור, ונוודא שהמייל
