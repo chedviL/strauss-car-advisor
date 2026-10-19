@@ -76,10 +76,28 @@ export async function compareScenarios(
     };
   }
 
+  // בקשת השוואה עמידה (שורדת רענון/התארכות שיחה) - מאפשרת המשך אחרי השלמת חוסר,
+  // גם במסלול B. explicit: מזהי הרכבים שהתבקשו; discover: סריקה + דגלים.
+  type PendingReq = import("../../../domain/contracts/case.js").PendingRequest;
+  const pendingSpec: PendingReq = input.mode === "explicit"
+    ? {
+        kind: "compare", mode: "explicit",
+        vehicleCodes: (input.candidates ?? []).map((c) => c.vehicleCode).filter((v): v is string => !!v),
+      }
+    : {
+        kind: "compare", mode: "discover",
+        ...(input.includeWaiver !== undefined ? { includeWaiver: input.includeWaiver } : {}),
+      };
+
   const result = await service.compareScenarios(ctx.caseId, ctx.ownerId, request);
   if (result.status === "missing_data") {
-    return missing(result.missingFields, "חסרים נתונים ל-baseline; אין להציג נטו עד השלמתם");
+    // נעצר על חוסר -> שומרים את הבקשה כפעילה (עמיד). המודל יראה אותה בהקשר
+    // וישלים אותה אחרי שיתקבלו הנתונים, בלי שהמשתמש/ת יבקש/תבקש שוב.
+    await service.setPendingRequest(ctx.caseId, ctx.ownerId, pendingSpec).catch(() => {});
+    return missing(result.missingFields, "חסרים נתונים ל-baseline; הבקשה נשמרה ותושלם כשהנתונים יגיעו");
   }
+  // הצליח -> מנקים בקשה ממתינה (הושלמה).
+  await service.setPendingRequest(ctx.caseId, ctx.ownerId, null).catch(() => {});
 
   // --- תמצית למודל (לא הפלט המלא). התוצאה המלאה שמורה במסד לפי compareRunId. ---
   // explicit: מחזירים את כל החלופות שהתבקשו. discover: מתחילים ב-5 מובילות.

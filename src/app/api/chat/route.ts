@@ -29,6 +29,11 @@ export const maxDuration = 60;
 // תקציב מצטבר לכל התהליך (אומדן, לא תקרת חיוב).
 const budget: ChatBudgetState = { estimatedUsd: 0, calls: 0 };
 
+// הודעות שגיאה ידידותיות למשתמש/ת (בלי ניסוח פנימי/טכני).
+const ERR_FULL = "מצטער/ת, משהו השתבש בעיבוד התשובה. הנתונים שכבר נשמרו נשמרו. אפשר לנסות שוב בעוד רגע.";
+const ERR_SUFFIX = "(ההמשך נקטע עקב תקלה זמנית. אפשר לנסות שוב.)";
+function nlErr(): string { return "\n\n"; }
+
 /** שמירת הודעת המשתמש בלבד (idempotent), כש-המודל נכשל לפני אירוע הסיום. */
 async function saveUserMessage(
   service: CaseService, caseId: string, owner: string, lastUser: UIMessage,
@@ -155,15 +160,43 @@ async function handleChat(req: Request): Promise<Response> {
       execute: async ({ writer }) => {
         // ממזגים את stream המודל (טקסט/כלים) -> מוזרם ללקוח מיד.
         writer.merge(result.toUIMessageStream({ sendFinish: false }));
-        // ממתינים לסיום המודל כדי לקבל את הטקסט המלא של העוזר לשמירה.
+        // ממתינים לסיום המודל. *סטטוס התשובה* (המודל) נפרד מ*סטטוס השמירה* (persistence):
+        // כשל מודל אינו "שמירה שנכשלה", ולהפך. שומרים טקסט חלקי אם הגיע.
         let assistantText = "";
-        try { assistantText = await result.text; } catch { assistantText = ""; }
+        let answerOk = true;
+        try {
+          assistantText = (await result.text) ?? "";
+        } catch (e) {
+          answerOk = false;
+          console.warn(`[chat] path=B model stream failed: ${sanitizeError(e)}`);
+        }
+        // כשל מודל *או* תשובה ריקה -> הודעת שגיאה ברורה (לא תור ריק שקט).
+        // טקסט חלקי שכבר הוזרם נשמר כפי שהוא; אם אין טקסט כלל, מזריקים הודעה.
+        const hadText = assistantText.trim().length > 0;
+        if (!answerOk || !hadText) {
+          const errText = hadText
+            ? assistantText + nlErr() + ERR_SUFFIX
+            : ERR_FULL;
+          if (!hadText) {
+            // אין טקסט כלל -> כותבים הודעת שגיאה כחלק טקסט חדש (הממשק יציג אותה).
+            const eid = "t-err-" + randomUUID();
+            writer.write({ type: "text-start", id: eid });
+            writer.write({ type: "text-delta", id: eid, delta: ERR_FULL });
+            writer.write({ type: "text-end", id: eid });
+          }
+          assistantText = errText;
+          writer.write({ type: "data-answerStatus", data: { phase: "error", scope: "turn" } });
+        } else {
+          writer.write({ type: "data-answerStatus", data: { phase: "ok", scope: "turn" } });
+        }
         const aid = "asst-" + randomUUID();
+        // שמירת הטקסט (כולל הודעת השגיאה אם זה המצב) - כדי שרענון יראה אותו.
         const saved = await saveTurnWithRetry(service, cid, owner, [
           ...(lastUser ? [{ role: "user" as const, clientMessageId: lastUser.id, content: lastUser.parts }] : []),
           { role: "assistant" as const, clientMessageId: aid, content: [{ type: "text", text: assistantText }] },
         ], (s) => writer.write({ type: "data-saveStatus", data: s }), "path=B");
         writer.write({ type: "data-saveStatus", data: { phase: saved ? "saved" : "failed", scope: "turn" } satisfies SaveStatusData });
+        // סיום מצב ההמתנה תמיד (הצלחה או כשל).
         writer.write({ type: "finish" });
       },
     });
