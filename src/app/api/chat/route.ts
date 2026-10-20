@@ -32,6 +32,11 @@ export const maxDuration = 60;
 const ERR_FULL = "מצטער/ת, משהו השתבש בעיבוד התשובה. הנתונים שכבר נשמרו נשמרו. אפשר לנסות שוב בעוד רגע.";
 const ERR_SUFFIX = "(ההמשך נקטע עקב תקלה זמנית. אפשר לנסות שוב.)";
 const ERR_BOTH_BLOCKED = "השירות עמוס כרגע גם בגיבוי. הנתונים שנשמרו נשמרו. אפשר לנסות שוב בעוד מספר דקות.";
+
+// cooldown חיוב ל-Claude: אחרי כשל חיוב, מדלגים על Claude ל-5 דקות (לכל מופע חם)
+// כדי לא לנסות-ולהיכשל בכל הודעה. פג מעצמו (בדיקת התאוששות) ו-cold-start מאפס.
+const CLAUDE_BILLING_COOLDOWN_MS = 5 * 60 * 1000;
+let claudeBillingBlockedUntil = 0;
 function nlErr(): string { return "\n\n"; }
 
 /** שמירת הודעת המשתמש בלבד (idempotent), כש-המודל נכשל לפני אירוע הסיום. */
@@ -197,8 +202,21 @@ async function handleChat(req: Request): Promise<Response> {
     // כדי לא לשכפל כתיבות/פניות. provider error בלבד מפעיל גיבוי - לא שגיאת קוד/כלי/מסד.
     let toolRan = false;
     let primaryError: unknown = null;
-    const result = streamChat({ service, ctx, state, messages: modelMessages, budget, onComparisonReady: fireCard, onToolCalled: () => { toolRan = true; }, onProviderError: (pe) => { if (!primaryError) primaryError = pe; } });
-    void Promise.resolve(result.consumeStream()).catch((err) => { if (!primaryError) primaryError = err; });
+    let firstChunk = false;
+    // cooldown חיוב: אם Claude נחסם בחיוב לאחרונה, מדלגים עליו ישירות לגיבוי כדי
+    // לא לנסות-ולהיכשל בכל הודעה. פג אחרי CLAUDE_BILLING_COOLDOWN_MS (בדיקת התאוששות).
+    const claudeBlocked = Date.now() < claudeBillingBlockedUntil;
+    let resolveFirst: (() => void) | null = null;
+    const firstOrError = new Promise<void>((res) => { resolveFirst = res; });
+    const result = claudeBlocked ? null : streamChat({
+      service, ctx, state, messages: modelMessages, budget,
+      onComparisonReady: fireCard,
+      onToolCalled: () => { toolRan = true; },
+      onFirstChunk: () => { firstChunk = true; resolveFirst?.(); },
+      onProviderError: (pe) => { if (!primaryError) primaryError = pe; resolveFirst?.(); },
+    });
+    if (result) void Promise.resolve(result.consumeStream()).catch((err) => { if (!primaryError) primaryError = err; resolveFirst?.(); });
+    else console.log(`[chat] reqId=${reqId} skipping claude (billing cooldown active) -> fallback`);
 
     const stream = createUIMessageStream({
       originalMessages: messages,
@@ -208,47 +226,52 @@ async function handleChat(req: Request): Promise<Response> {
       },
       execute: async ({ writer }) => {
         writer.write({ type: "start" });
-        // מזהה הבירור הפעיל ללקוח - לסנכרון ה-URL ל-?c=<id> (רענון ישחזר).
         writer.write({ type: "data-activeCase", data: { caseId: cid, scope: "turn" } });
         emitCard = () => writer.write({ type: "data-comparison", data: { ready: true, scope: "turn" } });
         if (cardPending && !cardSent) { cardSent = true; emitCard(); }
-        // *לא ממזגים את זרם ה-primary לפני שידוע שהצליח*: מיזוג זרם שנכשל פולט
-        // part מסוג error שמדליק את באנר השגיאה בלקוח (גם עם onError). לכן ממתינים
-        // לסיום ה-primary; בהצלחה כותבים את הטקסט, בכשל ספק עוברים לגיבוי.
         let assistantText = "";
-        let answerOk = true;
+        let answerOk = false;
         let fellBack = false;
-        try {
-          assistantText = (await result.text) ?? "";
-          answerOk = assistantText.trim().length > 0;
-        } catch (e) {
-          answerOk = false;
-          // מסווגים לפי שגיאת הספק האמיתית (primaryError מהזרם), לא לפי העטיפה 'No output'.
-          const perr = primaryError ?? e;
-          const providerFail = isQuotaError(perr) || isProviderUnavailable(perr) || isProviderBilling(perr);
-          console.warn(`[chat] reqId=${reqId} path=B primary(claude) failed providerFail=${providerFail} toolRan=${toolRan}: ${sanitizeError(perr)}`);
-          const fb = providerFail && !toolRan ? getFallbackChatModel() : null;
-          if (fb) {
-            try {
-              console.log(`[chat] reqId=${reqId} path=B fallback -> ${getFallbackChatModelId()} (one attempt)`);
-              const fbBudget: ChatBudgetState = { estimatedUsd: 0, calls: 0 };
-              const fbRes = streamChat({ service, ctx, state, messages: modelMessages, budget: fbBudget, model: fb, onComparisonReady: fireCard });
-              assistantText = (await fbRes.text) ?? ""; // buffer; לא ממזגים זרם שעלול להיכשל
-              answerOk = assistantText.trim().length > 0;
-              fellBack = true;
-            } catch (e2) {
-              console.warn(`[chat] reqId=${reqId} path=B fallback(gemini) also failed: ${sanitizeError(e2)}`);
-            }
+        // (1) מריצים את ה-primary (אם לא ב-cooldown) ו*מחכים לאות ראשון*: פלט אמיתי
+        // (text/tool) או שגיאת ספק. כך זורם חי כשיש פלט, אך נמנעים מלמזג זרם שנכשל.
+        if (result) {
+          await firstOrError;
+          if (firstChunk) {
+            // המודל התחיל להחזיר -> מזרימים חי (ללא רגרסיית streaming). שגיאה
+            // *אחרי* פלט חלקי -> לא מתחילים תור מחדש; מוצג כשל שניתן להתאוששות.
+            writer.merge(result.toUIMessageStream({ sendFinish: false, sendStart: false }));
+            try { assistantText = (await result.text) ?? ""; answerOk = assistantText.trim().length > 0; }
+            catch (e) { console.warn(`[chat] reqId=${reqId} path=B mid-stream fail after output (no restart): ${sanitizeError(primaryError ?? e)}`); answerOk = assistantText.trim().length > 0; }
+            if (cardPending && !cardSent) { cardSent = true; emitCard!(); }
           }
         }
-        // כותבים את הטקסט שהתקבל (primary שהצליח או גיבוי) כחלק טקסט אחד.
-        if (answerOk && assistantText.trim().length > 0) {
-          const tid = "t-" + randomUUID();
-          writer.write({ type: "text-start", id: tid });
-          writer.write({ type: "text-delta", id: tid, delta: assistantText });
-          writer.write({ type: "text-end", id: tid });
-          // אירוע כרטיס שוב (אם נשמרה השוואה בזמן ה-primary/גיבוי אך טרם נשלח).
-          if (cardPending && !cardSent) { cardSent = true; emitCard!(); }
+        // (2) כשל מוקדם (לפני פלט/כלי) *או* cooldown -> ניסיון גיבוי אחד, לפני כל פלט.
+        if (!firstChunk && !answerOk) {
+          const perr = primaryError;
+          const providerFail = claudeBlocked || isQuotaError(perr) || isProviderUnavailable(perr) || isProviderBilling(perr);
+          if (isProviderBilling(perr)) { claudeBillingBlockedUntil = Date.now() + CLAUDE_BILLING_COOLDOWN_MS; }
+          console.warn(`[chat] reqId=${reqId} path=B early-fail providerFail=${providerFail} claudeBlocked=${claudeBlocked} toolRan=${toolRan}: ${sanitizeError(perr)}`);
+          const fb = (providerFail && !toolRan) ? getFallbackChatModel() : null;
+          if (fb) {
+            console.log(`[chat] reqId=${reqId} path=B fallback -> ${getFallbackChatModelId()} (one attempt)`);
+            // אותה משמעת כמו ה-primary: *לא ממזגים את זרם הגיבוי לפני אות ראשון*,
+            // כדי שגם כשל גיבוי (מכסה/שגיאה) לא יפלוט error part ללקוח.
+            fellBack = true;
+            let fbFirst = false; let fbError: unknown = null;
+            let resolveFb: (() => void) | null = null;
+            const fbFirstOrError = new Promise<void>((res) => { resolveFb = res; });
+            const fbRes = streamChat({ service, ctx, state, messages: modelMessages, budget: { estimatedUsd: 0, calls: 0 }, model: fb, onComparisonReady: fireCard, onToolCalled: () => { toolRan = true; }, onFirstChunk: () => { fbFirst = true; resolveFb?.(); }, onProviderError: (pe) => { if (!fbError) fbError = pe; resolveFb?.(); } });
+            void Promise.resolve(fbRes.consumeStream()).catch((e) => { if (!fbError) fbError = e; resolveFb?.(); });
+            await fbFirstOrError;
+            if (fbFirst) {
+              writer.merge(fbRes.toUIMessageStream({ sendFinish: false, sendStart: false }));
+              try { assistantText = (await fbRes.text) ?? ""; } catch { /* mid-stream fail after output */ }
+              answerOk = assistantText.trim().length > 0;
+              if (cardPending && !cardSent) { cardSent = true; emitCard!(); }
+            } else {
+              console.warn(`[chat] reqId=${reqId} path=B fallback(gemini) failed before output: ${sanitizeError(fbError)}`);
+            }
+          }
         }
         const hadText = assistantText.trim().length > 0;
         if (!answerOk || !hadText) {

@@ -202,11 +202,13 @@ export interface StreamChatArgs {
 }
 
 /** מריץ תור שיחה עם streaming וכלים. מחזיר את תוצאת streamText. */
-export function streamChat(args: StreamChatArgs & { onMetrics?: (m: TurnMetrics) => void; onComparisonReady?: () => void; onToolCalled?: () => void; onProviderError?: (e: unknown) => void; model?: import("ai").LanguageModel }) {
+export function streamChat(args: StreamChatArgs & { onMetrics?: (m: TurnMetrics) => void; onComparisonReady?: () => void; onToolCalled?: () => void; onProviderError?: (e: unknown) => void; onFirstChunk?: () => void; model?: import("ai").LanguageModel }) {
   const { service, ctx, state, messages, budget, onMetrics, onComparisonReady } = args;
   const modelOverride = args.model;
   const onToolCalled = args.onToolCalled;
   const onProviderError = args.onProviderError;
+  const onFirstChunk = args.onFirstChunk;
+  let firstChunkFired = false;
   if (budget.estimatedUsd >= BUDGET.maxEstimatedUsd) {
     throw new Error(
       `תקציב הניסוי המוערך (~$${BUDGET.maxEstimatedUsd}) נוצל. צריכה מוערכת: $${budget.estimatedUsd.toFixed(4)} (אומדן, לא תקרת חיוב קשיחה).`,
@@ -238,6 +240,13 @@ export function streamChat(args: StreamChatArgs & { onMetrics?: (m: TurnMetrics)
     maxOutputTokens: BUDGET.maxOutputTokens,
     onChunk: (ev) => {
       meter.onChunk(ev.chunk as { type?: string });
+      if (!firstChunkFired) {
+        const ty = (ev.chunk as { type?: string }).type;
+        // פלט אמיתי ראשון (טקסט/כלי) - האות ש-'המודל התחיל להחזיר'.
+        if (ty === "text-delta" || ty === "text" || ty === "tool-call" || ty === "tool-input-start" || ty === "reasoning-delta") {
+          firstChunkFired = true; try { onFirstChunk?.(); } catch { /* best-effort */ }
+        }
+      }
     },
     onError: (ev) => {
       // *מקור האמת* לשגיאת ספק (מכסה/חיוב/זמינות): ה-SDK קורא לכאן עם השגיאה הגולמית
