@@ -69,6 +69,21 @@ function isProviderUnavailable(e: unknown): boolean {
   return /overloaded|unavailable|503|502|500|timeout|timed out|ETIMEDOUT|ECONNRESET|service is temporarily/i.test(parts.join(" "));
 }
 
+/** כשל חיוב/יתרה של ספק (למשל Anthropic 'credit balance is too low', 400/402/403):
+ * כשל ספק שמצדיק גיבוי, *לא* שגיאת קוד. מזוהה לפי הודעה, כי קוד הסטטוס אינו 429. */
+function isProviderBilling(e: unknown): boolean {
+  let cur: unknown = e; const parts: string[] = [];
+  for (let i = 0; i < 4 && cur; i++) {
+    if (cur instanceof Error) {
+      parts.push(cur.message);
+      const rb = (cur as { responseBody?: unknown }).responseBody;
+      if (typeof rb === "string") parts.push(rb);
+      cur = (cur as { cause?: unknown }).cause;
+    } else { parts.push(String(cur)); break; }
+  }
+  return /credit balance is too low|plans ?& ?billing|insufficient (credit|quota|balance|funds)|billing|payment required|402/i.test(parts.join(" "));
+}
+
 /**
  * עוטף את כל הטיפול: כשל לפני תחילת המסלול (פתיחת תיק, הגדרת שירות, dataset)
  * נרשם ללוג השרת ומוחזר כשגיאת JSON קריאה, במקום "Internal Server Error" כללי.
@@ -78,9 +93,10 @@ export async function POST(req: Request): Promise<Response> {
     return await handleChat(req);
   } catch (e) {
     const detail = sanitizeError(e);
-    console.error(`[chat] unhandled ${e instanceof Error ? e.name : "Error"}: ${detail}`);
+    const rid = randomUUID().slice(0, 8);
+    console.error(`[chat] reqId=${rid} unhandled(pre-stream) ${e instanceof Error ? e.name : "Error"}: ${detail}`);
     return new Response(
-      JSON.stringify({ error: "שגיאת שרת בשיחה.", code: e instanceof Error ? e.name : "Error", detail }),
+      JSON.stringify({ error: "שגיאת שרת בשיחה.", code: e instanceof Error ? e.name : "Error", detail, reqId: rid }),
       { status: 500, headers: { "content-type": "application/json" } },
     );
   }
@@ -93,6 +109,7 @@ async function handleChat(req: Request): Promise<Response> {
     return new Response(JSON.stringify({ error: "auth_required" }), { status: 401, headers: { "content-type": "application/json" } });
   }
   const owner = user.id;
+  const reqId = randomUUID().slice(0, 8); // מזהה קצר לקורלציה בין הדפדפן ללוגי השרת
   // תקציב *לכל בקשה* (לא מצטבר על פני מופע חם): מונע נעילה קבועה של השיחה
   // כשסכום האומדן על המופע חוצה תקרה. תור בודד עדיין חסום ע"י maxSteps/maxOutputTokens.
   const budget: ChatBudgetState = { estimatedUsd: 0, calls: 0 };
@@ -169,7 +186,7 @@ async function handleChat(req: Request): Promise<Response> {
 
   // --- מסלול B: שיחה טבעית + כלים. ---
   try {
-    console.log("[chat] path=B (full tool loop)");
+    console.log(`[chat] reqId=${reqId} path=B (full tool loop)`);
     // גשר לאירוע הכרטיס: onComparisonReady נורה בתוך הרַצת המודל (onStepFinish),
     // שעשוי לקרות לפני שה-writer קיים. מחזיקים דגל/פונקציה ומשדרים ברגע שאפשר.
     let emitCard: (() => void) | null = null;
@@ -179,54 +196,60 @@ async function handleChat(req: Request): Promise<Response> {
     // מעקב אם רצה פעולה/כלי (כתיבה/פנייה) - גיבוי מותר *רק* אם כלום עדיין לא בוצע,
     // כדי לא לשכפל כתיבות/פניות. provider error בלבד מפעיל גיבוי - לא שגיאת קוד/כלי/מסד.
     let toolRan = false;
-    const result = streamChat({ service, ctx, state, messages: modelMessages, budget, onComparisonReady: fireCard, onToolCalled: () => { toolRan = true; } });
-    // consumeStream (ללא await): מסיר backpressure כך שה-LLM רץ עד הסוף גם אם
-    // הלקוח מתנתק -> ה-merge מסתיים והשמירה תתבצע. (ניתוק לקוח בלבד; לא קריסת שרת.)
-    void result.consumeStream();
+    let primaryError: unknown = null;
+    const result = streamChat({ service, ctx, state, messages: modelMessages, budget, onComparisonReady: fireCard, onToolCalled: () => { toolRan = true; }, onProviderError: (pe) => { if (!primaryError) primaryError = pe; } });
+    void Promise.resolve(result.consumeStream()).catch((err) => { if (!primaryError) primaryError = err; });
 
     const stream = createUIMessageStream({
       originalMessages: messages,
+      onError: (err) => {
+        console.error(`[chat] reqId=${reqId} stream-error name=${err instanceof Error ? err.name : "Error"} detail=${sanitizeError(err)}`);
+        return ERR_FULL;
+      },
       execute: async ({ writer }) => {
-        // ממזגים את stream המודל (טקסט/כלים) -> מוזרם ללקוח מיד.
-        writer.merge(result.toUIMessageStream({ sendFinish: false }));
+        writer.write({ type: "start" });
         // מזהה הבירור הפעיל ללקוח - לסנכרון ה-URL ל-?c=<id> (רענון ישחזר).
         writer.write({ type: "data-activeCase", data: { caseId: cid, scope: "turn" } });
-        // אירוע כרטיס: משדרים data-comparison מיד כשההשוואה נשמרה (מתוך onStepFinish),
-        // לפני סיום הניסוח. הלקוח מרענן את הכרטיס מהאירוע בלי להמתין לסוף התור.
         emitCard = () => writer.write({ type: "data-comparison", data: { ready: true, scope: "turn" } });
         if (cardPending && !cardSent) { cardSent = true; emitCard(); }
-        // ממתינים לסיום המודל. *סטטוס התשובה* (המודל) נפרד מ*סטטוס השמירה* (persistence):
-        // כשל מודל אינו "שמירה שנכשלה", ולהפך. שומרים טקסט חלקי אם הגיע.
+        // *לא ממזגים את זרם ה-primary לפני שידוע שהצליח*: מיזוג זרם שנכשל פולט
+        // part מסוג error שמדליק את באנר השגיאה בלקוח (גם עם onError). לכן ממתינים
+        // לסיום ה-primary; בהצלחה כותבים את הטקסט, בכשל ספק עוברים לגיבוי.
         let assistantText = "";
         let answerOk = true;
         let fellBack = false;
         try {
           assistantText = (await result.text) ?? "";
+          answerOk = assistantText.trim().length > 0;
         } catch (e) {
           answerOk = false;
-          const providerFail = isQuotaError(e) || isProviderUnavailable(e);
-          console.warn(`[chat] path=B primary(claude) failed providerFail=${providerFail} toolRan=${toolRan}: ${sanitizeError(e)}`);
-          // גיבוי Gemini (ניסיון *אחד*) רק אם: כשל ספק (מכסה/זמינות), *ולא* רצה כלי
-          // (אין סיכון לשכפל כתיבה/פנייה), ויש מפתח Gemini. לא מסתיר שגיאת קוד/כלי/מסד.
+          // מסווגים לפי שגיאת הספק האמיתית (primaryError מהזרם), לא לפי העטיפה 'No output'.
+          const perr = primaryError ?? e;
+          const providerFail = isQuotaError(perr) || isProviderUnavailable(perr) || isProviderBilling(perr);
+          console.warn(`[chat] reqId=${reqId} path=B primary(claude) failed providerFail=${providerFail} toolRan=${toolRan}: ${sanitizeError(perr)}`);
           const fb = providerFail && !toolRan ? getFallbackChatModel() : null;
           if (fb) {
             try {
-              console.log(`[chat] path=B fallback -> ${getFallbackChatModelId()} (one attempt)`);
+              console.log(`[chat] reqId=${reqId} path=B fallback -> ${getFallbackChatModelId()} (one attempt)`);
               const fbBudget: ChatBudgetState = { estimatedUsd: 0, calls: 0 };
               const fbRes = streamChat({ service, ctx, state, messages: modelMessages, budget: fbBudget, model: fb, onComparisonReady: fireCard });
-              void fbRes.consumeStream();
-              writer.merge(fbRes.toUIMessageStream({ sendFinish: false }));
-              assistantText = (await fbRes.text) ?? "";
+              assistantText = (await fbRes.text) ?? ""; // buffer; לא ממזגים זרם שעלול להיכשל
               answerOk = assistantText.trim().length > 0;
               fellBack = true;
             } catch (e2) {
-              // גם הגיבוי נכשל (למשל מכסת Gemini חסומה) -> הודעה ברורה, סיום המתנה.
-              console.warn(`[chat] path=B fallback(gemini) also failed: ${sanitizeError(e2)}`);
+              console.warn(`[chat] reqId=${reqId} path=B fallback(gemini) also failed: ${sanitizeError(e2)}`);
             }
           }
         }
-        // כשל מודל *או* תשובה ריקה -> הודעת שגיאה ברורה (לא תור ריק שקט).
-        // טקסט חלקי שכבר הוזרם נשמר כפי שהוא; אם אין טקסט כלל, מזריקים הודעה.
+        // כותבים את הטקסט שהתקבל (primary שהצליח או גיבוי) כחלק טקסט אחד.
+        if (answerOk && assistantText.trim().length > 0) {
+          const tid = "t-" + randomUUID();
+          writer.write({ type: "text-start", id: tid });
+          writer.write({ type: "text-delta", id: tid, delta: assistantText });
+          writer.write({ type: "text-end", id: tid });
+          // אירוע כרטיס שוב (אם נשמרה השוואה בזמן ה-primary/גיבוי אך טרם נשלח).
+          if (cardPending && !cardSent) { cardSent = true; emitCard!(); }
+        }
         const hadText = assistantText.trim().length > 0;
         if (!answerOk || !hadText) {
           // אם גם הגיבוי נוצל/חסום - הודעה ברורה שמסיימת את ההמתנה, בלי ניסיון נוסף.

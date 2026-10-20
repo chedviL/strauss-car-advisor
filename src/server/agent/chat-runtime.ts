@@ -202,10 +202,11 @@ export interface StreamChatArgs {
 }
 
 /** מריץ תור שיחה עם streaming וכלים. מחזיר את תוצאת streamText. */
-export function streamChat(args: StreamChatArgs & { onMetrics?: (m: TurnMetrics) => void; onComparisonReady?: () => void; onToolCalled?: () => void; model?: import("ai").LanguageModel }) {
+export function streamChat(args: StreamChatArgs & { onMetrics?: (m: TurnMetrics) => void; onComparisonReady?: () => void; onToolCalled?: () => void; onProviderError?: (e: unknown) => void; model?: import("ai").LanguageModel }) {
   const { service, ctx, state, messages, budget, onMetrics, onComparisonReady } = args;
   const modelOverride = args.model;
   const onToolCalled = args.onToolCalled;
+  const onProviderError = args.onProviderError;
   if (budget.estimatedUsd >= BUDGET.maxEstimatedUsd) {
     throw new Error(
       `תקציב הניסוי המוערך (~$${BUDGET.maxEstimatedUsd}) נוצל. צריכה מוערכת: $${budget.estimatedUsd.toFixed(4)} (אומדן, לא תקרת חיוב קשיחה).`,
@@ -237,6 +238,11 @@ export function streamChat(args: StreamChatArgs & { onMetrics?: (m: TurnMetrics)
     maxOutputTokens: BUDGET.maxOutputTokens,
     onChunk: (ev) => {
       meter.onChunk(ev.chunk as { type?: string });
+    },
+    onError: (ev) => {
+      // *מקור האמת* לשגיאת ספק (מכסה/חיוב/זמינות): ה-SDK קורא לכאן עם השגיאה הגולמית
+      // (לפני עטיפתה כ-AI_NoOutputGeneratedError שמגיעה ל-result.text). מועבר לקורא.
+      try { onProviderError?.((ev as { error?: unknown }).error ?? ev); } catch { /* best-effort */ }
     },
     onStepFinish: (step) => {
       // אירוע כרטיס: ברגע ש-compareScenarios הצליח (תוצאה תקפה נשמרה במסד),
