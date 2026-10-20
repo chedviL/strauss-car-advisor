@@ -60,6 +60,33 @@ function sanitizeError(e: unknown): string {
     .slice(0, 200);
 }
 
+/**
+ * תיאור מפורט לשגיאת ספק ללוג (אבחון): קוד HTTP, שם/סוג, מזהה מודל אם קיים,
+ * וקטע מגוף התגובה (מכיל פרטי מכסה/מודל). *אינו* מדפיס מפתחות - sanitizeError מסנן.
+ * עובר על שרשרת ה-cause כדי לחשוף את ה-APICallError הגולמי מתחת לעטיפות ה-SDK.
+ */
+function describeProviderError(e: unknown): string {
+  const out: string[] = [];
+  let cur: unknown = e;
+  for (let i = 0; i < 5 && cur; i++) {
+    const o = cur as { name?: string; statusCode?: number; url?: string; responseBody?: unknown; data?: unknown; cause?: unknown; message?: string };
+    const name = o?.name ?? "?";
+    const sc = typeof o?.statusCode === "number" ? o.statusCode : "";
+    const model = typeof o?.url === "string" ? (o.url.match(/models\/([^:?/]+)/)?.[1] ?? "") : "";
+    let bodySnippet = "";
+    const rb = o?.responseBody ?? o?.data;
+    if (typeof rb === "string") bodySnippet = rb;
+    else if (rb && typeof rb === "object") { try { bodySnippet = JSON.stringify(rb); } catch { /* ignore */ } }
+    if (sc || bodySnippet || (name && name !== "?")) {
+      out.push(`[L${i} name=${name}${sc ? " status=" + sc : ""}${model ? " model=" + model : ""}${bodySnippet ? " body=" + bodySnippet.slice(0, 220) : ""}]`);
+    }
+    cur = o?.cause;
+  }
+  const joined = out.join(" ");
+  // סינון מפתחות/סודות ליתר ביטחון (key=..., sk-..., AIza... של Google).
+  return joined.replace(/key[=:]\S+/gi, "key=***").replace(/AIza[0-9A-Za-z_-]{10,}/g, "AIza***").slice(0, 500) || sanitizeError(e);
+}
+
 /** כשל ספק זמני שמצדיק גיבוי: 5xx/overloaded/timeout/unavailable. לא שגיאת קוד/כלי. */
 function isProviderUnavailable(e: unknown): boolean {
   let cur: unknown = e; const parts: string[] = [];
@@ -250,7 +277,7 @@ async function handleChat(req: Request): Promise<Response> {
           const perr = primaryError;
           const providerFail = claudeBlocked || isQuotaError(perr) || isProviderUnavailable(perr) || isProviderBilling(perr);
           if (isProviderBilling(perr)) { claudeBillingBlockedUntil = Date.now() + CLAUDE_BILLING_COOLDOWN_MS; }
-          console.warn(`[chat] reqId=${reqId} path=B early-fail providerFail=${providerFail} claudeBlocked=${claudeBlocked} toolRan=${toolRan}: ${sanitizeError(perr)}`);
+          console.warn(`[chat] reqId=${reqId} path=B early-fail providerFail=${providerFail} claudeBlocked=${claudeBlocked} toolRan=${toolRan}: ${describeProviderError(perr)}`);
           const fb = (providerFail && !toolRan) ? getFallbackChatModel() : null;
           if (fb) {
             console.log(`[chat] reqId=${reqId} path=B fallback -> ${getFallbackChatModelId()} (one attempt)`);
@@ -269,7 +296,7 @@ async function handleChat(req: Request): Promise<Response> {
               answerOk = assistantText.trim().length > 0;
               if (cardPending && !cardSent) { cardSent = true; emitCard!(); }
             } else {
-              console.warn(`[chat] reqId=${reqId} path=B fallback(gemini) failed before output: ${sanitizeError(fbError)}`);
+              console.warn(`[chat] reqId=${reqId} path=B fallback(gemini=${getFallbackChatModelId()}) failed before output: ${describeProviderError(fbError)}`);
             }
           }
         }
