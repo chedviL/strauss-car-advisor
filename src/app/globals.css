@@ -278,6 +278,8 @@ body.chat-locked #main-content.app-main {
   padding: 6px 16px; font-size: var(--font-sm); line-height: 1.4;
   white-space: nowrap; text-decoration: none;
   display: inline-flex; align-items: center; justify-content: center;
+  /* שלושת הכפתורים (אזור עובד / אזור נציג / יציאה) באותו גודל בדיוק, בלי קשר לאורך הטקסט. */
+  box-sizing: border-box; width: 7.5rem; min-height: 36px;
 }
 .nav-btn.is-current {
   background: var(--color-accent-soft);

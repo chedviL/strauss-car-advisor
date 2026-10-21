@@ -16,7 +16,7 @@ export function SignOutForm() {
         try { clearAllMatchState(window.sessionStorage); } catch { /* אחסון חסום - אין מה לנקות */ }
       }}
     >
-      <button type="submit" className="btn nav-btn" title="מסיים את הסשן ומנקה את הנתונים מהמסך">החלפת חשבון / יציאה</button>
+      <button type="submit" className="btn nav-btn" title="מסיים את הסשן ומנקה את הנתונים מהמסך">יציאה</button>
     </form>
   );
 }
