@@ -5,6 +5,7 @@
 
 import { useTransition } from "react";
 import { resetDemo } from "../../app/actions.js";
+import { LightTrail } from "../brand/LightTrail.js";
 import type { CaseState } from "../../domain/contracts/case.js";
 import type { NetBreakdown, ScenarioResult } from "../../domain/contracts/types.js";
 import { BREAKDOWN_LABELS } from "../../domain/calculation/breakdown-labels.js";
@@ -46,36 +47,37 @@ export function ComparisonView({
   const baseTitle = baseline.route === "waiver" ? "ויתור על רכב" : nameOf(baseline.vehicleCode, "המצב הנוכחי");
   const altTitle = alternative.route === "waiver" ? "ויתור על רכב" : nameOf(alternative.vehicleCode, "החלופה");
 
+  // תמצית הכרחית לגב האריח (hover) - רק הרכיבים שמשנים את הנטו.
+  const essentials = (r: ScenarioResult & { netDisplay: string }, scen: { maintenanceAllowance: number; participation: number | null }) => [
+    { label: "שווי שימוש", value: shekelFromBreakdown(r.breakdown.taxableIncome, r.breakdown.cashSalary) },
+    { label: "מס + ב.לאומי", value: fmt(sum(r.breakdown.incomeTax, sum(r.breakdown.nationalInsurance, r.breakdown.health))) },
+    { label: "הפרשות", value: fmt(sum(r.breakdown.pensionEmployee, r.breakdown.trainingEmployee)) },
+    ...(scen.maintenanceAllowance > 0 ? [{ label: "אחזקת רכב", value: fmt(String(scen.maintenanceAllowance)) }] : []),
+  ];
+
   return (
-    <section className="card" style={{ padding: "var(--space-4)", position: "relative" }}>
-      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: "var(--space-2)" }}>
-        <h2 style={{ fontSize: "var(--font-lg)" }}>השוואת נטו חודשי</h2>
-        <button className="btn btn-ghost" disabled={pending} onClick={() => startTransition(() => resetDemo())}>
+    <section className="cmp-card" aria-label="השוואת נטו חודשי">
+      {/* שורת כותרת קומפקטית + המשמעות למשתמש */}
+      <div className="cmp-top">
+        <span className="cmp-kicker">
+          <LightTrail mode="result" variant="inline" className="cmp-kicker-trail" />
+          השוואת נטו חודשי
+        </span>
+        <button className="btn btn-ghost" disabled={pending} onClick={() => startTransition(() => resetDemo())} style={{ fontSize: "var(--font-sm)" }}>
           התחל מחדש
         </button>
       </div>
 
-      {/* שינוי הנטו במרכז - האלמנט הבולט */}
-      <div
-        role="status"
-        style={{
-          textAlign: "center", marginTop: "var(--space-3)",
-          background: gain ? "var(--color-gain-soft)" : "var(--color-loss-soft)",
-          borderRadius: "var(--radius-md)", padding: "var(--space-4)",
-        }}
-      >
-        <div style={{ color: "var(--color-muted)", fontSize: "var(--font-sm)" }}>
-          {gain ? "הנטו החודשי צפוי לגדול" : "הנטו החודשי צפוי לקטון"}
-        </div>
-        <div style={{ fontSize: "var(--font-2xl)", fontWeight: 800, color: gain ? "var(--color-gain)" : "var(--color-loss)", lineHeight: 1.1, marginTop: "var(--space-1)", unicodeBidi: "plaintext" }}>
-          <span aria-hidden="true">{gain ? "▲ " : "▼ "}</span>{shekel(Math.abs(delta))}
-        </div>
+      {/* ההפרש - המשמעות + מספר, בשורה אחת קומפקטית */}
+      <div role="status" className={`cmp-delta ${gain ? "is-gain" : "is-loss"}`}>
+        <span className="cmp-delta-label">{gain ? "יותר בנטו בכל חודש" : "פחות בנטו בכל חודש"}</span>
+        <span className="cmp-delta-num"><span aria-hidden="true">{gain ? "▲ " : "▼ "}</span>{shekel(Math.abs(delta))}</span>
       </div>
 
-      {/* שני עמודים: היום מול החלופה */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-3)", marginTop: "var(--space-4)" }}>
-        <ScenarioCol title={`היום · ${baseTitle}`} subtitle={shekel(baseNet)} r={cmp.result.baseline} scen={baseline} />
-        <ScenarioCol title={`חלופה · ${altTitle}`} subtitle={shekel(altNet)} r={cmp.result.alternative} scen={alternative} highlight />
+      {/* שני אריחים מתהפכים: היום / אחרי ההחלפה. hover -> תמצית הכרחית. */}
+      <div className="cmp-tiles">
+        <FlipTile title="היום" subtitle={baseTitle} net={shekel(baseNet)} rows={essentials(cmp.result.baseline, baseline)} />
+        <FlipTile title="אחרי ההחלפה" subtitle={altTitle} net={shekel(altNet)} rows={essentials(cmp.result.alternative, alternative)} highlight />
       </div>
 
       {/* הנחות ותוצאה מיושנת - עדין וברור */}
@@ -100,51 +102,33 @@ export function ComparisonView({
   );
 }
 
-function Row({ label, value }: { label: string; value: string }) {
-  return (
-    <div style={{ display: "flex", justifyContent: "space-between", gap: "var(--space-2)", fontSize: "var(--font-sm)", padding: "3px 0" }}>
-      <span style={{ color: "var(--color-muted)" }}>{label}</span>
-      <span style={{ unicodeBidi: "plaintext", fontVariantNumeric: "tabular-nums" }}>{value}</span>
-    </div>
-  );
-}
-
-function ScenarioCol({
-  title,
-  subtitle,
-  r,
-  scen,
-  highlight,
+// אריח מתהפך: פנים = תווית + נטו; גב (hover/focus) = תמצית הכרחית בלבד.
+function FlipTile({
+  title, subtitle, net, rows, highlight,
 }: {
-  title: string;
-  subtitle: string;
-  r: ScenarioResult & { netDisplay: string };
-  scen: { maintenanceAllowance: number; participation: number | null };
+  title: string; subtitle: string; net: string;
+  rows: Array<{ label: string; value: string }>;
   highlight?: boolean;
 }) {
   return (
-    <div
-      style={{
-        border: highlight ? "1px solid var(--color-primary)" : "1px solid var(--color-border)",
-        borderRadius: "var(--radius-md)",
-        padding: "var(--space-3)",
-        background: highlight ? "var(--color-accent-soft)" : "var(--color-surface-2)",
-      }}
-    >
-      <div style={{ fontWeight: 700, fontSize: "var(--font-sm)", color: "var(--color-muted)" }}>{title}</div>
-      <div style={{ fontWeight: 800, fontSize: "var(--font-lg)", margin: "2px 0 var(--space-2)", unicodeBidi: "plaintext" }}>{subtitle}</div>
-      <Row label="שווי שימוש (זקיפה)" value={shekelFromBreakdown(r.breakdown.taxableIncome, r.breakdown.cashSalary)} />
-      <Row label="שכר מזומן" value={fmt(r.breakdown.cashSalary)} />
-      <Row label="מס הכנסה" value={fmt(r.breakdown.incomeTax)} />
-      <Row label="ביטוח לאומי + בריאות" value={fmt(sum(r.breakdown.nationalInsurance, r.breakdown.health))} />
-      <Row label="הפרשות עובד" value={fmt(sum(r.breakdown.pensionEmployee, r.breakdown.trainingEmployee))} />
-      <Row label="השתתפות" value={fmt(r.breakdown.participation)} />
-      {Number(r.breakdown.familyGap) > 0 && (
-        <Row label="פער מסלול משפחתי" value={fmt(r.breakdown.familyGap)} />
-      )}
-      {scen.maintenanceAllowance > 0 && (
-        <Row label="אחזקת רכב" value={fmt(String(scen.maintenanceAllowance))} />
-      )}
+    <div className={`cmp-tile ${highlight ? "is-alt" : ""}`.trim()} tabIndex={0} aria-label={`${title}: ${subtitle}, נטו ${net}`}>
+      <div className="cmp-tile-inner">
+        {/* פנים */}
+        <div className="cmp-tile-face cmp-tile-front">
+          <div className="cmp-tile-title">{title}</div>
+          <div className="cmp-tile-sub">{subtitle}</div>
+          <div className="cmp-tile-net">{net}</div>
+        </div>
+        {/* גב - תמצית */}
+        <div className="cmp-tile-face cmp-tile-back">
+          {rows.map((r, i) => (
+            <div key={i} className="cmp-tile-row">
+              <span>{r.label}</span>
+              <span style={{ unicodeBidi: "plaintext", fontVariantNumeric: "tabular-nums" }}>{r.value}</span>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

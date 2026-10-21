@@ -1,24 +1,36 @@
 // src/server/repositories/pg-pool.ts
-// Pool משותף יחיד per-process per-connection-string.
-// מכוון ל-Supabase Session Pooler (port 5432) - הפורט הזמין בפרויקט זה
-// (ה-Transaction Pooler בפורט 6543 אינו נגיש כאן). חיבורי session יציבים,
-// לכן שומרים אותם חמים זמן ארוך כדי לחסוך TLS handshake יקר חוזר.
+// Pool משותף יחיד per-process per-connection-string (ממוטמן ב-globalThis כדי
+// לשרוד hot-reload ב-dev). מכוון ל-Supabase Session Pooler (port 5432) שמוגבל
+// ל-15 clients משותפים: max נמוך + שחרור idle מהיר מונעים EMAXCONNSESSION.
 // מטפל בשגיאות pool + retry (withClient) למקרה שחיבור idle נסגר.
 
 import { Pool, type PoolClient } from "pg";
 import { sslFor } from "./pg-ssl.js";
 
-const pools = new Map<string, Pool>();
+// ב-Next.js dev כל hot-reload טוען מחדש את המודול ומאפס משתני מודול. בלי מטמון
+// גלובלי, כל קומפילציה הייתה יוצרת Pool חדש בעוד הישן מחזיק חיבורים פתוחים,
+// עד מיצוי מכסת ה-pooler (EMAXCONNSESSION). מטמון על globalThis שורד reloads
+// כך שנשאר בדיוק pool אחד לכל connection string לכל התהליך.
+const globalForPools = globalThis as unknown as {
+  __straussPgPools?: Map<string, Pool>;
+};
+const pools: Map<string, Pool> =
+  globalForPools.__straussPgPools ?? (globalForPools.__straussPgPools = new Map());
+
+// Supabase Session Pooler מוגבל ל-15 clients משותפים. שומרים max נמוך כדי
+// שהאפליקציה לא תמצה את המכסה לבדה (ומשאירים אוויר לכלים/בדיקות מקומיים).
+const MAX_CLIENTS = Number(process.env.PG_POOL_MAX ?? 6);
 
 export function getPool(connectionString: string): Pool {
   let pool = pools.get(connectionString);
   if (!pool) {
     pool = new Pool({
       connectionString,
-      max: 10,
+      max: MAX_CLIENTS,
       keepAlive: true,
-      // חיבורי session יציבים: שומרים חמים דקות כדי לחסוך handshake חוזר.
-      idleTimeoutMillis: 300_000,
+      // חיבורי idle משוחררים אחרי 30 שנ׳ כדי לא להחזיק חיבורים מהמכסה המשותפת
+      // סתם. ה-handshake החוזר זול יחסית למול מיצוי ה-pooler.
+      idleTimeoutMillis: 30_000,
       connectionTimeoutMillis: 10_000,
       ...sslFor(connectionString),
     });

@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>אב-טיפוס · יועץ הרכב של שטראוס</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<style>
+/* ======================================================================
+   אב-טיפוס חזותי עצמאי (קובץ בודד) - נתוני הדגמה בלבד, ללא קריאות מודל,
+   ללא התחברות וללא שרת. נועד לבדיקה חזותית לפני שילוב באתר.
+   זהה בעיצובו לרכיבי ה-React שבנינו תחת src/app/prototype/.
+   ====================================================================== */
+:root {
+  --color-bg: #f6f3ee;
+  --color-bg-tint: #efe9e1;
+  --color-surface: #fffdfb;
+  --color-surface-2: #faf7f2;
+  --color-text: #221d18;
+  --color-muted: #6b6258;
+  --color-border: #e7ded2;
+  --color-border-strong: #d8ccba;
+  --color-primary: #1f4e6b;      /* כחול עמוק */
+  --color-primary-hover: #183d54;
+  --color-accent-soft: #eaf0f4;
+  --color-gain: #1f7a4d;
+  --color-gain-soft: #e9f3ec;
+  --color-loss: #a3362f;
+  --color-loss-soft: #f6eae8;
+  --radius-sm: 10px; --radius-md: 16px; --radius-pill: 999px;
+  --space-1:4px; --space-2:8px; --space-3:16px; --space-4:24px; --space-5:40px; --space-6:64px;
+  --font-sm:.875rem; --font-lg:1.25rem; --font-xl:1.75rem; --font-2xl:2.4rem;
+  --shadow-sm:0 1px 3px rgba(34,29,24,.05); --shadow:0 4px 18px rgba(34,29,24,.07);
+  --t-fast:120ms; --t-med:200ms;
+
+  --c-ink: var(--color-primary);
+  --c-accent: #2f9c92;          /* טורקיז מאופק */
+  --c-accent-soft: #8fcfc8;
+  --c-warn: var(--color-loss);
+}
+* { box-sizing: border-box; }
+html, body { margin:0; padding:0; }
+body {
+  font-family:"Assistant","Heebo","Segoe UI","Arial Hebrew",Arial,sans-serif;
+  color: var(--c-ink);
+  background:
+    radial-gradient(1200px 600px at 70% -10%, #fdfbf7 0%, transparent 60%),
+    radial-gradient(900px 500px at 10% 110%, #f0ece4 0%, transparent 55%),
+    var(--color-bg);
+  min-height:100vh;
+}
+h1,h2 { margin:0; line-height:1.22; }
+p { margin:0; }
+
+.btn { font:inherit; font-weight:600; border:1px solid var(--color-border-strong);
+  background:var(--color-surface); color:var(--color-text); border-radius:var(--radius-pill);
+  padding:var(--space-2) var(--space-4); cursor:pointer;
+  transition:background-color var(--t-fast),border-color var(--t-fast),transform var(--t-fast); }
+.btn:hover:not(:disabled){ background:var(--color-surface-2); border-color:var(--color-primary); }
+.btn:active:not(:disabled){ transform:translateY(1px); }
+.btn:disabled{ opacity:.5; cursor:not-allowed; }
+.btn-primary{ background:var(--c-ink); color:#fff; border-color:var(--c-ink); }
+.btn-primary:hover:not(:disabled){ background:var(--color-primary-hover); border-color:var(--color-primary-hover); }
+.btn-ghost{ background:transparent; border-color:transparent; color:var(--color-muted); padding:var(--space-1) var(--space-3); border-radius:var(--radius-pill); cursor:pointer; font:inherit; }
+.btn-ghost:hover{ background:var(--color-bg-tint); color:var(--color-text); }
+input{ color:var(--color-text); background:var(--color-surface); border:1px solid var(--color-border-strong);
+  border-radius:var(--radius-sm); padding:var(--space-2) var(--space-3); font:inherit;
+  transition:border-color var(--t-fast),box-shadow var(--t-fast); }
+input:focus{ border-color:var(--color-primary); box-shadow:0 0 0 3px var(--color-accent-soft); outline:none; }
+input::placeholder{ color:var(--color-muted); opacity:.7; }
+.card{ background:var(--color-surface); border:1px solid var(--color-border); border-radius:var(--radius-md); box-shadow:var(--shadow); }
+
+.pt-root{ min-height:100vh; display:flex; flex-direction:column; }
+
+/* בורר הדגמה */
+.pt-demobar{ position:sticky; top:0; z-index:50; display:flex; align-items:center; gap:var(--space-3);
+  flex-wrap:wrap; padding:var(--space-2) var(--space-4);
+  background:color-mix(in srgb, var(--color-surface) 85%, transparent);
+  backdrop-filter:blur(8px); border-bottom:1px solid var(--color-border); }
+.pt-demobar__tag{ font-size:var(--font-sm); font-weight:700; letter-spacing:.04em; color:var(--c-accent);
+  background:color-mix(in srgb,var(--c-accent) 12%,transparent);
+  border:1px solid color-mix(in srgb,var(--c-accent) 30%,transparent); padding:2px 10px; border-radius:var(--radius-pill); }
+.pt-demobar__hint{ font-size:var(--font-sm); color:var(--color-muted); margin-inline-start:auto; }
+.pt-seg{ display:inline-flex; background:var(--color-surface-2); border:1px solid var(--color-border);
+  border-radius:var(--radius-pill); padding:3px; gap:2px; }
+.pt-seg__btn{ font:inherit; font-size:var(--font-sm); font-weight:600; border:0; background:transparent;
+  color:var(--color-muted); padding:6px 14px; border-radius:var(--radius-pill); cursor:pointer;
+  transition:background-color var(--t-fast),color var(--t-fast); }
+.pt-seg__btn:hover{ color:var(--c-ink); }
+.pt-seg__btn.is-active{ background:var(--c-ink); color:#fff; }
+
+.pt-screen{ flex:1; position:relative; }
+
+/* מסך כניסה */
+.pt-entry{ display:grid; place-items:center; padding:var(--space-5) var(--space-4); overflow:hidden; min-height:calc(100vh - 56px); }
+.pt-entry__bg{ position:absolute; inset:0; display:grid; place-items:center; pointer-events:none; }
+.pt-entry__bg .car-svg{ width:min(1200px,150%); height:auto; opacity:.5; }
+.pt-entry__content{ position:relative; z-index:1; width:min(440px,100%); display:flex; flex-direction:column; gap:var(--space-4); align-items:center; }
+.pt-authcard{ width:100%; padding:var(--space-5); display:flex; flex-direction:column; gap:var(--space-4);
+  background:color-mix(in srgb,var(--color-surface) 94%,transparent); }
+.pt-authcard__head{ text-align:center; }
+.pt-authcard__head h1{ font-size:var(--font-xl); }
+.pt-authcard__head p{ color:var(--color-muted); margin-top:var(--space-2); }
+.pt-form{ display:flex; flex-direction:column; gap:var(--space-3); }
+.pt-field{ display:flex; flex-direction:column; gap:6px; }
+.pt-field > span{ font-size:var(--font-sm); font-weight:600; }
+.pt-code{ letter-spacing:.4em; text-align:center; font-size:var(--font-lg); }
+.pt-note,.pt-sent{ font-size:var(--font-sm); color:var(--color-muted); text-align:center; }
+.pt-sent b{ color:var(--c-ink); }
+
+/* מסך שיחה */
+.pt-chat{ display:grid; grid-template-columns:300px 1fr; overflow:hidden; }
+.pt-chat__aside{ position:relative; border-inline-end:1px solid var(--color-border); overflow:hidden;
+  display:grid; place-items:center;
+  background:radial-gradient(400px 300px at 40% 30%, color-mix(in srgb,var(--c-accent) 8%,transparent), transparent 70%); }
+.pt-chat__aside .car-svg{ width:150%; height:auto; opacity:.34; transform:translateX(8%); }
+.pt-chat__main{ display:flex; flex-direction:column; min-height:calc(100vh - 56px); max-height:calc(100vh - 56px);
+  max-width:820px; width:100%; margin:0 auto; padding:0 var(--space-4); }
+.pt-chat__topbar{ display:flex; align-items:center; justify-content:space-between; padding:var(--space-3) 0; border-bottom:1px solid var(--color-border); }
+.pt-thread{ flex:1; display:flex; flex-direction:column; gap:var(--space-3); padding:var(--space-4) 2px; overflow-y:auto; }
+.pt-msg{ display:flex; }
+.pt-msg--bot{ justify-content:flex-start; }
+.pt-msg--me{ justify-content:flex-end; }
+.pt-bubble{ max-width:78%; padding:10px 14px; border-radius:var(--radius-md); line-height:1.5; box-shadow:var(--shadow-sm); }
+.pt-msg--bot .pt-bubble{ background:var(--color-surface); border:1px solid var(--color-border); border-start-start-radius:4px; color:var(--color-text); }
+.pt-msg--me .pt-bubble{ background:var(--c-ink); color:#fff; border-start-end-radius:4px; }
+.pt-bubble--error{ background:var(--color-loss-soft); border-color:color-mix(in srgb,var(--c-warn) 40%,transparent); color:var(--c-warn); }
+.pt-bubble--typing{ display:inline-flex; gap:5px; align-items:center; }
+.pt-bubble--typing span{ width:7px; height:7px; border-radius:50%; background:var(--c-accent); animation:ptType 1.4s ease-in-out infinite; }
+.pt-bubble--typing span:nth-child(2){ animation-delay:.2s; }
+.pt-bubble--typing span:nth-child(3){ animation-delay:.4s; }
+@keyframes ptType{ 0%,60%,100%{ opacity:.3; transform:translateY(0); } 30%{ opacity:1; transform:translateY(-3px); } }
+.pt-composer{ display:flex; gap:var(--space-2); padding:var(--space-3) 0 var(--space-4); border-top:1px solid var(--color-border); }
+.pt-composer input{ flex:1; }
+
+/* כרטיס השוואה */
+.pt-compare{ width:min(100%,560px); padding:var(--space-4); }
+.pt-compare__head{ display:flex; align-items:baseline; justify-content:space-between; gap:var(--space-2); flex-wrap:wrap; }
+.pt-compare__head h2{ font-size:var(--font-lg); }
+.pt-compare__sub{ font-size:var(--font-sm); color:var(--color-muted); }
+.pt-compare__cols{ display:grid; grid-template-columns:1fr 1fr; gap:var(--space-2); margin-top:var(--space-3); }
+.pt-compare__colhead{ text-align:center; }
+.pt-chip{ display:inline-block; font-size:var(--font-sm); font-weight:700; padding:4px 12px; border-radius:var(--radius-pill); }
+.pt-chip--a{ background:var(--c-accent-soft); color:var(--c-ink); }
+.pt-chip--b{ background:color-mix(in srgb,var(--c-accent) 16%,transparent); color:#1d6b63; }
+.pt-compare__table{ width:100%; border-collapse:collapse; margin-top:var(--space-3); }
+.pt-compare__table th[scope=row]{ text-align:start; font-weight:600; color:var(--color-muted); font-size:var(--font-sm); }
+.pt-compare__table td{ text-align:center; padding:8px 4px; font-variant-numeric:tabular-nums; }
+.pt-compare__table tr{ border-top:1px solid var(--color-border); }
+.pt-compare__net td{ font-weight:800; color:var(--c-ink); font-size:var(--font-lg); }
+.pt-compare__net th{ color:var(--c-ink); }
+.pt-compare__delta{ margin-top:var(--space-3); text-align:center; font-weight:700; color:var(--color-gain); background:var(--color-gain-soft); border-radius:var(--radius-sm); padding:8px; }
+
+/* ווֹרדמַרק */
+.pt-wordmark{ font-size:var(--font-xl); font-weight:800; letter-spacing:-.01em; }
+.pt-wordmark--compact{ font-size:var(--font-lg); }
+.pt-wordmark__name{ color:var(--c-ink); }
+.pt-wordmark__sep{ color:var(--c-accent); }
+.pt-wordmark__sub{ color:var(--color-muted); font-weight:700; }
+
+/* הרשת */
+.car-svg{ display:block; max-width:100%; height:auto; overflow:visible;
+  --c-edge: color-mix(in srgb, var(--color-primary) 32%, transparent);
+  --c-edge-strong: color-mix(in srgb, var(--color-primary) 55%, transparent);
+  --c-node: var(--color-primary); }
+.edge{ stroke:var(--c-edge); stroke-width:1; }
+.edge--strong{ stroke:var(--c-edge-strong); stroke-width:1.4; }
+.node{ fill:var(--c-node); }
+.node--outlier{ fill:var(--c-accent); opacity:.5; }
+.car-roof-hint{ stroke:var(--c-edge-strong); stroke-width:1; stroke-dasharray:2 7; opacity:.5; fill:none; }
+.car-wheels circle{ fill:none; stroke:var(--c-edge); stroke-width:1; stroke-dasharray:3 8; opacity:.45; }
+.car-pulse{ fill:var(--c-accent); opacity:0; }
+.car-aura{ opacity:0; transition:opacity 600ms ease; }
+
+.car-svg[data-state=rest] .car-nodes,
+.car-svg[data-state=rest] .car-edges{ animation:ptBreathe 7s ease-in-out infinite; transform-origin:50% 50%; }
+@keyframes ptBreathe{ 0%,100%{ opacity:.92; } 50%{ opacity:1; } }
+.car-svg[data-state=processing] .car-pulse{ opacity:.95; }
+.car-svg[data-state=processing] .edge{ animation:ptEdgeGlow 2.4s ease-in-out infinite; }
+@keyframes ptEdgeGlow{ 0%,100%{ stroke:var(--c-edge); } 50%{ stroke:color-mix(in srgb,var(--c-accent) 70%, var(--c-edge)); } }
+.car-svg[data-state=result] .car-aura{ opacity:.8; }
+.car-svg[data-state=error]{ --c-edge: color-mix(in srgb, var(--color-loss) 30%, transparent); --c-node: var(--color-loss); }
+.car-svg[data-state=error] .car-nodes{ animation:ptErr 2.2s ease-in-out infinite; }
+@keyframes ptErr{ 0%,100%{ opacity:.8; } 50%{ opacity:1; } }
+
+@media (max-width:860px){
+  .pt-chat{ grid-template-columns:1fr; }
+  .pt-chat__aside{ position:absolute; inset:56px 0 auto 0; height:180px; border-inline-end:0;
+    border-bottom:1px solid var(--color-border); opacity:.6; z-index:0; pointer-events:none; }
+  .pt-chat__aside .car-svg{ width:120%; opacity:.22; transform:none; }
+  .pt-chat__main{ position:relative; z-index:1; max-height:none; }
+  .pt-entry__bg .car-svg{ width:180%; opacity:.38; }
+}
+@media (max-width:480px){ .pt-bubble{ max-width:88%; } }
+
+@media (prefers-reduced-motion: reduce){
+  .car-svg .car-nodes, .car-svg .car-edges, .car-svg .edge, .pt-bubble--typing span{ animation:none !important; }
+  .car-pulse{ opacity:0 !important; }
+  .car-aura{ transition:none; }
+}
+</style>
+</head>
+<body>
+<div class="pt-root" id="root"></div>
+
+<script>
+/* ===== PRNG דטרמיניסטי (אותה רשת בכל פעם) ===== */
+function mulberry32(seed){ let a=seed>>>0; return function(){ a|=0; a=(a+0x6d2b79f5)|0;
+  let t=Math.imul(a^(a>>>15),1|a); t=(t+Math.imul(t^(t>>>7),61|t))^t; return ((t^(t>>>14))>>>0)/4294967296; }; }
+
+/* ===== בניית רשת האינטליגנציה בצורת דמוי-רכב ===== */
+function buildMesh(){
+  const rnd = mulberry32(73);
+  const nodes = [];
+  const WF={cx:318,cy:322,r:78}, WR={cx:690,cy:322,r:78};
+  const topB = x => Math.min(250, 150 + 120*Math.pow(Math.abs(x-505)/505,1.7));
+  const bottomB = 330;
+  const inBody = (x,y)=> x>=150 && x<=858 && y>=topB(x) && y<=bottomB;
+  const nearWheel = (x,y,w)=>{ const d=Math.hypot(x-w.cx,y-w.cy); return d>w.r*0.55 && d<w.r*1.08; };
+
+  // טבעות גלגלים (שתי התכנסויות מעגליות)
+  for(const w of [WF,WR]){
+    const count=11;
+    for(let i=0;i<count;i++){
+      const ang=Math.PI + (Math.PI*i)/(count-1) + (rnd()-0.5)*0.12;
+      const rr=w.r*(0.82+rnd()*0.22);
+      const x=w.cx+Math.cos(ang)*rr, y=w.cy+Math.sin(ang)*rr;
+      if(y>bottomB+6) continue;
+      nodes.push({id:`w-${w.cx}-${i}`,x,y,r:3+rnd()*1.6,w:0.7+rnd()*0.3});
+    }
+    nodes.push({id:`wc-${w.cx}`,x:w.cx,y:w.cy-10,r:2.4,w:0.45});
+  }
+  // קשת גג עליונה
+  const roofPts=[];
+  for(let i=0;i<=10;i++){
+    const x=330+(i/10)*360, y=topB(x)+(rnd()-0.5)*6;
+    nodes.push({id:`roof-${i}`,x,y,r:3+rnd()*1.4,w:0.65+rnd()*0.3});
+    roofPts.push({x,y});
+  }
+  const roof="M "+roofPts.map(p=>`${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" L ");
+  // מילוי מסת הגוף עם אזורים פתוחים
+  for(let gx=160;gx<=850;gx+=46){
+    for(let gy=150;gy<=330;gy+=40){
+      const jx=gx+(rnd()-0.5)*30, jy=gy+(rnd()-0.5)*28;
+      if(!inBody(jx,jy)) continue;
+      const openBias=0.28+0.22*(jy>250?1:0);
+      if(rnd()<openBias) continue;
+      const strong = jy<215 || nearWheel(jx,jy,WF) || nearWheel(jx,jy,WR);
+      nodes.push({id:`b-${gx}-${gy}`,x:jx,y:jy,r:2.2+rnd()*(strong?2.2:1.4),w:strong?0.55+rnd()*0.35:0.28+rnd()*0.25});
+    }
+  }
+  // נקודות בודדות מחוץ למבנה
+  [[96,196],[120,150],[150,110],[880,180],[910,232],[500,86],[60,300],[945,300],[250,92],[760,96]]
+    .forEach(([x,y],i)=> nodes.push({id:`o-${i}`,x:x+(rnd()-0.5)*14,y:y+(rnd()-0.5)*14,r:2+rnd()*1.4,w:0.3+rnd()*0.25,outlier:true}));
+
+  // קשרים: k-NN קצר
+  const edges=[], seen=new Set(), MAX=86;
+  for(let i=0;i<nodes.length;i++){
+    const a=nodes[i], dists=[];
+    for(let j=0;j<nodes.length;j++){ if(i===j) continue; const b=nodes[j]; const d=Math.hypot(a.x-b.x,a.y-b.y); if(d<=MAX) dists.push({j,d}); }
+    dists.sort((p,q)=>p.d-q.d);
+    const k=a.outlier?1:2+Math.floor(rnd()*2);
+    for(let t=0;t<Math.min(k,dists.length);t++){
+      const e=dists[t], b=nodes[e.j];
+      const key=i<e.j?`${i}-${e.j}`:`${e.j}-${i}`;
+      if(seen.has(key)) continue; seen.add(key);
+      edges.push({a:a.id,b:b.id,strong:a.w>0.6&&b.w>0.6&&e.d<60});
+    }
+  }
+  return {nodes,edges,wheels:[WF,WR],roof};
+}
+
+const MESH = buildMesh();
+const NODE_MAP = Object.fromEntries(MESH.nodes.map(n=>[n.id,n]));
+
+/* ===== SVG של הרשת ===== */
+function carSvg(state, variant){
+  const edges = MESH.edges.map((e,i)=>{
+    const a=NODE_MAP[e.a], b=NODE_MAP[e.b];
+    return `<line class="edge${e.strong?' edge--strong':''}" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}"/>`;
+  }).join('');
+  const pulses = MESH.edges.filter((_,i)=>i%3===0).map((e,i)=>{
+    const a=NODE_MAP[e.a], b=NODE_MAP[e.b], begin=`${(i*90)%2000}ms`;
+    return `<circle r="3.2" class="car-pulse">
+      <animate attributeName="cx" values="${a.x};${b.x}" dur="2s" begin="${begin}" repeatCount="indefinite" calcMode="spline" keySplines="0.4 0 0.2 1"/>
+      <animate attributeName="cy" values="${a.y};${b.y}" dur="2s" begin="${begin}" repeatCount="indefinite" calcMode="spline" keySplines="0.4 0 0.2 1"/>
+    </circle>`;
+  }).join('');
+  const nodes = MESH.nodes.map(n=>{
+    const op = n.outlier ? 0.5 : (0.3 + 0.6*n.w);
+    return `<circle class="node${n.outlier?' node--outlier':''}" cx="${n.x}" cy="${n.y}" r="${n.r}" style="opacity:${op.toFixed(2)}"/>`;
+  }).join('');
+  const wheels = MESH.wheels.map(w=>`<circle cx="${w.cx}" cy="${w.cy}" r="${w.r}"/>`).join('');
+  return `<svg class="car-svg car-svg--${variant}" data-state="${state}" viewBox="0 0 1000 460" preserveAspectRatio="xMidYMid meet" role="img" aria-label="רשת אינטליגנציה בצורת רכב" xmlns="http://www.w3.org/2000/svg">
+    <defs><radialGradient id="rg" cx="50%" cy="46%" r="60%">
+      <stop offset="0%" stop-color="var(--c-accent)" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="var(--c-accent)" stop-opacity="0"/>
+    </radialGradient></defs>
+    <ellipse class="car-aura" cx="505" cy="250" rx="360" ry="150" fill="url(#rg)" aria-hidden="true"/>
+    <path class="car-roof-hint" d="${MESH.roof}" aria-hidden="true"/>
+    <g class="car-wheels" aria-hidden="true">${wheels}</g>
+    <g class="car-edges">${edges}</g>
+    <g class="car-pulses" aria-hidden="true">${pulses}</g>
+    <g class="car-nodes">${nodes}</g>
+  </svg>`;
+}
+
+/* ===== נתוני הדגמה לכרטיס ===== */
+const DEMO = {
+  title:"השוואת נטו חודשי", subtitle:"הדגמה · הנתונים להמחשה בלבד",
+  rows:[
+    {label:"שכר ברוטו", a:"₪24,000", b:"₪24,000"},
+    {label:"שווי שימוש", a:"₪3,960", b:"₪5,310"},
+    {label:"זקיפת מס", a:"−₪1,584", b:"−₪2,124"},
+    {label:"השתתפות עובד", a:"−₪900", b:"−₪1,450"},
+  ],
+  nets:{a:"₪15,820", b:"₪15,130"}, cars:{a:"מאזדה 3", b:"טויוטה קורולה היברידי"},
+  delta:"+₪690 לטובת מאזדה 3",
+};
+
+/* ===== מצב ה-UI ===== */
+const state = { screen:"entry", motion:"rest", step:"email", email:"", code:"" };
+const STATES = [["rest","מנוחה"],["processing","עיבוד"],["result","תוצאה"],["error","תקלה"]];
+const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+function wordmark(compact){
+  return `<div class="pt-wordmark${compact?' pt-wordmark--compact':''}">
+    <span class="pt-wordmark__name">שטראוס</span><span class="pt-wordmark__sep"> · </span><span class="pt-wordmark__sub">יועץ הרכב</span>
+  </div>`;
+}
+
+function demoBar(){
+  const motionBtns = STATES.map(([id,label])=>`<button class="pt-seg__btn${state.motion===id?' is-active':''}" data-motion="${id}">${label}</button>`).join('');
+  return `<div class="pt-demobar" role="region" aria-label="בורר מצבים להדגמה">
+    <span class="pt-demobar__tag">הדגמה</span>
+    <div class="pt-seg" role="group" aria-label="מסך">
+      <button class="pt-seg__btn${state.screen==='entry'?' is-active':''}" data-screen="entry">כניסה</button>
+      <button class="pt-seg__btn${state.screen==='chat'?' is-active':''}" data-screen="chat">שיחה</button>
+    </div>
+    <div class="pt-seg" role="group" aria-label="מצב תנועה">${motionBtns}</div>
+    ${reduced?'<span class="pt-demobar__hint">תנועה מופחתת פעילה</span>':''}
+  </div>`;
+}
+
+function entryScreen(){
+  const m = reduced ? "rest" : state.motion;
+  const form = state.step==="email"
+    ? `<form class="pt-form" data-form="email">
+        <label class="pt-field"><span>כתובת מייל</span>
+          <input type="email" dir="ltr" placeholder="name@company.com" value="${state.email}" data-input="email"/></label>
+        <button class="btn btn-primary" type="submit" ${state.email.trim()?'':'disabled'}>שליחת קוד</button>
+        <p class="pt-note">הדגמה: לא נשלח מייל אמיתי.</p>
+      </form>`
+    : `<form class="pt-form" data-form="code">
+        <p class="pt-sent">שלחנו קוד אל <b dir="ltr">${state.email||"name@company.com"}</b></p>
+        <label class="pt-field"><span>קוד אימות</span>
+          <input class="pt-code" dir="ltr" inputmode="numeric" maxlength="6" placeholder="______" value="${state.code}" data-input="code"/></label>
+        <button class="btn btn-primary" type="submit" ${state.code.length>=4?'':'disabled'}>כניסה</button>
+        <button type="button" class="btn-ghost" data-action="back-email">חזרה לשינוי המייל</button>
+      </form>`;
+  return `<main class="pt-screen pt-entry">
+    <div class="pt-entry__bg" aria-hidden="true">${carSvg(m,"hero")}</div>
+    <div class="pt-entry__content">
+      ${wordmark(false)}
+      <div class="card pt-authcard">
+        <header class="pt-authcard__head"><h1>כניסה</h1><p>הכניסה בקוד חד-פעמי שנשלח למייל.</p></header>
+        ${form}
+      </div>
+    </div>
+  </main>`;
+}
+
+function compareCard(){
+  const rows = DEMO.rows.map(r=>`<tr><th scope="row">${r.label}</th><td>${r.a}</td><td>${r.b}</td></tr>`).join('');
+  return `<div class="pt-msg pt-msg--bot"><div class="card pt-compare">
+    <header class="pt-compare__head"><h2>${DEMO.title}</h2><span class="pt-compare__sub">${DEMO.subtitle}</span></header>
+    <div class="pt-compare__cols">
+      <div class="pt-compare__colhead"><span class="pt-chip pt-chip--a">${DEMO.cars.a}</span></div>
+      <div class="pt-compare__colhead"><span class="pt-chip pt-chip--b">${DEMO.cars.b}</span></div>
+    </div>
+    <table class="pt-compare__table"><tbody>${rows}
+      <tr class="pt-compare__net"><th scope="row">נטו צפוי</th><td>${DEMO.nets.a}</td><td>${DEMO.nets.b}</td></tr>
+    </tbody></table>
+    <footer class="pt-compare__delta">${DEMO.delta}</footer>
+  </div></div>`;
+}
+
+function chatScreen(){
+  const m = reduced ? "rest" : state.motion;
+  const msgs = [
+    ["bot","שלום! אני יועץ הרכב. על איזה רכב נדבר?"],
+    ["me","אני מתלבט בין מאזדה 3 לטויוטה קורולה היברידי."],
+    ["bot","מצוין. בוא נשווה את ההשפעה על הנטו החודשי שלך."],
+  ].map(([who,t])=>`<div class="pt-msg pt-msg--${who}"><div class="pt-bubble">${t}</div></div>`).join('');
+  const typing = state.motion==="processing" ? `<div class="pt-msg pt-msg--bot"><div class="pt-bubble pt-bubble--typing"><span></span><span></span><span></span></div></div>` : "";
+  const err = state.motion==="error" ? `<div class="pt-msg pt-msg--bot"><div class="pt-bubble pt-bubble--error">משהו השתבש בעיבוד. נסו שוב בעוד רגע.</div></div>` : "";
+  const result = state.motion==="result" ? compareCard() : "";
+  return `<main class="pt-screen pt-chat">
+    <aside class="pt-chat__aside" aria-hidden="true">${carSvg(m,"margin")}</aside>
+    <section class="pt-chat__main">
+      <div class="pt-chat__topbar">${wordmark(true)}<button class="btn-ghost" data-screen="entry">← למסך הכניסה</button></div>
+      <div class="pt-thread">${msgs}${typing}${err}${result}</div>
+      <div class="pt-composer"><input placeholder="כתבו הודעה…" aria-label="הודעה"/><button class="btn btn-primary">שליחה</button></div>
+    </section>
+  </main>`;
+}
+
+function render(){
+  const root = document.getElementById("root");
+  const active = document.activeElement;
+  const focusKey = active && active.dataset ? active.dataset.input : null;
+  const selStart = active ? active.selectionStart : null;
+  root.innerHTML = demoBar() + (state.screen==="entry" ? entryScreen() : chatScreen());
+  if(focusKey){
+    const el = root.querySelector(`[data-input="${focusKey}"]`);
+    if(el){ el.focus(); try{ el.setSelectionRange(selStart,selStart); }catch(e){} }
+  }
+  bind();
+}
+
+function bind(){
+  const root = document.getElementById("root");
+  root.querySelectorAll("[data-screen]").forEach(b=> b.onclick=()=>{ state.screen=b.dataset.screen; if(state.screen==="entry") state.step="email"; render(); });
+  root.querySelectorAll("[data-motion]").forEach(b=> b.onclick=()=>{ state.motion=b.dataset.motion; render(); });
+  const back = root.querySelector('[data-action="back-email"]'); if(back) back.onclick=()=>{ state.step="email"; render(); };
+  const emailInput = root.querySelector('[data-input="email"]'); if(emailInput) emailInput.oninput=e=>{ state.email=e.target.value; const btn=e.target.closest("form").querySelector("button[type=submit]"); btn.disabled=!state.email.trim(); };
+  const codeInput = root.querySelector('[data-input="code"]'); if(codeInput) codeInput.oninput=e=>{ state.code=e.target.value.replace(/\D/g,""); e.target.value=state.code; const btn=e.target.closest("form").querySelector("button[type=submit]"); btn.disabled=state.code.length<4; };
+  const emailForm = root.querySelector('[data-form="email"]'); if(emailForm) emailForm.onsubmit=e=>{ e.preventDefault(); if(state.email.trim()){ state.step="code"; render(); } };
+  const codeForm = root.querySelector('[data-form="code"]'); if(codeForm) codeForm.onsubmit=e=>{ e.preventDefault(); state.screen="chat"; render(); };
+}
+
+render();
+</script>
+</body>
+</html>

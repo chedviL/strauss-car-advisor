@@ -4,7 +4,7 @@
 // מימוש Supabase-Postgres (PgCaseRepository) מממש את אותו ממשק מול Postgres עם RLS.
 
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import type {
   CaseFacts,
@@ -126,6 +126,9 @@ export interface CaseRepository {
   listCasesByOwner(ownerId: string): Promise<CaseRecord[]>;
   /** בירורים של הבעלים בלבד (לפי RLS/בעלות), מהעדכני לישן. */
   listCaseSummaries(ownerId: string, limit?: number): Promise<CaseSummary[]>;
+  /** מחיקת תיק של הבעלים (כולל הודעות/תרחישים/השוואות/פניות - cascade). מחזיר
+   *  האם נמחק (false אם לא נמצא / לא בבעלות). */
+  deleteCase(caseId: string, ownerId: string): Promise<boolean>;
   upsertAlternative(
     caseId: string,
     ownerId: string,
@@ -335,6 +338,14 @@ export class FileCaseRepository implements CaseRepository {
       });
     }
     return out.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, limit);
+  }
+
+  async deleteCase(caseId: string, ownerId: string): Promise<boolean> {
+    // בעלות נאכפת: קוראים את התיק ומוודאים שה-ownerId תואם לפני מחיקה.
+    const stored = this.read(ownerId, caseId);
+    if (!stored || stored.case.ownerId !== ownerId) return false;
+    unlinkSync(this.casePath(ownerId, caseId));
+    return true;
   }
 
   async upsertAlternative(

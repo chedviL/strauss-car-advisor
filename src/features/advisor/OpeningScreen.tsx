@@ -16,7 +16,7 @@ export function OpeningScreen({ employees }: { employees: SampleEmployee[] }) {
         הרכב הבא שלך. מה הוא ישנה בנטו?
       </h1>
       <p style={{ color: "var(--color-muted)", marginTop: "var(--space-2)" }}>
-        דברו איתי בחופשיות. אבדוק זכאות, אשלוף שווי שימוש ואחשב את ההפרש בנטו.
+        דבר איתי בחופשיות. אבדוק זכאות, אשלוף שווי שימוש ואחשב את ההפרש בנטו.
       </p>
 
 
@@ -34,7 +34,7 @@ export function OpeningScreen({ employees }: { employees: SampleEmployee[] }) {
       </div>
 
       <div style={{ marginTop: "var(--space-5)" }}>
-        <h2 style={{ fontSize: "var(--font-lg)" }}>בחרו עובד לדוגמה</h2>
+        <h2 style={{ fontSize: "var(--font-lg)" }}>בחר עובד לדוגמה</h2>
         <div
           style={{
             display: "grid",

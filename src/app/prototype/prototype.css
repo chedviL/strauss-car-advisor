@@ -1,0 +1,369 @@
+/* src/app/prototype/prototype.css
+   סגנונות מתוחמים לאב-הטיפוס בלבד (קידומת pt- / car-).
+   משתמש בטוקנים הקיימים מ-globals.css (--color-*). RTL, רקע בהיר וחם,
+   טקסט כחול עמוק, נגיעות טורקיז מאופקות. כיבוד prefers-reduced-motion. */
+
+.pt-root {
+  --c-ink: var(--color-primary);          /* כחול עמוק */
+  --c-ink-strong: var(--color-primary-hover);
+  --c-accent: #2f9c92;                     /* טורקיז מאופק */
+  --c-accent-soft: #8fcfc8;
+  --c-warn: var(--color-loss);
+
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  color: var(--c-ink);
+  background:
+    radial-gradient(1200px 600px at 70% -10%, #fdfbf7 0%, transparent 60%),
+    radial-gradient(900px 500px at 10% 110%, #f0ece4 0%, transparent 55%),
+    var(--color-bg);
+}
+
+/* ===================== בורר ההדגמה ===================== */
+.pt-demobar {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding: var(--space-2) var(--space-4);
+  background: color-mix(in srgb, var(--color-surface) 85%, transparent);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--color-border);
+}
+.pt-demobar__tag {
+  font-size: var(--font-sm);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--c-accent);
+  background: color-mix(in srgb, var(--c-accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--c-accent) 30%, transparent);
+  padding: 2px 10px;
+  border-radius: var(--radius-pill);
+}
+.pt-demobar__hint {
+  font-size: var(--font-sm);
+  color: var(--color-muted);
+  margin-inline-start: auto;
+}
+
+.pt-seg {
+  display: inline-flex;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  padding: 3px;
+  gap: 2px;
+}
+.pt-seg__btn {
+  font: inherit;
+  font-size: var(--font-sm);
+  font-weight: 600;
+  border: 0;
+  background: transparent;
+  color: var(--color-muted);
+  padding: 6px 14px;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition: background-color var(--t-fast) ease, color var(--t-fast) ease;
+}
+.pt-seg__btn:hover { color: var(--c-ink); }
+.pt-seg__btn.is-active {
+  background: var(--c-ink);
+  color: #fff;
+}
+.pt-seg__btn:focus-visible { outline: 2px solid var(--c-ink); outline-offset: 2px; }
+
+/* ===================== מבנה מסכים ===================== */
+.pt-screen { flex: 1; position: relative; }
+
+/* ---- מסך כניסה ---- */
+.pt-entry {
+  display: grid;
+  place-items: center;
+  padding: var(--space-5) var(--space-4);
+  overflow: hidden;
+}
+.pt-entry__bg {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+/* הרשת גדולה ועדינה ברקע - לא מאחורי הטקסט הקריא (הכרטיס אטום מעליה) */
+.pt-entry__bg .car-svg {
+  width: min(1200px, 150%);
+  height: auto;
+  opacity: 0.5;
+}
+.pt-entry__content {
+  position: relative;
+  z-index: 1;
+  width: min(440px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  align-items: center;
+}
+.pt-authcard {
+  width: 100%;
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  background: color-mix(in srgb, var(--color-surface) 94%, transparent);
+}
+.pt-authcard__head { text-align: center; }
+.pt-authcard__head h1 { font-size: var(--font-xl); color: var(--c-ink); }
+.pt-authcard__head p { color: var(--color-muted); margin-top: var(--space-2); }
+
+.pt-form { display: flex; flex-direction: column; gap: var(--space-3); }
+.pt-field { display: flex; flex-direction: column; gap: 6px; }
+.pt-field > span { font-size: var(--font-sm); font-weight: 600; color: var(--c-ink); }
+.pt-code { letter-spacing: 0.4em; text-align: center; font-size: var(--font-lg); }
+.pt-note, .pt-sent { font-size: var(--font-sm); color: var(--color-muted); text-align: center; }
+.pt-sent b { color: var(--c-ink); }
+
+/* ---- מסך שיחה ---- */
+.pt-chat {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  gap: 0;
+  overflow: hidden;
+}
+.pt-chat__aside {
+  position: relative;
+  border-inline-end: 1px solid var(--color-border);
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(400px 300px at 40% 30%, color-mix(in srgb, var(--c-accent) 8%, transparent), transparent 70%);
+}
+/* הרשת נסוגה לשוליים: קטנה, מעומעמת, "מציצה" מצד הגבול */
+.pt-chat__aside .car-svg {
+  width: 150%;
+  height: auto;
+  opacity: 0.34;
+  transform: translateX(8%);
+}
+
+.pt-chat__main {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - 56px);
+  max-height: calc(100vh - 56px);
+  max-width: 820px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 0 var(--space-4);
+}
+.pt-chat__topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.pt-thread {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4) 2px;
+}
+.pt-msg { display: flex; }
+.pt-msg--bot { justify-content: flex-start; }
+.pt-msg--me { justify-content: flex-end; }
+.pt-bubble {
+  max-width: 78%;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  line-height: 1.5;
+  box-shadow: var(--shadow-sm);
+}
+.pt-msg--bot .pt-bubble {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-start-start-radius: 4px;
+  color: var(--color-text);
+}
+.pt-msg--me .pt-bubble {
+  background: var(--c-ink);
+  color: #fff;
+  border-start-end-radius: 4px;
+}
+.pt-bubble--error {
+  background: var(--color-loss-soft);
+  border-color: color-mix(in srgb, var(--c-warn) 40%, transparent);
+  color: var(--c-warn);
+}
+
+/* מחוון הקלדה (עיבוד) - שלוש נקודות, ללא הבהוב מהיר */
+.pt-bubble--typing { display: inline-flex; gap: 5px; align-items: center; }
+.pt-bubble--typing span {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--c-accent);
+  animation: ptType 1.4s ease-in-out infinite;
+}
+.pt-bubble--typing span:nth-child(2) { animation-delay: 0.2s; }
+.pt-bubble--typing span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes ptType {
+  0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-3px); }
+}
+
+/* composer */
+.pt-composer {
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-3) 0 var(--space-4);
+  border-top: 1px solid var(--color-border);
+}
+.pt-composer input { flex: 1; }
+
+/* ===================== כרטיס השוואה ===================== */
+.pt-compare { width: min(100%, 560px); padding: var(--space-4); }
+.pt-compare__head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); flex-wrap: wrap; }
+.pt-compare__head h2 { font-size: var(--font-lg); color: var(--c-ink); }
+.pt-compare__sub { font-size: var(--font-sm); color: var(--color-muted); }
+.pt-compare__cols { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2); margin-top: var(--space-3); }
+.pt-compare__colhead { text-align: center; }
+.pt-chip {
+  display: inline-block; font-size: var(--font-sm); font-weight: 700;
+  padding: 4px 12px; border-radius: var(--radius-pill);
+}
+.pt-chip--a { background: var(--color-accent-soft); color: var(--c-ink); }
+.pt-chip--b { background: color-mix(in srgb, var(--c-accent) 16%, transparent); color: #1d6b63; }
+
+.pt-compare__table { width: 100%; border-collapse: collapse; margin-top: var(--space-3); }
+.pt-compare__table th[scope="row"] { text-align: start; font-weight: 600; color: var(--color-muted); font-size: var(--font-sm); }
+.pt-compare__table td { text-align: center; padding: 8px 4px; font-variant-numeric: tabular-nums; }
+.pt-compare__table tr { border-top: 1px solid var(--color-border); }
+.pt-compare__net td { font-weight: 800; color: var(--c-ink); font-size: var(--font-lg); }
+.pt-compare__net th { color: var(--c-ink) !important; }
+.pt-compare__delta {
+  margin-top: var(--space-3);
+  text-align: center;
+  font-weight: 700;
+  color: var(--color-gain);
+  background: var(--color-gain-soft);
+  border-radius: var(--radius-sm);
+  padding: 8px;
+}
+
+/* ===================== ווֹרדמַרק ===================== */
+.pt-wordmark { font-size: var(--font-xl); font-weight: 800; letter-spacing: -0.01em; }
+.pt-wordmark--compact { font-size: var(--font-lg); }
+.pt-wordmark__name { color: var(--c-ink); }
+.pt-wordmark__sep { color: var(--c-accent); }
+.pt-wordmark__sub { color: var(--color-muted); font-weight: 700; }
+
+/* ===================== הרשת (CarConstellation) ===================== */
+.car-svg { display: block; max-width: 100%; height: auto; overflow: visible; }
+
+/* צבעים בסיסיים של הרשת */
+.car-svg {
+  --c-edge: color-mix(in srgb, var(--color-primary) 32%, transparent);
+  --c-edge-strong: color-mix(in srgb, var(--color-primary) 55%, transparent);
+  --c-node: var(--color-primary);
+}
+
+.edge { stroke: var(--c-edge); stroke-width: 1; }
+.edge--strong { stroke: var(--c-edge-strong); stroke-width: 1.4; }
+
+.node {
+  fill: var(--c-node);
+  /* בהירות לפי משקל => תחושת עומק */
+  opacity: calc(0.3 + 0.6 * var(--w, 0.5));
+}
+.node--outlier { fill: var(--c-accent); opacity: 0.5; }
+
+.car-roof-hint { stroke: var(--c-edge-strong); stroke-width: 1; stroke-dasharray: 2 7; opacity: 0.5; }
+.car-wheels circle { fill: none; stroke: var(--c-edge); stroke-width: 1; stroke-dasharray: 3 8; opacity: 0.45; }
+
+.car-pulse { fill: var(--c-accent); opacity: 0; }
+.car-aura { opacity: 0; transition: opacity 600ms ease; }
+
+/* ------- מצבי תנועה ------- */
+
+/* מנוחה: נשימה עדינה בלבד של הרשת כולה (לא תזוזת נקודות) */
+.car-svg[data-state="rest"] .car-nodes,
+.car-svg[data-state="rest"] .car-edges {
+  animation: ptBreathe 7s ease-in-out infinite;
+  transform-origin: 50% 50%;
+}
+@keyframes ptBreathe {
+  0%, 100% { opacity: 0.92; }
+  50% { opacity: 1; }
+}
+
+/* עיבוד: פולסי אור רצים לאורך הרשת (ה-SMIL כבר מזיז; כאן מדליקים אותם) */
+.car-svg[data-state="processing"] .car-pulse { opacity: 0.95; }
+.car-svg[data-state="processing"] .edge { animation: ptEdgeGlow 2.4s ease-in-out infinite; }
+.car-svg[data-state="processing"] .edge { animation-delay: var(--d, 0ms); }
+@keyframes ptEdgeGlow {
+  0%, 100% { stroke: var(--c-edge); }
+  50% { stroke: color-mix(in srgb, var(--c-accent) 70%, var(--c-edge)); }
+}
+
+/* תוצאה: הפולסים נרגעים, זוהר רך מתכנס */
+.car-svg[data-state="result"] .car-aura { opacity: 0.8; }
+.car-svg[data-state="result"] .node { animation: ptSettle 1200ms ease-out both; }
+@keyframes ptSettle {
+  0% { opacity: 1; }
+  100% { opacity: calc(0.3 + 0.6 * var(--w, 0.5)); }
+}
+
+/* תקלה: גוון אזהרה מאופק + פעימה בודדת ואיטית (ללא הבהוב מהיר) */
+.car-svg[data-state="error"] { --c-edge: color-mix(in srgb, var(--color-loss) 30%, transparent); --c-node: var(--color-loss); }
+.car-svg[data-state="error"] .car-nodes { animation: ptErr 2.2s ease-in-out infinite; }
+@keyframes ptErr {
+  0%, 100% { opacity: 0.8; }
+  50% { opacity: 1; }
+}
+
+/* ===================== רספונסיביות ===================== */
+@media (max-width: 860px) {
+  .pt-chat { grid-template-columns: 1fr; }
+  .pt-chat__aside {
+    position: absolute;
+    inset: 56px 0 auto 0;
+    height: 180px;
+    border-inline-end: 0;
+    border-bottom: 1px solid var(--color-border);
+    opacity: 0.6;
+    z-index: 0;
+    pointer-events: none;
+  }
+  .pt-chat__aside .car-svg { width: 120%; opacity: 0.22; transform: none; }
+  .pt-chat__main {
+    position: relative;
+    z-index: 1;
+    min-height: calc(100vh - 56px);
+    max-height: none;
+  }
+  .pt-entry__bg .car-svg { width: 180%; opacity: 0.38; }
+  .pt-demobar { gap: var(--space-2); }
+}
+
+@media (max-width: 480px) {
+  .pt-bubble { max-width: 88%; }
+  .pt-compare__table td { font-size: var(--font-sm); }
+}
+
+/* ===================== תנועה מופחתת ===================== */
+@media (prefers-reduced-motion: reduce) {
+  .car-svg[data-state] .car-nodes,
+  .car-svg[data-state] .car-edges,
+  .car-svg[data-state] .edge,
+  .car-svg[data-state] .node,
+  .pt-bubble--typing span { animation: none !important; }
+  .car-pulse { opacity: 0 !important; }
+  .car-aura { transition: none; }
+}

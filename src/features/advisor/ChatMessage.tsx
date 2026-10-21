@@ -1,106 +1,121 @@
 // src/features/advisor/ChatMessage.tsx
-// בועת הודעה ומרנדר markdown מינימלי ובטוח. מופרד מ-ChatPanel כדי שאפשר יהיה למדוד
-// את הפריסה בפועל בדפדפן (כיווניות/יישור/מעטפת) מול אותו קוד שרץ במוצר.
+// בועת הודעה + מרנדר Markdown. היועץ מרונדר דרך react-markdown + remark-gfm
+// (GFM: טבלאות, רשימות ממוספרות, ~קו חוצה~, קישורים). מופרד מ-ChatPanel כדי
+// שאפשר יהיה למדוד את הפריסה בפועל בדפדפן (כיווניות/יישור/מעטפת).
+//
+// אבטחה: react-markdown אינו מרנדר HTML גולמי כברירת מחדל (אין rehype-raw),
+// ולכן תוכן מהמודל אינו יכול להזריק <script>/<img onerror>. קישורים נפתחים
+// בטאב חדש עם rel="noopener noreferrer".
+import { useEffect, useRef, useState, type ComponentPropsWithoutRef } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { rowStyle, userEnvelopeStyle, assistantEnvelopeStyle } from "./chat-message-layout.js";
 
-export function MessageBubble({ role, parts }: { role: string; parts: Array<Record<string, unknown>> }) {
+export function MessageBubble({
+  role,
+  parts,
+  streaming = false,
+}: {
+  role: string;
+  parts: Array<Record<string, unknown>>;
+  streaming?: boolean;
+}) {
   const isUser = role === "user";
   const textParts = parts.filter((p) => p.type === "text").map((p) => p.text as string);
   const text = textParts.join("");
+  // אפקט הקלדה: בזמן שתשובת היועץ נכתבת, חושפים את הטקסט בהדרגה בצד הלקוח.
+  // כך האפקט עקבי בין אם השרת שלח את הטקסט בבת אחת (מסלול A) או זורם (מסלול B).
+  const shown = useTypewriter(text, streaming && !isUser);
   if (!text) return null; // הודעות ללא טקסט (data-parts בלבד) אינן מוצגות כבועה
 
-  // מעטפת יציבה ומעוגנת לימין (ראו chat-message-layout.ts): תחילת המשפט לא זזה בזמן
-  // streaming. העובד/ת עם משטח רך (מצומצם לתוכן); היועץ ברוחב מלא, ללא מסגרת.
+  // מעטפת יציבה ומעוגנת לימין (ראו chat-message-layout.ts): תחילת המשפט לא זזה
+  // בזמן streaming. המשתמש/ת עם משטח רך (מצומצם לתוכן); היועץ ברוחב מלא ללא מסגרת.
   return (
-    <div dir="rtl" style={rowStyle}>
+    <div dir="rtl" className={`msg-row ${isUser ? "msg-row-user" : "msg-row-assistant"}`} style={rowStyle}>
       <div
         dir="rtl"
-        style={{
-          ...(isUser ? userEnvelopeStyle : assistantEnvelopeStyle),
-          background: isUser ? "var(--color-accent-soft)" : "transparent",
-          color: "var(--color-text)",
-          borderRadius: "var(--radius-md)",
-          padding: isUser ? "var(--space-2) var(--space-3)" : "var(--space-1) var(--space-2)",
-          whiteSpace: isUser ? "pre-wrap" : "normal",
-          lineHeight: 1.65,
-          fontSize: "var(--font-base)",
-        }}
+        className={isUser ? "msg-bubble msg-bubble-user" : "msg-bubble msg-bubble-assistant"}
+        style={isUser ? userEnvelopeStyle : assistantEnvelopeStyle}
       >
-        {isUser ? text : <Markdown text={text} />}
+        {isUser ? (
+          <span className="msg-user-text">{text}</span>
+        ) : (
+          <ChatMarkdown text={shown} />
+        )}
       </div>
     </div>
   );
 }
-// --- מרנדר markdown מינימלי ובטוח: טבלאות, bold, רשימות. ללא HTML גולמי. ---
-function renderInline(text: string, keyPrefix: string): React.ReactNode[] {
-  // bold עם **...**
-  const out: React.ReactNode[] = [];
-  const re = /\*\*(.+?)\*\*/g;
-  let last = 0; let m: RegExpExecArray | null; let i = 0;
-  while ((m = re.exec(text)) !== null) {
-    if (m.index > last) out.push(text.slice(last, m.index));
-    out.push(<strong key={`${keyPrefix}-b${i++}`}>{m[1]}</strong>);
-    last = m.index + m[0].length;
-  }
-  if (last < text.length) out.push(text.slice(last));
-  return out;
+
+// אפקט הקלדה חלק: חושף תווים בהדרגה עד לטקסט המלא. מכבד prefers-reduced-motion
+// (חשיפה מיידית). כאשר הטקסט ממשיך לגדול (streaming חי) - "רודף" אחריו בקצב
+// קבוע, כך שתמיד מרגיש כמו הקלדה גם אם הטוקנים מגיעים בקפיצות.
+function useTypewriter(full: string, enabled: boolean): string {
+  const [count, setCount] = useState(enabled ? 0 : full.length);
+  const rafStart = useRef<number | null>(null);
+  const reduced = useRef(false);
+
+  useEffect(() => {
+    reduced.current =
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  }, []);
+
+  useEffect(() => {
+    if (!enabled || reduced.current) {
+      setCount(full.length);
+      return;
+    }
+    let raf = 0;
+    const CHARS_PER_SEC = 90; // קצב הקלדה נעים
+    rafStart.current = null;
+    let base = 0;
+    setCount((c) => {
+      base = Math.min(c, full.length);
+      return base;
+    });
+    const step = (ts: number) => {
+      if (rafStart.current === null) rafStart.current = ts;
+      const elapsed = (ts - rafStart.current) / 1000;
+      const target = Math.min(full.length, base + Math.floor(elapsed * CHARS_PER_SEC));
+      setCount(target);
+      if (target < full.length) raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [full, enabled]);
+
+  // כשה-streaming נגמר, מוודאים שהטקסט המלא מוצג.
+  useEffect(() => {
+    if (!enabled) setCount(full.length);
+  }, [enabled, full.length]);
+
+  return enabled && !reduced.current ? full.slice(0, count) : full;
 }
 
-function Markdown({ text }: { text: string }): React.ReactElement {
-  const lines = text.split("\n");
-  const blocks: React.ReactNode[] = [];
-  let i = 0; let key = 0;
-  while (i < lines.length) {
-    const line = lines[i]!;
-    // טבלה: שורה עם | ואחריה שורת מפריד |---|
-    if (line.includes("|") && i + 1 < lines.length && /^\s*\|?[\s:-]*\|[\s:|-]*$/.test(lines[i + 1]!)) {
-      const header = line.split("|").map((c) => c.trim()).filter((c) => c.length > 0);
-      i += 2;
-      const rows: string[][] = [];
-      while (i < lines.length && lines[i]!.includes("|")) {
-        rows.push(lines[i]!.split("|").map((c) => c.trim()).filter((_, idx, arr) => !(idx === 0 && arr[0] === "") && !(idx === arr.length - 1 && arr[arr.length - 1] === "")));
-        i++;
-      }
-      blocks.push(
-        <div key={`t${key++}`} style={{ margin: "var(--space-3) 0", border: "1px solid var(--color-border)", borderRadius: "var(--radius-sm)", overflow: "hidden" }}>
-          <table dir="rtl" style={{ borderCollapse: "collapse", fontSize: "var(--font-sm)", width: "100%" }}>
-            <thead>
-              <tr>{header.map((h, hi) => (
-                <th key={hi} style={{ padding: "8px 12px", textAlign: "start", background: "var(--color-surface-2)", borderBottom: "1px solid var(--color-border)", fontWeight: 600, color: "var(--color-muted)" }}>{renderInline(h, `h${hi}`)}</th>
-              ))}</tr>
-            </thead>
-            <tbody>
-              {rows.map((r, ri) => (
-                <tr key={ri} style={{ borderTop: ri === 0 ? "none" : "1px solid var(--color-border)" }}>{header.map((_, ci) => (
-                  <td key={ci} style={{ padding: "8px 12px", textAlign: "start", unicodeBidi: "plaintext" }}>{renderInline(r[ci] ?? "", `c${ri}-${ci}`)}</td>
-                ))}</tr>
-              ))}
-            </tbody>
-          </table>
-        </div>,
-      );
-      continue;
-    }
-    // רשימה: שורות שמתחילות ב- - או *
-    if (/^\s*[-*]\s+/.test(line)) {
-      const items: string[] = [];
-      while (i < lines.length && /^\s*[-*]\s+/.test(lines[i]!)) {
-        items.push(lines[i]!.replace(/^\s*[-*]\s+/, ""));
-        i++;
-      }
-      blocks.push(
-        <ul key={`u${key++}`} style={{ margin: "4px 0", paddingInlineStart: "1.2rem" }}>
-          {items.map((it, ii) => <li key={ii}>{renderInline(it, `li${ii}`)}</li>)}
-        </ul>,
-      );
-      continue;
-    }
-    // שורה ריקה
-    if (line.trim() === "") { blocks.push(<div key={`sp${key++}`} style={{ height: 6 }} />); i++; continue; }
-    // פסקה רגילה
-    blocks.push(<div key={`p${key++}`}>{renderInline(line, `p${key}`)}</div>);
-    i++;
-  }
-  // כיוון ויישור מפורשים: הפסקאות נשארות RTL גם כשהשורה נפתחת בשם רכב באנגלית או במספר.
-  return <div dir="rtl" style={{ lineHeight: 1.5, direction: "rtl", textAlign: "right" }}>{blocks}</div>;
+// מרנדר Markdown בטוח (ללא HTML גולמי) עם קומפוננטות ממותגות RTL.
+// כל העיצוב ב-globals.css תחת .chat-md כדי לשמור על עקביות וטוקנים.
+function ChatMarkdown({ text }: { text: string }) {
+  return (
+    <div dir="rtl" className="chat-md">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          // טבלה עטופה במכל גליל כדי שלא תשבור פריסה במסך צר.
+          table: (props: ComponentPropsWithoutRef<"table">) => (
+            <div className="chat-md-tablewrap">
+              <table {...props} />
+            </div>
+          ),
+          a: ({ href, children, ...rest }: ComponentPropsWithoutRef<"a">) => (
+            <a href={href} target="_blank" rel="noopener noreferrer" {...rest}>
+              {children}
+            </a>
+          ),
+        }}
+      >
+        {text}
+      </ReactMarkdown>
+    </div>
+  );
 }

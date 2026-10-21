@@ -97,7 +97,9 @@ export function PayslipUpload({ onApplied }: { onApplied?: () => void }) {
         setMsg(data.status === "already_applied"
           ? "הנתונים כבר הוחלו קודם."
           : "הנתונים הוחלו על התיק. אפשר לשנות כל פרט ולהמשיך בשיחה.");
-        router.refresh(); onApplied?.();
+        // רענון יחיד: onApplied כבר קורא ל-router.refresh() (מהורה). רענון כפול
+        // גורם ל-churn מיותר שעלול להיראות כ"תקיעה".
+        onApplied?.();
       } else if (data.status === "conflict") {
         setPhase("error"); setMsg(data.message ?? "הנתונים השתנו בינתיים; רענן/י ונסה/י שוב.");
       } else {
@@ -195,7 +197,7 @@ export function PayslipUpload({ onApplied }: { onApplied?: () => void }) {
             {phase === "review" && draft && (
               <>
                 <p style={{ fontSize: "var(--font-sm)", color: "var(--color-muted)", marginBottom: "var(--space-2)" }}>
-                  בדקו ותקנו לפני החלה. שדה ריק = לא זוהה (לא יוחל, ולא ידרוס נתון קיים). סימון «?» = ודאות נמוכה.
+                  בדוק ותקן לפני החלה. שדה ריק = לא זוהה (לא יוחל, ולא ידרוס נתון קיים). סימון «?» = ודאות נמוכה.
                 </p>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-3)" }}>
                   {(Object.keys(LABELS) as Array<keyof Extraction>).map((k) => {

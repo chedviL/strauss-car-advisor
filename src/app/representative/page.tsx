@@ -4,6 +4,7 @@
 // מוצג ההקשר הנחוץ להכרעה בלבד: ללא שכר, נטו, מייל או זהות בעלים.
 import { DemoBadge } from "../../features/advisor/DemoBadge.js";
 import { RepresentativePanel } from "../../features/advisor/RepresentativePanel.js";
+import { AppHeader } from "../../features/brand/AppHeader.js";
 import { loadRepInquiries } from "../actions.js";
 import { redirect } from "next/navigation";
 import { getSessionUser } from "../../server/auth/next-session.js";
@@ -17,12 +18,13 @@ export default async function RepresentativePage() {
   const res = await loadRepInquiries();
 
   return (
-    <main style={{ minHeight: "100vh" }}>
+    <main className="app-main">
+      {/* מסך הנציג: אותה שפה, ממשק עבודה ממוקד. ללא רקע רכב דומיננטי (app-main בלבד). */}
+      <AppHeader actions={<a className="btn btn-ghost" href="/inquiries" style={{ borderRadius: "var(--radius-pill)" }}>חזרה לבירורים</a>} />
       <DemoBadge />
-      <div style={{ maxWidth: 820, margin: "0 auto", padding: "var(--space-4)", display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
+      <div className="app-content" style={{ paddingTop: "var(--space-3)" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "var(--space-2)" }}>
           <h1 style={{ fontSize: "var(--font-xl)", margin: 0 }}>אזור נציג</h1>
-          <a className="btn btn-ghost" href="/inquiries" style={{ borderRadius: "var(--radius-pill)" }}>חזרה לבירורים</a>
         </div>
         {res.status === "forbidden" ? (
           <div role="alert" className="card" style={{ padding: "var(--space-4)" }}>

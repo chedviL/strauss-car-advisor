@@ -283,6 +283,11 @@ export class CaseService {
     return await this.repo.listCaseSummaries(ownerId, limit);
   }
 
+  /** מחיקת שיחה של המשתמש/ת (בעלות נאכפת ב-repository/RLS). מחזיר האם נמחק. */
+  async deleteCase(caseId: string, ownerId: string): Promise<boolean> {
+    return await this.repo.deleteCase(caseId, ownerId);
+  }
+
   async pickAlternative(
     caseId: string,
     ownerId: string,

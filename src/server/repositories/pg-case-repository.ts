@@ -170,6 +170,16 @@ export class PgCaseRepository implements CaseRepository {
     });
   }
 
+  async deleteCase(caseId: string, ownerId: string): Promise<boolean> {
+    // בעלות נאכפת ע"י RLS (app.owner_id) + תנאי owner_id מפורש. מחיקת שורת ה-case
+    // מפעילה ON DELETE CASCADE לכל הטבלאות הבנות (messages/scenarios/comparisons/
+    // inquiries/וכו'). דורש GRANT DELETE ל-strauss_app (ראו migration 0018).
+    return this.withOwner(ownerId, async (c) => {
+      const r = await c.query("delete from cases where id = $1", [caseId]);
+      return (r.rowCount ?? 0) > 0;
+    });
+  }
+
   async upsertAlternative(
     caseId: string,
     ownerId: string,

@@ -7,6 +7,7 @@ import { caseService } from "../../server/web/service.js";
 import { DemoBadge } from "../../features/advisor/DemoBadge.js";
 import { AccountMenu } from "../../features/auth/AccountMenu.js";
 import { InquiryRow } from "../../features/auth/InquiryRow.js";
+import { AppHeader } from "../../features/brand/AppHeader.js";
 import { startNewInquiry } from "../inquiry-actions.js";
 import { myStaffScope } from "../actions.js";
 
@@ -21,17 +22,16 @@ export default async function InquiriesPage() {
   ]);
 
   return (
-    <main style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
+    <main className="app-main">
+      <AppHeader actions={<AccountMenu email={user.email} isStaff={staff.isStaff} />} />
       <DemoBadge />
-      <div style={{ width: "100%", maxWidth: 820, margin: "0 auto", padding: "var(--space-4)", display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
+      <div className="app-content" style={{ paddingTop: "var(--space-3)" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "var(--space-2)", flexWrap: "wrap" }}>
           <h1 style={{ fontSize: "var(--font-xl)", margin: 0 }}>הבירורים שלי</h1>
-          <AccountMenu email={user.email} isStaff={staff.isStaff} />
+          <form action={startNewInquiry}>
+            <button type="submit" className="btn btn-primary">שיחה חדשה</button>
+          </form>
         </div>
-
-        <form action={startNewInquiry}>
-          <button type="submit" className="btn btn-primary">שיחה חדשה</button>
-        </form>
 
         {list.length === 0 ? (
           <p style={{ color: "var(--color-muted)" }}>עדיין אין בירורים. אפשר להתחיל בשיחה חדשה.</p>

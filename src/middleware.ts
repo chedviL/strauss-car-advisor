@@ -49,7 +49,9 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
     return to;
   }
   if (user && pathname === "/login") {
-    return NextResponse.redirect(new URL("/inquiries", req.url));
+    // אחרי התחברות: מסך שיחה חדשה וריק (/), לא רשימת הבירורים. ההיסטוריה זמינה
+    // בסרגל הצד שבתוך /.
+    return NextResponse.redirect(new URL("/", req.url));
   }
   return res;
 }

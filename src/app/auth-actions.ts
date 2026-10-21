@@ -28,8 +28,9 @@ export type OtpVerifyResult =
 export async function requestOtp(emailRaw: string): Promise<OtpRequestResult> {
   const email = normalizeEmail(emailRaw);
   if (!email) return { status: "invalid_email" };
-  // חלון קצר לכל כתובת: מונע הצפת תיבת הדואר ושרפת מכסת שליחה.
-  const rl = checkRateLimit(`otp-send:${email}`, 3, 10 * 60_000);
+  // חלון לכל כתובת: מגן מהצפת תיבת הדואר ושרפת מכסה, אך נדיב מספיק להדגמה/בדיקות.
+  // עד 10 שליחות ל-15 דקות לכל כתובת (היה 3 ל-10 דקות).
+  const rl = checkRateLimit(`otp-send:${email}`, 10, 15 * 60_000);
   if (!rl.allowed) return { status: "rate_limited", retryAfterSeconds: rl.retryAfterSeconds };
   try {
     const client = createAuthClient(await nextCookieAdapter());
@@ -68,7 +69,8 @@ export async function verifyOtp(emailRaw: string, codeRaw: string): Promise<OtpV
   const store = await cookies();
   store.delete("strauss_case");
   store.delete("strauss_visit");
-  redirect("/inquiries");
+  // מפנים ישירות למסך היועץ (שיחה נקייה) ולא לרשימת הבירורים.
+  redirect("/");
 }
 
 /** יציאה והחלפת חשבון: מסיימת את הסשן ומנקה כל מצביע למשתמש הקודם. */

@@ -1,10 +1,16 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import "./globals.css";
+import AccessibilityWidget from "@/features/accessibility/AccessibilityWidget";
 
 export const metadata: Metadata = {
   title: "יועץ הרכב של שטראוס",
   description: "סימולטור נטו לבחירת רכב - סביבת הדגמה",
+  icons: {
+    icon: "/brand/logo.png",
+    shortcut: "/brand/logo.png",
+    apple: "/brand/logo.png",
+  },
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
@@ -19,7 +25,10 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           rel="stylesheet"
         />
       </head>
-      <body>{children}</body>
+      <body>
+        {children}
+        <AccessibilityWidget />
+      </body>
     </html>
   );
 }
