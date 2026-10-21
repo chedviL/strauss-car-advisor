@@ -2,8 +2,9 @@
 // גישת התנסות כנציג להדגמה (מוגבלת). אינה הרשאת נציג ארגונית:
 //  * נפתחת רק כשדגל השרת REP_DEMO_ACCESS_ENABLED מופעל; ברירת מחדל כבוי. כל פעולת
 //    הדגמה (כולל בסשן שכבר נפתח) בודקת את הדגל מחדש - הסתרת כפתור אינה מספיקה.
-//  * המתנסה רואה ועונה רק על פניות ששויכו להיקף ההדגמה שלו ב-DB (demo_inquiry_scope):
-//    פניות פיקטיביות שנזרעו עבורו, או פניות שלו עצמו שצירף במפורש (בעלות נבדקת ב-DB).
+//  * המתנסה (מי שלחץ "התנסות כנציג") רואה ועונה רק על: פניות פיקטיביות שנזרעו עבורו
+//    (demo_inquiry_scope), ופניות שלו עצמו (בעלות לפי הסשן המאומת, נבדקת ב-DB). כך מי שפתח
+//    פנייה בשיחה יכול להיכנס כנציג ולענות לעצמו. אין גישה לפניות של אחרים.
 //  * הזהות היא תמיד userId מהסשן המאומת (app.owner_id); שום ערך מהלקוח אינו מרחיב הרשאה.
 //  * מייל התראה: רק לפנייה שהמשתמש יצר בעצמו (owned), לכתובת המאומתת של בעל הבירור.
 //    פניות שנזרעו (בעלים סינתטי 'demo-seed:<id>') אינן מייצרות התראה כלל.
@@ -117,52 +118,6 @@ export async function listDemoInquiries(conn: string, userId: string): Promise<R
     if (enrolled.rows[0]?.e !== true) throw new ForbiddenError("not_enrolled");
     const r = await c.query("select * from demo_rep_list_inquiries()");
     return r.rows.map(mapRepRow);
-  });
-}
-
-export interface AttachableInquiry {
-  inquiryId: string;
-  caseId: string;
-  type: InquiryType;
-  createdAt: string;
-  scenarioRole: "baseline" | "alternative" | null;
-  route: "company_car" | "family" | "waiver" | null;
-  vehicleCode: string | null;
-}
-
-/** פניות פתוחות של המשתמש עצמו שעדיין לא צורפו להדגמה. */
-export async function listAttachable(conn: string, userId: string): Promise<AttachableInquiry[]> {
-  assertEnabled();
-  return await withIdentity(conn, userId, async (c) => {
-    const r = await c.query("select * from demo_rep_attachable()");
-    return r.rows.map((row) => ({
-      inquiryId: row.inquiry_id as string,
-      caseId: row.case_id as string,
-      type: row.inq_type as InquiryType,
-      createdAt: new Date(row.created_at as string).toISOString(),
-      scenarioRole: (row.scenario_role as AttachableInquiry["scenarioRole"]) ?? null,
-      route: (row.route as AttachableInquiry["route"]) ?? null,
-      vehicleCode: (row.vehicle_code as string) ?? null,
-    }));
-  });
-}
-
-// ---------- צירוף / ניתוק מפורש ----------
-
-/** מצרף פנייה של המשתמש להדגמה. הבעלות נבדקת ב-DB; פנייה של אחר -> false (בלי חשיפה). */
-export async function attachInquiry(conn: string, userId: string, inquiryId: string): Promise<boolean> {
-  assertEnabled();
-  return await withIdentity(conn, userId, async (c) => {
-    const r = await c.query("select demo_rep_attach($1::uuid) as ok", [inquiryId]);
-    return r.rows[0]?.ok === true;
-  });
-}
-
-export async function detachInquiry(conn: string, userId: string, inquiryId: string): Promise<boolean> {
-  assertEnabled();
-  return await withIdentity(conn, userId, async (c) => {
-    const r = await c.query("select demo_rep_detach($1::uuid) as ok", [inquiryId]);
-    return r.rows[0]?.ok === true;
   });
 }
 

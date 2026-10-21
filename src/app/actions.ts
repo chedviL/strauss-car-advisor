@@ -9,8 +9,9 @@ import { caseService } from "../server/web/service.js";
 import { requireOwner, requireUser, AuthRequiredError } from "../server/auth/next-session.js";
 import { getStaffScope, ForbiddenError, type RepInquiryView } from "../server/auth/staff.js";
 import { resolveRepAccess, listForAccess, answerAsRep } from "../server/auth/rep-access.js";
-import { repDemoEnabled, enrollInDemo, listAttachable, attachInquiry, detachInquiry, type AttachableInquiry } from "../server/auth/demo-rep.js";
+import { repDemoEnabled, enrollInDemo } from "../server/auth/demo-rep.js";
 import { parseRepAnswer, isUuid } from "../server/auth/rep-input.js";
+import { validateFactsPatch, InvalidFactsError } from "../server/services/facts-validation.js";
 import { sendForInquiryNow } from "../server/notify/worker.js";
 
 export async function startDemoCase(employeeId: string): Promise<void> {
@@ -82,8 +83,15 @@ export async function updateMyFacts(
     creditPoints: number | null;
     qualifyingChildren: number | null;
   }>,
-): Promise<{ status: "ok"; factsRevision: number } | { status: "conflict" } | { status: "no_case" }> {
+): Promise<{ status: "ok"; factsRevision: number } | { status: "conflict" } | { status: "no_case" } | { status: "invalid"; message: string }> {
   const owner = await requireOwner();
+  // Server Action = נקודת קצה ציבורית: מאמתים בזמן ריצה לפני כל יצירת תיק/כתיבה.
+  try {
+    validateFactsPatch(patch);
+  } catch (e) {
+    if (e instanceof InvalidFactsError) return { status: "invalid", message: e.message };
+    throw e;
+  }
   const service = caseService();
   const { cookies } = await import("next/headers");
   const store = await cookies();
@@ -195,7 +203,6 @@ export type RepWorkspace =
       status: "ok";
       mode: "staff" | "demo";
       inquiries: RepInquiryView[];
-      attachable: AttachableInquiry[];
       vehicleNames: Record<string, string>;
     };
 
@@ -206,25 +213,20 @@ export async function loadRepWorkspace(): Promise<RepWorkspace> {
   const conn = dbUrl();
   const access = await resolveRepAccess(conn, user.id);
   if (access.mode === "none") return { status: "none", demoAvailable: access.demoAvailable };
-  const [inquiries, attachable, vehicleNames] = await Promise.all([
+  const [inquiries, vehicleNames] = await Promise.all([
     listForAccess(conn, user.id, access),
-    access.mode === "demo" ? listAttachable(conn, user.id) : Promise.resolve([] as AttachableInquiry[]),
     caseService().vehicleNames(),
   ]);
-  return { status: "ok", mode: access.mode, inquiries, attachable, vehicleNames };
+  return { status: "ok", mode: access.mode, inquiries, vehicleNames };
 }
 
-/** רענון רשימות אחרי פעולה (צירוף/ניתוק/מענה). שגיאת הרשאה -> null. */
-async function refreshLists(userId: string): Promise<{ inquiries: RepInquiryView[]; attachable: AttachableInquiry[] } | null> {
+/** רענון הרשימה אחרי מענה. שגיאת הרשאה -> null. */
+async function refreshLists(userId: string): Promise<{ inquiries: RepInquiryView[] } | null> {
   try {
     const conn = dbUrl();
     const access = await resolveRepAccess(conn, userId);
     if (access.mode === "none") return null;
-    const [inquiries, attachable] = await Promise.all([
-      listForAccess(conn, userId, access),
-      access.mode === "demo" ? listAttachable(conn, userId) : Promise.resolve([] as AttachableInquiry[]),
-    ]);
-    return { inquiries, attachable };
+    return { inquiries: await listForAccess(conn, userId, access) };
   } catch {
     return null;
   }
@@ -232,7 +234,8 @@ async function refreshLists(userId: string): Promise<{ inquiries: RepInquiryView
 
 /**
  * "התנסות כנציג - להדגמה": מצרף את המשתמש המאומת להתנסות המוגבלת וזורע לו פניות פיקטיביות
- * (אידמפוטנטי). פעיל רק כשהדגל בשרת מופעל. אינו מעניק הרשאת נציג ארגונית.
+ * (אידמפוטנטי). מרגע זה הוא רואה גם את הפניות שלו עצמו וענה עליהן. פעיל רק כשהדגל בשרת
+ * מופעל. אינו מעניק הרשאת נציג ארגונית ואינו חושף פניות של אחרים.
  */
 export async function startRepDemo(): Promise<{ status: "ok" } | { status: "disabled" } | { status: "error"; message: string }> {
   let user;
@@ -246,43 +249,6 @@ export async function startRepDemo(): Promise<{ status: "ok" } | { status: "disa
     if (e instanceof ForbiddenError) return { status: "disabled" };
     console.warn(`[rep-demo] enroll failed: ${e instanceof Error ? e.name : "Error"}`);
     return { status: "error", message: "לא הצלחנו להכין את סביבת ההתנסות. נסו שוב בעוד רגע." };
-  }
-}
-
-export type RepListsResult =
-  | { status: "ok"; inquiries: RepInquiryView[]; attachable: AttachableInquiry[] }
-  | { status: "not_found" }
-  | { status: "forbidden" };
-
-/** צירוף מפורש של פנייה *של המשתמש עצמו* להדגמה. בעלות נבדקת ב-DB; פנייה של אחר = not_found. */
-export async function attachMyInquiry(inquiryId: string): Promise<RepListsResult> {
-  let user;
-  try { user = await requireUser(); } catch { return { status: "forbidden" }; }
-  if (!isUuid(inquiryId)) return { status: "not_found" };
-  try {
-    const ok = await attachInquiry(dbUrl(), user.id, inquiryId);
-    if (!ok) return { status: "not_found" };
-    const lists = await refreshLists(user.id);
-    return lists ? { status: "ok", ...lists } : { status: "forbidden" };
-  } catch (e) {
-    if (e instanceof ForbiddenError) return { status: "forbidden" };
-    throw e;
-  }
-}
-
-/** הסרת פנייה שצורפה (owned) מהיקף ההדגמה. פניות שנזרעו אינן ניתנות להסרה. */
-export async function detachMyInquiry(inquiryId: string): Promise<RepListsResult> {
-  let user;
-  try { user = await requireUser(); } catch { return { status: "forbidden" }; }
-  if (!isUuid(inquiryId)) return { status: "not_found" };
-  try {
-    const ok = await detachInquiry(dbUrl(), user.id, inquiryId);
-    if (!ok) return { status: "not_found" };
-    const lists = await refreshLists(user.id);
-    return lists ? { status: "ok", ...lists } : { status: "forbidden" };
-  } catch (e) {
-    if (e instanceof ForbiddenError) return { status: "forbidden" };
-    throw e;
   }
 }
 

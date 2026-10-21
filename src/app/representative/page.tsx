@@ -70,7 +70,6 @@ export default async function RepresentativePage() {
             <RepresentativeWorkspace
               mode={ws.mode}
               initialInquiries={ws.inquiries}
-              initialAttachable={ws.attachable}
               vehicleNames={ws.vehicleNames}
             />
           </>

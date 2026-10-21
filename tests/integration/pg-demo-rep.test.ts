@@ -1,7 +1,7 @@
 // tests/integration/pg-demo-rep.test.ts
 // גישת התנסות כנציג מול Postgres אמיתי (RLS + SECURITY DEFINER). ללא מודל וללא שליחת מייל.
 // מאמת: דגל כבוי כברירת מחדל (גם בסשן קיים), זריעה אידמפוטנטית, בידוד בין מתנסות,
-// אי-הרחבת הרשאה (קריאה ישירה, צירוף של אחר, זריעה בשם אחר), בידוד מנציגים רגילים,
+// אי-הרחבת הרשאה (קריאה ישירה, פנייה של אחר, זריעה בשם אחר), בידוד מנציגים רגילים,
 // התראות רק לבעל הבירור האמיתי, ושרשרת פנייה -> מענה -> החלה -> חישוב מחדש -> שחזור.
 import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -13,7 +13,7 @@ import { findActiveDatasetId } from "../../src/server/services/dataset-provider.
 import { ForbiddenError, listRepInquiries, answerAsStaff, type RepInquiryView } from "../../src/server/auth/staff.js";
 import {
   DemoDisabledError, enrollInDemo, isDemoEnrolled, listDemoInquiries, answerAsDemo,
-  attachInquiry, listAttachable, DEMO_SEEDS, syntheticOwnerId,
+  DEMO_SEEDS, syntheticOwnerId,
 } from "../../src/server/auth/demo-rep.js";
 import { resolveRepAccess, answerAsRep } from "../../src/server/auth/rep-access.js";
 
@@ -86,7 +86,6 @@ run("התנסות כנציג: הרשאות, בידוד, זריעה והתראו�
       expect(await isDemoEnrolled(APP!, A)).toBe(false);
       expect(await resolveRepAccess(APP!, A)).toEqual({ mode: "none", demoAvailable: false });
       await expect(listDemoInquiries(APP!, A)).rejects.toBeInstanceOf(ForbiddenError);
-      await expect(attachInquiry(APP!, A, randomUUID())).rejects.toBeInstanceOf(ForbiddenError);
       const rows = await admin.query("select 1 from rep_demo_access where user_id = $1", [fresh]);
       expect(rows.rowCount).toBe(0); // לא נרשם בכלל
     } finally { process.env[FLAG] = saved; }
@@ -163,15 +162,22 @@ run("התנסות כנציג: הרשאות, בידוד, זריעה והתראו�
     expect(st!.scenarios.find((s) => s.id === real.altId)!.participation).toBe(300);
   });
 
-  it("צירוף: אפשר לצרף רק פנייה בבעלות המשתמש/ת; פנייה של אחר לא מצורפת", { timeout: 90000 }, async () => {
+  it("מתנסה רואה רק את הפניות של עצמו: פנייה של אחר/ת אינה מופיעה ואין אפשרות לענות עליה", { timeout: 90000 }, async () => {
     const victim = uid();
     const theirs = await ownInquiry(victim);
-    expect(await attachInquiry(APP!, A, theirs.inquiryId)).toBe(false);
-    expect(await attachInquiry(APP!, A, randomUUID())).toBe(false);
-    // גם רשימת "ניתנות לצירוף" מכילה רק את הפניות של המשתמש/ת עצמו/ה.
-    expect((await listAttachable(APP!, A)).some((x) => x.inquiryId === theirs.inquiryId)).toBe(false);
-    // וגם לא אחרי ניסיון: עדיין לא בהיקף.
-    expect((await listDemoInquiries(APP!, A)).some((q) => q.inquiry.id === theirs.inquiryId)).toBe(false);
+    const list = await listDemoInquiries(APP!, A);
+    expect(list.some((q) => q.inquiry.id === theirs.inquiryId)).toBe(false);
+    expect(list.every((q) => q.origin === "seeded" || q.origin === "owned")).toBe(true);
+    await expect(answerAsDemo(service, APP!, A, theirs.inquiryId, ans(1))).rejects.toBeInstanceOf(ForbiddenError);
+    // ה-API הישיר ל-DB: גם אם מנסים לצרף/לשייך ידנית, הפונקציות הישנות הוסרו.
+    const c = new Client({ connectionString: APP!, ...sslFor(APP!) });
+    await c.connect();
+    try {
+      await c.query("begin");
+      await c.query("select set_config('app.owner_id', $1, true)", [A]);
+      await expect(c.query("select demo_rep_attach($1::uuid)", [theirs.inquiryId])).rejects.toThrow(/does not exist/i);
+      await c.query("rollback");
+    } finally { await c.end(); }
   });
 
   it("זריעה בשם אחר נחסמת: אי אפשר לשייך להיקף שלי תיק סינתטי של מישהו אחר", { timeout: 60000 }, async () => {
@@ -275,45 +281,47 @@ run("התנסות כנציג: הרשאות, בידוד, זריעה והתראו�
     for (const q of [stale, family, elig]) expect(await jobsForCase(q.inquiry.caseId)).toHaveLength(0);
   });
 
-  it("פנייה של המשתמש/ת עצמו/ה: צירוף מפורש -> מענה -> החלה -> התראה לבעל/ת הבירור -> שחזור השיחה", { timeout: 150000 }, async () => {
-    const mine = await ownInquiry(A);
-    await service.appendMessages(mine.caseId, A, [
+  it("מי ששלח/ה פנייה נכנס/ת כנציג ועונה לעצמו/ה: מענה -> החלה -> התראה לבעל/ת הבירור -> שחזור השיחה", { timeout: 180000 }, async () => {
+    const D = uid();
+    const mine = await ownInquiry(D);
+    await service.appendMessages(mine.caseId, D, [
       { role: "user", clientMessageId: "u1", content: [{ type: "text", text: "אפשר לבדוק השתתפות?" }] },
       { role: "assistant", clientMessageId: "a1", content: [{ type: "text", text: "פתחתי פנייה לנציג." }] },
     ]);
 
-    // לפני צירוף: מופיעה כ"ניתנת לצירוף" אבל אינה בהיקף, ולא ניתן לענות.
-    expect((await listAttachable(APP!, A)).some((x) => x.inquiryId === mine.inquiryId)).toBe(true);
-    expect((await listDemoInquiries(APP!, A)).some((q) => q.inquiry.id === mine.inquiryId)).toBe(false);
-    await expect(answerAsDemo(service, APP!, A, mine.inquiryId, ans(800))).rejects.toBeInstanceOf(ForbiddenError);
+    // לפני ההצטרפות להתנסות: אין גישה, גם לפנייה של עצמו/ה.
+    await expect(listDemoInquiries(APP!, D)).rejects.toBeInstanceOf(ForbiddenError);
+    await expect(answerAsDemo(service, APP!, D, mine.inquiryId, ans(800))).rejects.toBeInstanceOf(ForbiddenError);
 
-    expect(await attachInquiry(APP!, A, mine.inquiryId)).toBe(true);
-    expect(await attachInquiry(APP!, A, mine.inquiryId)).toBe(true); // אידמפוטנטי
-    const listed = (await listDemoInquiries(APP!, A)).find((q) => q.inquiry.id === mine.inquiryId)!;
+    // אחרי ההצטרפות: הפנייה של עצמו/ה מופיעה אוטומטית (בלי שלב צירוף), לצד פניות הדוגמה.
+    await enrollInDemo(service, APP!, D);
+    const all = await listDemoInquiries(APP!, D);
+    const listed = all.find((q) => q.inquiry.id === mine.inquiryId)!;
     expect(listed.origin).toBe("owned");
+    expect(all.filter((q) => q.origin === "seeded")).toHaveLength(DEMO_SEEDS.length);
     // לא מחזיר שכר/מייל/בעלים.
     const blob = JSON.stringify(listed);
     expect(blob).not.toContain("@");
-    expect(blob).not.toContain(A);
+    expect(blob).not.toContain(D);
 
-    // משתמשת אחרת לא רואה אותה גם אחרי הצירוף.
+    // משתמשת אחרת לא רואה אותה.
     expect((await listDemoInquiries(APP!, B)).some((q) => q.inquiry.id === mine.inquiryId)).toBe(false);
     await expect(answerAsDemo(service, APP!, B, mine.inquiryId, ans(1))).rejects.toBeInstanceOf(ForbiddenError);
 
-    const res = await answerAsDemo(service, APP!, A, mine.inquiryId, ans(850, { note: "אושר להדגמה" }));
+    const res = await answerAsDemo(service, APP!, D, mine.inquiryId, ans(850, { note: "אושר להדגמה" }));
     expect(res.status).toBe("applied");
     expect(res.recomputed).toBe(true);
 
     // התראה: משימה אחת, לנמען הנכון בלבד (בעל/ת הבירור המאומת/ת), בלי תוכן פיננסי בשורה.
     const jobs = await jobsForCase(mine.caseId);
-    expect(jobs).toEqual([{ kind: "comparison_ready", recipient_user_id: A }]);
+    expect(jobs).toEqual([{ kind: "comparison_ready", recipient_user_id: D }]);
 
     // שחזור: ההיסטוריה, התשובה והכרטיס המעודכן זמינים לבעלת הבירור גם אחרי ניתוק.
-    const state = await service.getCaseState(mine.caseId, A);
+    const state = await service.getCaseState(mine.caseId, D);
     expect(state!.scenarios.find((s) => s.id === mine.altId)!.participation).toBe(850);
     expect(state!.openInquiries.find((q) => q.id === mine.inquiryId)!.status).toBe("answered");
     expect(state!.latestComparison).toBeTruthy();
-    const msgs = await service.loadMessages(mine.caseId, A);
+    const msgs = await service.loadMessages(mine.caseId, D);
     expect(msgs.map((m) => m.role)).toEqual(["user", "assistant"]);
   });
 });

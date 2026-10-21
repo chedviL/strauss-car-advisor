@@ -7,9 +7,8 @@
 
 import "./representative.css";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { answerRepInquiry, attachMyInquiry, detachMyInquiry } from "../../app/actions.js";
+import { answerRepInquiry } from "../../app/actions.js";
 import type { RepInquiryView } from "../../server/auth/staff.js";
-import type { AttachableInquiry } from "../../server/auth/demo-rep.js";
 import {
   TYPE_LABEL, ROUTE_LABEL, ROLE_LABEL,
   formatDate, formatIsoDay, formatMoney, summarize, vehicleLabel,
@@ -30,23 +29,19 @@ function draftFromSaved(q: RepInquiryView): Draft {
 }
 
 export function RepresentativeWorkspace({
-  mode, initialInquiries, initialAttachable, vehicleNames,
+  mode, initialInquiries, vehicleNames,
 }: {
   mode: "staff" | "demo";
   initialInquiries: RepInquiryView[];
-  initialAttachable: AttachableInquiry[];
   vehicleNames: Record<string, string>;
 }) {
   const [inquiries, setInquiries] = useState(initialInquiries);
-  const [attachable, setAttachable] = useState(initialAttachable);
   const [filter, setFilter] = useState<Filter>(initialInquiries.some((q) => q.inquiry.status === "open") ? "open" : "all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [view, setView] = useState<"list" | "detail">("list");
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [results, setResults] = useState<Record<string, ResultMessage>>({});
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [attachMsg, setAttachMsg] = useState<ResultMessage | null>(null);
-  const [attachBusy, setAttachBusy] = useState<string | null>(null);
 
   // מניעת שליחה כפולה: state אסינכרוני, ולכן ref סינכרוני בנוסף ל-disabled.
   const submittingRef = useRef(false);
@@ -156,28 +151,6 @@ export function RepresentativeWorkspace({
     }
   }
 
-  async function runAttach(kind: "attach" | "detach", inquiryId: string) {
-    if (attachBusy) return;
-    setAttachBusy(inquiryId);
-    setAttachMsg(null);
-    try {
-      const res = kind === "attach" ? await attachMyInquiry(inquiryId) : await detachMyInquiry(inquiryId);
-      if (res.status === "ok") {
-        setInquiries(res.inquiries);
-        setAttachable(res.attachable);
-        if (kind === "detach") { setSelectedId(null); setView("list"); }
-      } else if (res.status === "not_found") {
-        setAttachMsg({ tone: "err", title: kind === "attach" ? "לא ניתן לצרף פנייה זו." : "לא ניתן להסיר פנייה זו." });
-      } else {
-        setAttachMsg({ tone: "err", title: "אין הרשאה. ייתכן שהגישה להתנסות הופסקה; רעננו את הדף." });
-      }
-    } catch {
-      setAttachMsg({ tone: "err", title: "לא הצלחנו להתחבר לשרת. נסו שוב." });
-    } finally {
-      setAttachBusy(null);
-    }
-  }
-
   const filters: Array<{ key: Filter; label: string; n: number }> = [
     { key: "open", label: "פתוחות", n: counts.open },
     { key: "answered", label: "נענו", n: counts.answered },
@@ -228,33 +201,11 @@ export function RepresentativeWorkspace({
           </ul>
         )}
 
-        {mode === "demo" && (
-          <details className="rep-attach">
-            <summary>הפניות שלי מהשיחה ({attachable.length})</summary>
-            {attachable.length === 0 ? (
-              <p className="rep-hint" style={{ marginTop: "var(--space-2)" }}>
-                אין כרגע פניות פתוחות שפתחת. בשיחה עם היועץ אפשר לבקש פנייה לנציג בנושא השתתפות ברכב, ואז לחזור לכאן ולצרף אותה.
-              </p>
-            ) : (
-              <ul>
-                {attachable.map((a) => (
-                  <li key={a.inquiryId}>
-                    <span>
-                      {TYPE_LABEL[a.type]} · {formatDate(a.createdAt)}
-                      <br />
-                      <span className="rep-hint">{summarize({ type: a.type, scenarioRole: a.scenarioRole, route: a.route, vehicleCode: a.vehicleCode }, vehicleNames)}</span>
-                    </span>
-                    <button type="button" className="btn" disabled={attachBusy !== null} onClick={() => runAttach("attach", a.inquiryId)}>
-                      {attachBusy === a.inquiryId ? "מצרף…" : "צרף להדגמה"}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-            <div aria-live="polite">
-              {attachMsg && <p className="rep-result" data-tone={attachMsg.tone} role={attachMsg.tone === "err" ? "alert" : "status"}><strong>{attachMsg.title}</strong></p>}
-            </div>
-          </details>
+        {mode === "demo" && !inquiries.some((q) => q.origin === "owned") && (
+          <p className="rep-hint" style={{ marginTop: "var(--space-3)" }}>
+            פניות שתפתחי בשיחה עם היועץ יופיעו כאן אוטומטית (תגית ״הפנייה שלי״), ואפשר לענות עליהן בעצמך.
+            רעננו את הדף אחרי שנפתחה פנייה.
+          </p>
         )}
       </section>
 
@@ -275,8 +226,6 @@ export function RepresentativeWorkspace({
             onBack={backToList}
             onField={(f, v) => setField(selected, f, v)}
             onSubmit={(e) => submit(e, selected)}
-            onDetach={() => runAttach("detach", selected.inquiry.id)}
-            detachBusy={attachBusy === selected.inquiry.id}
           />
         )}
       </section>
@@ -289,7 +238,7 @@ const srOnly: React.CSSProperties = {
 };
 
 function DetailCard({
-  q, mode, vehicleNames, draft, busy, result, headingRef, onBack, onField, onSubmit, onDetach, detachBusy,
+  q, mode, vehicleNames, draft, busy, result, headingRef, onBack, onField, onSubmit,
 }: {
   q: RepInquiryView;
   mode: "staff" | "demo";
@@ -301,8 +250,6 @@ function DetailCard({
   onBack: () => void;
   onField: (f: keyof Draft, v: string) => void;
   onSubmit: (e: FormEvent) => void;
-  onDetach: () => void;
-  detachBusy: boolean;
 }) {
   const isParticipation = q.inquiry.type === "employee_participation";
   const answered = q.inquiry.status === "answered";
@@ -326,10 +273,7 @@ function DetailCard({
 
       {mode === "demo" && q.origin === "owned" && (
         <p className="rep-origin-note">
-          זו פנייה שפתחת בעצמך ושצירפת להדגמה. מענה ישלח התראה למייל המאומת שלך.{" "}
-          <button type="button" className="btn btn-ghost" disabled={detachBusy} onClick={onDetach}>
-            {detachBusy ? "מסיר…" : "הסרה מההדגמה"}
-          </button>
+          זו פנייה שפתחת בעצמך. מענה יישלח כהתראה למייל המאומת שלך, ואחריו אפשר לחזור לבירור ולראות את התשובה.
         </p>
       )}
       {mode === "demo" && q.origin === "seeded" && (
