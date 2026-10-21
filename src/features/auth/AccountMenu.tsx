@@ -21,8 +21,9 @@ const navBtn: CSSProperties = {
 const currentBtn: CSSProperties = {
   ...navBtn,
   background: "var(--color-accent-soft)",
-  borderColor: "var(--color-border-strong)",
-  color: "var(--color-text)",
+  borderColor: "var(--color-primary)",
+  color: "var(--color-primary)",
+  fontWeight: 700,
 };
 
 // email נשמר בחתימה לתאימות עם הקוראים הקיימים, אך אינו מוצג עוד בכותרת.
