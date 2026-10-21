@@ -28,7 +28,7 @@ export default async function RepresentativePage() {
 
   return (
     <main id="main-content" className="app-main">
-      <AppHeader actions={<AccountMenu email={user.email} />} />
+      <AppHeader actions={<AccountMenu email={user.email} area="rep" />} />
       <DemoBadge />
       <div className="rep-shell">
         <div className="rep-titlebar">
