@@ -1,0 +1,103 @@
+/* src/features/representative/representative.css
+   מסך נציג: מסך עבודה קריא על רקע פנינה. ללא איור דומיננטי. משתמש רק במשתני העיצוב הקיימים. */
+
+.rep-shell { width: 100%; max-width: 1120px; margin: 0 auto; padding: var(--space-3) var(--space-4) var(--space-6); display: flex; flex-direction: column; gap: var(--space-3); }
+
+.rep-titlebar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); flex-wrap: wrap; }
+.rep-titlebar h1 { font-size: var(--font-xl); margin: 0; }
+
+.rep-mode { display: inline-flex; align-items: center; gap: 6px; font-size: var(--font-sm); font-weight: 600; padding: 4px 12px; border-radius: var(--radius-pill); border: 1px solid var(--color-border-strong); background: var(--color-surface); color: var(--color-text); }
+.rep-mode::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--brand-green); }
+.rep-mode[data-mode="demo"] { background: var(--brand-orange-soft); border-color: var(--brand-orange); }
+.rep-mode[data-mode="demo"]::before { background: var(--brand-orange); }
+
+.rep-notice { margin: 0; padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); border: 1px solid var(--brand-orange); background: var(--brand-orange-soft); font-size: var(--font-sm); line-height: 1.5; }
+
+.rep-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); box-shadow: var(--shadow-sm); padding: var(--space-4); }
+.rep-card h2 { margin-top: 0; }
+.rep-card p { color: var(--color-muted); }
+
+/* ---------- פריסת רשימה + פרטים ---------- */
+.rep-layout { display: grid; grid-template-columns: minmax(300px, 380px) minmax(0, 1fr); gap: var(--space-3); align-items: start; }
+.rep-list-pane, .rep-detail-pane { min-width: 0; }
+
+.rep-filter { display: flex; gap: var(--space-1); flex-wrap: wrap; margin-bottom: var(--space-2); }
+.rep-filter button { font: inherit; font-size: var(--font-sm); font-weight: 600; cursor: pointer; padding: 6px 14px; border-radius: var(--radius-pill); border: 1px solid var(--color-border-strong); background: var(--color-surface); color: var(--color-text); }
+.rep-filter button[aria-pressed="true"] { background: var(--color-graphite); border-color: var(--color-graphite); color: #fff; }
+
+.rep-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+.rep-item { width: 100%; text-align: start; font: inherit; cursor: pointer; display: flex; flex-direction: column; gap: 4px; padding: var(--space-3); border-radius: var(--radius-md); border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); border-inline-start: 4px solid var(--brand-orange); }
+.rep-item[data-status="answered"] { border-inline-start-color: var(--brand-green); }
+.rep-item:hover { border-color: var(--color-primary); }
+.rep-item[aria-current="true"] { background: var(--color-accent-soft); border-color: var(--color-primary); }
+.rep-item-title { font-weight: 700; }
+.rep-item-meta { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; font-size: var(--font-sm); color: var(--color-muted); }
+.rep-item-summary { font-size: var(--font-sm); color: var(--color-text); }
+
+.rep-badge { display: inline-block; font-size: 0.75rem; font-weight: 600; padding: 1px 10px; border-radius: var(--radius-pill); background: var(--brand-orange-soft); color: var(--color-text); }
+.rep-badge[data-kind="answered"] { background: var(--brand-green-soft); }
+.rep-badge[data-kind="sample"] { background: var(--brand-teal-soft); }
+.rep-badge[data-kind="mine"] { background: var(--color-accent-soft); }
+
+.rep-empty { color: var(--color-muted); margin: var(--space-2) 0; }
+
+/* ---------- פרטי פנייה ---------- */
+.rep-detail { display: flex; flex-direction: column; gap: var(--space-3); }
+.rep-detail h2 { margin: 0; font-size: var(--font-lg); }
+.rep-detail h2:focus { outline: none; }
+.rep-detail h2:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 4px; border-radius: 4px; }
+.rep-back { display: none; align-self: flex-start; }
+
+.rep-context { display: grid; grid-template-columns: auto 1fr; gap: 4px var(--space-3); margin: 0; font-size: var(--font-sm); }
+.rep-context dt { color: var(--color-muted); }
+.rep-context dd { margin: 0; font-weight: 600; }
+
+.rep-saved { border: 1px solid var(--color-border); border-inline-start: 4px solid var(--brand-green); border-radius: var(--radius-sm); background: var(--brand-green-soft); padding: var(--space-2) var(--space-3); font-size: var(--font-sm); }
+.rep-saved h3 { margin: 0 0 4px; font-size: var(--font-sm); }
+.rep-saved dl { display: grid; grid-template-columns: auto 1fr; gap: 2px var(--space-3); margin: 0; }
+.rep-saved dt { color: var(--color-muted); }
+.rep-saved dd { margin: 0; }
+
+.rep-origin-note { margin: 0; font-size: var(--font-sm); color: var(--color-muted); }
+
+.rep-form { display: flex; flex-direction: column; gap: var(--space-3); }
+.rep-form fieldset { border: 0; padding: 0; margin: 0; display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+.rep-field { display: flex; flex-direction: column; gap: 4px; }
+.rep-field label { font-weight: 600; font-size: var(--font-sm); }
+.rep-field input, .rep-field textarea { width: 100%; font: inherit; padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); border: 1px solid var(--color-border-strong); background: var(--color-surface); color: var(--color-text); }
+.rep-field textarea { resize: vertical; min-height: 84px; }
+.rep-field input[type="date"] { max-width: 240px; }
+.rep-field input:focus-visible, .rep-field textarea:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 1px; }
+.rep-hint { font-size: 0.8rem; color: var(--color-muted); margin: 0; }
+.rep-hint[data-kind="zero"] { color: var(--color-text); font-weight: 600; }
+
+.rep-actions { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }
+
+.rep-result { border-radius: var(--radius-sm); padding: var(--space-2) var(--space-3); font-size: var(--font-sm); border: 1px solid var(--color-border); }
+.rep-result strong { display: block; }
+.rep-result span { display: block; color: var(--color-muted); margin-top: 2px; }
+.rep-result[data-tone="ok"] { background: var(--color-gain-soft); border-color: var(--color-gain); }
+.rep-result[data-tone="warn"] { background: var(--brand-orange-soft); border-color: var(--brand-orange); }
+.rep-result[data-tone="err"] { background: var(--color-loss-soft); border-color: var(--color-loss); }
+
+.rep-placeholder { color: var(--color-muted); }
+
+/* ---------- צירוף פניות של המשתמש (הדגמה) ---------- */
+.rep-attach { margin-top: var(--space-3); border: 1px dashed var(--color-border-strong); border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); background: var(--color-surface-2); }
+.rep-attach summary { cursor: pointer; font-weight: 600; font-size: var(--font-sm); }
+.rep-attach summary:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+.rep-attach ul { list-style: none; margin: var(--space-2) 0 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+.rep-attach li { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); font-size: var(--font-sm); }
+
+.rep-spinner { width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.45); border-top-color: #fff; animation: repSpin 700ms linear infinite; display: inline-block; vertical-align: -2px; margin-inline-end: 6px; }
+@keyframes repSpin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .rep-spinner { animation-duration: 2s; } }
+
+/* ---------- נייד: רשימה ואז פרטים, עם חזרה ברורה ---------- */
+@media (max-width: 859px) {
+  .rep-shell { padding-inline: var(--space-3); }
+  .rep-layout { grid-template-columns: minmax(0, 1fr); }
+  .rep-layout[data-view="list"] .rep-detail-pane { display: none; }
+  .rep-layout[data-view="detail"] .rep-list-pane { display: none; }
+  .rep-back { display: inline-flex; }
+}

@@ -10,6 +10,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { authConfigured, createAuthClient, type CookieToSet } from "./server/auth/supabase.js";
 import { userFromClient } from "./server/auth/claims.js";
+import { safeReturnPath, RETURN_COOKIE, RETURN_COOKIE_MAX_AGE_SECONDS } from "./server/auth/return-path.js";
 
 // נתיבים ציבוריים ברמת ה-middleware. /api/worker אוכף הרשאה עצמאית (CRON_SECRET)
 // ולכן אינו עובר דרך שער הסשן; שאר ה-API דורש סשן מאומת.
@@ -46,6 +47,14 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
   if (!user && !isPublic) {
     if (isApi) return NextResponse.json({ error: "auth_required" }, { status: 401 });
     const to = NextResponse.redirect(new URL("/login", req.url));
+    // קישור עמוק (למשל מהתראת מייל): זוכרים יעד מותר אחד, כדי שאחרי הכניסה נגיע אליו.
+    const back = req.method === "GET" ? safeReturnPath(pathname) : null;
+    if (back) {
+      to.cookies.set(RETURN_COOKIE, back, {
+        httpOnly: true, sameSite: "lax", path: "/", maxAge: RETURN_COOKIE_MAX_AGE_SECONDS,
+        secure: req.nextUrl.protocol === "https:",
+      });
+    }
     return to;
   }
   if (user && pathname === "/login") {

@@ -23,7 +23,7 @@ export class ForbiddenError extends Error {
 const KNOWN_TYPES: ReadonlySet<string> = new Set(["employee_participation", "occupation_eligibility_clarification"]);
 
 /** טרנזקציה קצרה עם הזהות המאומתת ב-app.owner_id (כמו ה-repository). */
-async function withIdentity<T>(conn: string, userId: string, fn: (c: import("pg").PoolClient) => Promise<T>): Promise<T> {
+export async function withIdentity<T>(conn: string, userId: string, fn: (c: import("pg").PoolClient) => Promise<T>): Promise<T> {
   const client = await getPool(conn).connect();
   let released = false;
   const release = (destroy?: boolean) => { if (!released) { released = true; client.release(destroy); } };
@@ -59,6 +59,35 @@ export interface RepInquiryView {
   vehicleCode: string | null;
   reportedGroup: string | null;
   currentParticipation: number | null;
+  /** רק בגישת הדגמה: seeded = פנייה פיקטיבית שנזרעה; owned = פנייה של המשתמש שצורפה. */
+  origin?: "seeded" | "owned";
+}
+
+/** מיפוי שורת ההקרנה המצומצמת (rep_list_inquiries / demo_rep_list_inquiries). */
+export function mapRepRow(row: Record<string, unknown>): RepInquiryView {
+  const view: RepInquiryView = {
+    inquiry: {
+      id: row.inquiry_id as string,
+      caseId: row.case_id as string,
+      type: row.inq_type as InquiryType,
+      scenarioId: (row.scenario_id as string) ?? null,
+      contextFingerprint: row.context_fingerprint as string,
+      status: row.inq_status as InquiryRecord["status"],
+      createdAt: new Date(row.created_at as string).toISOString(),
+      answerValue: row.answer_value === null ? null : Number(row.answer_value),
+      answerNote: (row.answer_note as string) ?? null,
+      effectiveFrom: row.effective_from ? new Date(row.effective_from as string).toISOString().slice(0, 10) : null,
+      answeredAt: row.answered_at ? new Date(row.answered_at as string).toISOString() : null,
+    },
+    currentFactsRevision: row.facts_revision as number,
+    scenarioRole: (row.scenario_role as RepInquiryView["scenarioRole"]) ?? null,
+    route: (row.route as RepInquiryView["route"]) ?? null,
+    vehicleCode: (row.vehicle_code as string) ?? null,
+    reportedGroup: (row.reported_group as string) ?? null,
+    currentParticipation: row.participation === null ? null : Number(row.participation),
+  };
+  if (row.origin === "seeded" || row.origin === "owned") view.origin = row.origin;
+  return view;
 }
 
 /** פניות בהיקף הנציג עם הקשר מצומצם. ללא תפקיד: ForbiddenError. */
@@ -67,27 +96,7 @@ export async function listRepInquiries(conn: string, userId: string): Promise<Re
   if (!scope) throw new ForbiddenError("not_staff");
   return await withIdentity(conn, userId, async (c) => {
     const r = await c.query("select * from rep_list_inquiries()");
-    return r.rows.map((row) => ({
-      inquiry: {
-        id: row.inquiry_id as string,
-        caseId: row.case_id as string,
-        type: row.inq_type as InquiryType,
-        scenarioId: (row.scenario_id as string) ?? null,
-        contextFingerprint: row.context_fingerprint as string,
-        status: row.inq_status as InquiryRecord["status"],
-        createdAt: new Date(row.created_at as string).toISOString(),
-        answerValue: row.answer_value === null ? null : Number(row.answer_value),
-        answerNote: (row.answer_note as string) ?? null,
-        effectiveFrom: row.effective_from ? new Date(row.effective_from as string).toISOString().slice(0, 10) : null,
-        answeredAt: row.answered_at ? new Date(row.answered_at as string).toISOString() : null,
-      },
-      currentFactsRevision: row.facts_revision as number,
-      scenarioRole: (row.scenario_role as RepInquiryView["scenarioRole"]) ?? null,
-      route: (row.route as RepInquiryView["route"]) ?? null,
-      vehicleCode: (row.vehicle_code as string) ?? null,
-      reportedGroup: (row.reported_group as string) ?? null,
-      currentParticipation: row.participation === null ? null : Number(row.participation),
-    }));
+    return r.rows.map(mapRepRow);
   });
 }
 
@@ -114,6 +123,25 @@ export async function answerAsStaff(
   });
   // מחוץ להיקף / לא קיים: אותה תשובה בדיוק (אין חשיפת קיום).
   if (!ownerId) throw new ForbiddenError("out_of_scope");
+  return await applyAnswerAsOwner(service, conn, staffUserId, ownerId, inquiryId, answer, options, true);
+}
+
+/**
+ * ליבת המענה המשותפת לגישה רגילה ולהדגמה: אותה לוגיקת החלה/חישוב/audit/התראה.
+ * ההרשאה (מי רשאי לענות ועל איזה בעלים) כבר נבדקה אצל הקורא. notify=false בפניות
+ * שנזרעו (בעלים סינתטי): אין מייל לכתובת מומצאת או למשתמש אחר.
+ */
+export async function applyAnswerAsOwner(
+  service: CaseService,
+  conn: string,
+  actorUserId: string,
+  ownerId: string,
+  inquiryId: string,
+  answer: { value: number | null; note: string | null; effectiveFrom: string | null },
+  options: { today?: string } | undefined,
+  notify: boolean,
+): Promise<RepAnswerOutcome> {
+  const staffUserId = actorUserId;
   const res = await service.answerAndApplyInquiry(inquiryId, ownerId, answer, options);
   await withIdentity(conn, ownerId, async (c) => {
     // audit: מי ענה. מתבצע בהקשר הבעלים כי טבלת inquiries כפופה ל-RLS שלו.
@@ -124,7 +152,7 @@ export async function answerAsStaff(
   // comparison_ready רק כשהתשובה הוחלה *וחושבה מחדש* בפועל; אחרת answer_recorded
   // (תשובה נרשמה אך טרם הוחלה - לעולם לא "ההשוואה מוכנה"). כשל כאן אינו מבטל את
   // התשובה/החישוב שכבר נשמרו.
-  if (res.status !== "not_found" && res.caseId) {
+  if (notify && res.status !== "not_found" && res.caseId) {
     const kind = res.status === "applied" && res.recomputed === true ? "comparison_ready" : "answer_recorded";
     await enqueueNotification(conn, ownerId, { caseId: res.caseId, inquiryId, kind })
       .catch((e) => { console.warn("[notify] enqueue failed: " + (e instanceof Error ? e.name : "Error")); });

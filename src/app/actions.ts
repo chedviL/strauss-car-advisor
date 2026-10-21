@@ -7,7 +7,10 @@ import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { caseService } from "../server/web/service.js";
 import { requireOwner, requireUser, AuthRequiredError } from "../server/auth/next-session.js";
-import { answerAsStaff, getStaffScope, listRepInquiries, ForbiddenError } from "../server/auth/staff.js";
+import { getStaffScope, ForbiddenError, type RepInquiryView } from "../server/auth/staff.js";
+import { resolveRepAccess, listForAccess, answerAsRep } from "../server/auth/rep-access.js";
+import { repDemoEnabled, enrollInDemo, listAttachable, attachInquiry, detachInquiry, type AttachableInquiry } from "../server/auth/demo-rep.js";
+import { parseRepAnswer, isUuid } from "../server/auth/rep-input.js";
 import { sendForInquiryNow } from "../server/notify/worker.js";
 
 export async function startDemoCase(employeeId: string): Promise<void> {
@@ -163,11 +166,10 @@ export async function fillSampleData(
 }
 
 // ===================== נציג =====================
-// הגישה נקבעת בשרת לפי תפקיד פעיל + היקף סוגי פניות (טבלת staff_roles, נכתבת רק
-// בערוץ ניהולי) ונאכפת שוב ב-SQL דרך פונקציות SECURITY DEFINER. עובד רגיל שקורא
-// ישירות לפעולות אלה מקבל forbidden - גם אם ניחש מזהה פנייה תקף.
-// הלקוח אינו שולח בעלים או תפקיד; השרת גוזר אותם מהסשן המאומת.
-
+// ההרשאה נקבעת בשרת בלבד, מהסשן המאומת, ונאכפת שוב ב-SQL (פונקציות SECURITY DEFINER):
+//   staff - תפקיד פעיל + היקף ב-staff_roles (נכתב רק בערוץ ניהולי);
+//   demo  - התנסות מוגבלת: דגל שרת REP_DEMO_ACCESS_ENABLED + הצטרפות + היקף פניות הבדיקה.
+// הלקוח אינו שולח בעלים, תפקיד או מצב גישה. קריאה ישירה לפעולות אלה כעובד רגיל = forbidden.
 
 function dbUrl(): string {
   const c = process.env.DATABASE_URL;
@@ -175,7 +177,7 @@ function dbUrl(): string {
   return c;
 }
 
-/** האם למשתמש המאומת יש תפקיד נציג פעיל (להצגת הקישור; השער האמיתי בשרת). */
+/** האם למשתמש המאומת יש תפקיד נציג ארגוני פעיל (מידע בלבד; השער האמיתי בשרת). */
 export async function myStaffScope(): Promise<{ isStaff: boolean }> {
   try {
     const user = await requireUser();
@@ -186,66 +188,153 @@ export async function myStaffScope(): Promise<{ isStaff: boolean }> {
   }
 }
 
-export type RepList =
-  | { status: "ok"; inquiries: Awaited<ReturnType<typeof listRepInquiries>> }
-  | { status: "forbidden" };
+export type RepWorkspace =
+  | { status: "unauthenticated" }
+  | { status: "none"; demoAvailable: boolean }
+  | {
+      status: "ok";
+      mode: "staff" | "demo";
+      inquiries: RepInquiryView[];
+      attachable: AttachableInquiry[];
+      vehicleNames: Record<string, string>;
+    };
 
-/** פניות בהיקף הנציג, עם הקשר מצומצם בלבד (ללא שכר/נטו/מייל/בעלים). */
-export async function loadRepInquiries(): Promise<RepList> {
+/** טעינת מסך הנציג: מצב הגישה + פניות בהיקף בלבד (הקשר מצומצם, בלי שכר/נטו/מייל/בעלים). */
+export async function loadRepWorkspace(): Promise<RepWorkspace> {
+  let user;
+  try { user = await requireUser(); } catch { return { status: "unauthenticated" }; }
+  const conn = dbUrl();
+  const access = await resolveRepAccess(conn, user.id);
+  if (access.mode === "none") return { status: "none", demoAvailable: access.demoAvailable };
+  const [inquiries, attachable, vehicleNames] = await Promise.all([
+    listForAccess(conn, user.id, access),
+    access.mode === "demo" ? listAttachable(conn, user.id) : Promise.resolve([] as AttachableInquiry[]),
+    caseService().vehicleNames(),
+  ]);
+  return { status: "ok", mode: access.mode, inquiries, attachable, vehicleNames };
+}
+
+/** רענון רשימות אחרי פעולה (צירוף/ניתוק/מענה). שגיאת הרשאה -> null. */
+async function refreshLists(userId: string): Promise<{ inquiries: RepInquiryView[]; attachable: AttachableInquiry[] } | null> {
   try {
-    const user = await requireUser();
-    return { status: "ok", inquiries: await listRepInquiries(dbUrl(), user.id) };
-  } catch (e) {
-    if (e instanceof ForbiddenError || e instanceof AuthRequiredError) return { status: "forbidden" };
-    throw e;
+    const conn = dbUrl();
+    const access = await resolveRepAccess(conn, userId);
+    if (access.mode === "none") return null;
+    const [inquiries, attachable] = await Promise.all([
+      listForAccess(conn, userId, access),
+      access.mode === "demo" ? listAttachable(conn, userId) : Promise.resolve([] as AttachableInquiry[]),
+    ]);
+    return { inquiries, attachable };
+  } catch {
+    return null;
   }
 }
 
 /**
- * מענה נציג + החלה אם עדיין רלוונטי + חישוב מחדש (הכול בשרת, גם כשהעובדת מנותקת).
- * value ל-employee_participation הוא ההשתתפות החודשית (₪). effectiveFrom = ISO date.
+ * "התנסות כנציג - להדגמה": מצרף את המשתמש המאומת להתנסות המוגבלת וזורע לו פניות פיקטיביות
+ * (אידמפוטנטי). פעיל רק כשהדגל בשרת מופעל. אינו מעניק הרשאת נציג ארגונית.
  */
-export async function answerRepInquiry(
-  inquiryId: string,
-  answer: { value: number | null; note: string | null; effectiveFrom: string | null },
-): Promise<
+export async function startRepDemo(): Promise<{ status: "ok" } | { status: "disabled" } | { status: "error"; message: string }> {
+  let user;
+  try { user = await requireUser(); } catch { return { status: "disabled" }; }
+  if (!repDemoEnabled()) return { status: "disabled" };
+  try {
+    await enrollInDemo(caseService(), dbUrl(), user.id);
+    revalidatePath("/representative");
+    return { status: "ok" };
+  } catch (e) {
+    if (e instanceof ForbiddenError) return { status: "disabled" };
+    console.warn(`[rep-demo] enroll failed: ${e instanceof Error ? e.name : "Error"}`);
+    return { status: "error", message: "לא הצלחנו להכין את סביבת ההתנסות. נסו שוב בעוד רגע." };
+  }
+}
+
+export type RepListsResult =
+  | { status: "ok"; inquiries: RepInquiryView[]; attachable: AttachableInquiry[] }
+  | { status: "not_found" }
+  | { status: "forbidden" };
+
+/** צירוף מפורש של פנייה *של המשתמש עצמו* להדגמה. בעלות נבדקת ב-DB; פנייה של אחר = not_found. */
+export async function attachMyInquiry(inquiryId: string): Promise<RepListsResult> {
+  let user;
+  try { user = await requireUser(); } catch { return { status: "forbidden" }; }
+  if (!isUuid(inquiryId)) return { status: "not_found" };
+  try {
+    const ok = await attachInquiry(dbUrl(), user.id, inquiryId);
+    if (!ok) return { status: "not_found" };
+    const lists = await refreshLists(user.id);
+    return lists ? { status: "ok", ...lists } : { status: "forbidden" };
+  } catch (e) {
+    if (e instanceof ForbiddenError) return { status: "forbidden" };
+    throw e;
+  }
+}
+
+/** הסרת פנייה שצורפה (owned) מהיקף ההדגמה. פניות שנזרעו אינן ניתנות להסרה. */
+export async function detachMyInquiry(inquiryId: string): Promise<RepListsResult> {
+  let user;
+  try { user = await requireUser(); } catch { return { status: "forbidden" }; }
+  if (!isUuid(inquiryId)) return { status: "not_found" };
+  try {
+    const ok = await detachInquiry(dbUrl(), user.id, inquiryId);
+    if (!ok) return { status: "not_found" };
+    const lists = await refreshLists(user.id);
+    return lists ? { status: "ok", ...lists } : { status: "forbidden" };
+  } catch (e) {
+    if (e instanceof ForbiddenError) return { status: "forbidden" };
+    throw e;
+  }
+}
+
+export type RepAnswerResult = (
   | { status: "applied"; recomputed: boolean; missingFields?: string[] }
   | { status: "recorded_not_applied"; reason?: string }
   | { status: "stale_context" }
   | { status: "future_effective"; effectiveFrom: string }
   | { status: "not_found" }
   | { status: "forbidden" }
+  | { status: "invalid"; message: string }
   | { status: "error"; message: string }
-> {
+) & { inquiries?: RepInquiryView[] };
+
+/**
+ * מענה נציג (רגיל או התנסות) + החלה אם עדיין רלוונטי + חישוב מחדש - הכול בשרת, גם כשהעובדת
+ * מנותקת. value ל-employee_participation = השתתפות חודשית (₪); null = חסר, 0 = אפס מפורש.
+ * הקלט מאומת כאן (הלקוח אינו מהימן). מחזיר גם את הרשימה המעודכנת, לתצוגת התשובה שנשמרה.
+ */
+export async function answerRepInquiry(inquiryId: string, answer: unknown): Promise<RepAnswerResult> {
   let user;
   try { user = await requireUser(); } catch { return { status: "forbidden" }; }
+  if (!isUuid(inquiryId)) return { status: "not_found" };
+  const parsed = parseRepAnswer(answer);
+  if (!parsed.ok) return { status: "invalid", message: parsed.message };
   try {
-    const res = await answerAsStaff(caseService(), dbUrl(), user.id, inquiryId, answer);
-    revalidatePath("/representative");
+    const res = await answerAsRep(caseService(), dbUrl(), user.id, inquiryId, parsed.answer);
     revalidatePath("/");
-    // משלוח מיידי של ההתראה *אחרי* שהתגובה נשלחה לנציג (after של Next.js), כך
-    // שהנציג אינו ממתין ל-SMTP. המשימה כבר נשמרה במסד (enqueue ב-answerAsStaff),
-    // לכן גם אם ה-after נקטע/נכשל - המתזמן ישלח בניסיון הבא (התאוששות). timeouts
-    // ב-mailer מגבילים את זמן הריצה. רץ רק כשיש בירור אמיתי (לא not_found).
+    // משלוח מיידי של ההתראה *אחרי* שהתגובה נשלחה (after של Next.js), כך שהנציג אינו ממתין
+    // ל-SMTP. המשימה כבר נשמרה במסד (enqueue), ולכן גם אם ה-after נכשל - המתזמן ישלח בהמשך.
+    // בפניות שנזרעו לא נוצרת משימה (sendForInquiryNow מחזיר no_job).
     if (res.status !== "not_found" && res.caseId) {
       after(() => sendForInquiryNow(inquiryId).catch((e) => {
         console.warn("[notify] immediate send failed: " + (e instanceof Error ? e.name : "Error"));
       }));
     }
+    const lists = await refreshLists(user.id);
+    const extra = lists ? { inquiries: lists.inquiries } : {};
     if (res.status === "applied") {
       return res.missingFields && res.missingFields.length > 0
-        ? { status: "applied", recomputed: res.recomputed ?? false, missingFields: res.missingFields }
-        : { status: "applied", recomputed: res.recomputed ?? false };
+        ? { status: "applied", recomputed: res.recomputed ?? false, missingFields: res.missingFields, ...extra }
+        : { status: "applied", recomputed: res.recomputed ?? false, ...extra };
     }
     if (res.status === "recorded_not_applied") {
-      return res.reason ? { status: "recorded_not_applied", reason: res.reason } : { status: "recorded_not_applied" };
+      return res.reason ? { status: "recorded_not_applied", reason: res.reason, ...extra } : { status: "recorded_not_applied", ...extra };
     }
-    if (res.status === "stale_context") return { status: "stale_context" };
-    if (res.status === "future_effective") return { status: "future_effective", effectiveFrom: res.effectiveFrom ?? "" };
+    if (res.status === "stale_context") return { status: "stale_context", ...extra };
+    if (res.status === "future_effective") return { status: "future_effective", effectiveFrom: res.effectiveFrom ?? "", ...extra };
     return { status: "not_found" };
   } catch (e) {
     if (e instanceof ForbiddenError) return { status: "forbidden" };
     console.warn(`[rep] answer failed: ${e instanceof Error ? e.name : "Error"}`);
-    return { status: "error", message: "שגיאה במענה לפנייה" };
+    return { status: "error", message: "שגיאה במענה לפנייה. אפשר לנסות שוב; הטופס נשמר." };
   }
 }

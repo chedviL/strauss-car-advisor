@@ -10,6 +10,7 @@ import { createAuthClient, AuthConfigError } from "../server/auth/supabase.js";
 import { nextCookieAdapter } from "../server/auth/next-session.js";
 import { checkRateLimit } from "../server/web/rate-limit.js";
 import { normalizeEmail, normalizeCode } from "../server/auth/validate.js";
+import { safeReturnPath, RETURN_COOKIE } from "../server/auth/return-path.js";
 
 export type OtpRequestResult =
   | { status: "sent" }
@@ -69,8 +70,11 @@ export async function verifyOtp(emailRaw: string, codeRaw: string): Promise<OtpV
   const store = await cookies();
   store.delete("strauss_case");
   store.delete("strauss_visit");
-  // מפנים ישירות למסך היועץ (שיחה נקייה) ולא לרשימת הבירורים.
-  redirect("/");
+  // חזרה ליעד מותר שנשמר לפני הכניסה (קישור התראה /go/case/<id> או /representative);
+  // הבעלות על הבירור נבדקת שוב בשער הקישור. אחרת - מסך היועץ (שיחה נקייה).
+  const back = safeReturnPath(store.get(RETURN_COOKIE)?.value);
+  store.delete(RETURN_COOKIE);
+  redirect(back ?? "/");
 }
 
 /** יציאה והחלפת חשבון: מסיימת את הסשן ומנקה כל מצביע למשתמש הקודם. */
@@ -83,7 +87,7 @@ export async function signOut(): Promise<void> {
   }
   const store = await cookies();
   for (const c of store.getAll()) {
-    if (c.name.startsWith("sb-") || c.name === "strauss_case" || c.name === "strauss_visit") store.delete(c.name);
+    if (c.name.startsWith("sb-") || c.name === "strauss_case" || c.name === "strauss_visit" || c.name === RETURN_COOKIE) store.delete(c.name);
   }
   redirect("/login");
 }

@@ -9,21 +9,17 @@ import { AccountMenu } from "../../features/auth/AccountMenu.js";
 import { InquiryRow } from "../../features/auth/InquiryRow.js";
 import { AppHeader } from "../../features/brand/AppHeader.js";
 import { startNewInquiry } from "../inquiry-actions.js";
-import { myStaffScope } from "../actions.js";
 
 export const dynamic = "force-dynamic";
 
 export default async function InquiriesPage() {
   const user = await getSessionUser();
   if (!user) redirect("/login");
-  const [list, staff] = await Promise.all([
-    caseService().listCaseSummaries(user.id, 50),
-    myStaffScope(),
-  ]);
+  const list = await caseService().listCaseSummaries(user.id, 50);
 
   return (
     <main className="app-main">
-      <AppHeader actions={<AccountMenu email={user.email} isStaff={staff.isStaff} />} />
+      <AppHeader actions={<AccountMenu email={user.email} />} />
       <DemoBadge />
       <div className="app-content" style={{ paddingTop: "var(--space-3)" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "var(--space-2)", flexWrap: "wrap" }}>

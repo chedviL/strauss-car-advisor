@@ -1,45 +1,78 @@
 // src/app/representative/page.tsx
-// מסך נציג. נגיש רק למי שיש לו תפקיד נציג פעיל (staff_roles) והיקף סוגי פניות.
-// ההרשאה נקבעת בשרת ונאכפת ב-SQL; עובד רגיל רואה הודעת "אין הרשאה" ולא נתונים.
-// מוצג ההקשר הנחוץ להכרעה בלבד: ללא שכר, נטו, מייל או זהות בעלים.
-import { DemoBadge } from "../../features/advisor/DemoBadge.js";
-import { RepresentativePanel } from "../../features/advisor/RepresentativePanel.js";
-import { AppHeader } from "../../features/brand/AppHeader.js";
-import { loadRepInquiries } from "../actions.js";
+// מסך נציג מלא אחד, על אותם שירותים, בשני מצבי גישה:
+//   staff - נציג מורשה (תפקיד פעיל + היקף ב-staff_roles, ערוץ ניהולי בלבד);
+//   demo  - התנסות מוגבלת לפניות בדיקה, רק כשדגל השרת REP_DEMO_ACCESS_ENABLED מופעל.
+// ההרשאה נקבעת בשרת ונאכפת ב-SQL. משתמש ללא גישה רואה הסבר (ואם ההתנסות פעילה - כפתור
+// התנסות). מוצג ההקשר הנחוץ להכרעה בלבד: ללא שכר, נטו, תלוש או זהות בעלים.
 import { redirect } from "next/navigation";
+import { DemoBadge } from "../../features/advisor/DemoBadge.js";
+import { AppHeader } from "../../features/brand/AppHeader.js";
+import { AccountMenu } from "../../features/auth/AccountMenu.js";
+import { RepresentativeWorkspace } from "../../features/representative/RepresentativeWorkspace.js";
+import { DemoIntro } from "../../features/representative/DemoIntro.js";
+import { DEMO_NOTICE } from "../../features/representative/rep-format.js";
+import "../../features/representative/representative.css";
+import { loadRepWorkspace } from "../actions.js";
 import { getSessionUser } from "../../server/auth/next-session.js";
 
-// עמוד מאומת פר-משתמש: לעולם לא סטטי (קורא סשן/עוגיות). חובה לבנייה ב-Vercel.
+// עמוד מאומת פר-משתמש: לעולם לא סטטי. maxDuration: הכנת פניות הדוגמה בלחיצה הראשונה
+// כוללת כמה חישובי השוואה מול המסד.
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 export default async function RepresentativePage() {
   const user = await getSessionUser();
   if (!user) redirect("/login");
-  const res = await loadRepInquiries();
+  const ws = await loadRepWorkspace();
+  if (ws.status === "unauthenticated") redirect("/login");
 
   return (
-    <main className="app-main">
-      {/* מסך הנציג: אותה שפה, ממשק עבודה ממוקד. ללא רקע רכב דומיננטי (app-main בלבד). */}
-      <AppHeader actions={<a className="btn btn-ghost" href="/inquiries" style={{ borderRadius: "var(--radius-pill)" }}>חזרה לבירורים</a>} />
+    <main id="main-content" className="app-main">
+      <AppHeader actions={<AccountMenu email={user.email} />} />
       <DemoBadge />
-      <div className="app-content" style={{ paddingTop: "var(--space-3)" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "var(--space-2)" }}>
-          <h1 style={{ fontSize: "var(--font-xl)", margin: 0 }}>אזור נציג</h1>
+      <div className="rep-shell">
+        <div className="rep-titlebar">
+          <h1>אזור נציג</h1>
+          {ws.status === "ok" && (
+            <span className="rep-mode" data-mode={ws.mode}>
+              {ws.mode === "demo" ? "התנסות — הדגמה" : "גישה רגילה — נציג מורשה"}
+            </span>
+          )}
         </div>
-        {res.status === "forbidden" ? (
-          <div role="alert" className="card" style={{ padding: "var(--space-4)" }}>
-            <strong>אין לך הרשאת נציג.</strong>
-            <p style={{ color: "var(--color-muted)", marginTop: "var(--space-2)" }}>
-              הגישה לאזור זה ניתנת רק לנציגים מורשים. אם לדעתך מדובר בטעות, פנה/י למנהל המערכת.
-            </p>
-          </div>
-        ) : (
+
+        {ws.status === "none" && (
           <>
-            <p style={{ color: "var(--color-muted)", margin: 0, fontSize: "var(--font-sm)" }}>
-              מוצגות הפניות שבהיקף ההרשאה שלך בלבד. התשובה מוחלת על התיק ומעדכנת את ההשוואה אוטומטית,
-              גם אם העובד/ת אינו/ה מחובר/ת כעת. מוצג ההקשר הנחוץ להכרעה בלבד, ללא שכר או פרטים אישיים.
-            </p>
-            <RepresentativePanel inquiries={res.inquiries} />
+            <div role="note" className="rep-card">
+              <h2>אין לך הרשאת נציג</h2>
+              <p>
+                אזור זה מיועד לנציגים מורשים. הרשאת נציג ניתנת בערוץ ניהולי מוגן בלבד, ואינה ניתנת לבחירה
+                עצמית. אם לדעתך מדובר בטעות, פנה/י למנהל המערכת.
+              </p>
+            </div>
+            {ws.demoAvailable ? (
+              <DemoIntro />
+            ) : (
+              <p className="rep-hint">ההתנסות בתפקיד נציג אינה פעילה כרגע.</p>
+            )}
+          </>
+        )}
+
+        {ws.status === "ok" && (
+          <>
+            {ws.mode === "demo" ? (
+              <p className="rep-notice" role="note">{DEMO_NOTICE}</p>
+            ) : (
+              <p className="rep-hint">
+                מוצגות הפניות שבהיקף ההרשאה שלך בלבד. התשובה מוחלת על התיק ומעדכנת את ההשוואה אוטומטית, גם אם
+                העובד/ת אינו/ה מחובר/ת כעת. מוצג ההקשר הנחוץ להכרעה בלבד, ללא שכר או פרטים אישיים.
+              </p>
+            )}
+            <RepresentativeWorkspace
+              mode={ws.mode}
+              initialInquiries={ws.inquiries}
+              initialAttachable={ws.attachable}
+              vehicleNames={ws.vehicleNames}
+            />
           </>
         )}
       </div>

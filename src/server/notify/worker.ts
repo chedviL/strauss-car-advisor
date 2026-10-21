@@ -25,6 +25,9 @@ async function lookupEmail(userId: string): Promise<string | null> {
   const url = (process.env.SUPABASE_URL ?? "").trim().replace(/\/+$/, "");
   const key = (process.env.SUPABASE_SERVICE_ROLE_KEY ?? "").trim();
   if (!url || !key) return null;
+  // הגנה בעומק: רק מזהה משתמש Supabase אמיתי (uuid). בעלים סינתטי של פניות הדגמה
+  // ('demo-seed:...') לעולם לא יקבל מייל.
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId)) return null;
   const { createClient } = await import("@supabase/supabase-js");
   const admin = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
   const { data, error } = await admin.auth.admin.getUserById(userId);

@@ -4,7 +4,6 @@
 import { getSessionUser } from "../server/auth/next-session.js";
 import { redirect } from "next/navigation";
 import { AccountMenu } from "../features/auth/AccountMenu.js";
-import { myStaffScope } from "./actions.js";
 import { caseService } from "../server/web/service.js";
 import { ComparisonView } from "../features/advisor/ComparisonView.js";
 import { DemoBadge } from "../features/advisor/DemoBadge.js";
@@ -24,7 +23,6 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ c
   const user = await getSessionUser();
   if (!user) redirect("/login");
   const owner = user.id;
-  const staff = await myStaffScope();
   // הבירור הפעיל נקבע ע"י מזהה מפורש ב-URL (?c=<caseId>) בלבד - לא ע"י עוגייה.
   // כניסה רגילה ל-/ (בלי הפרמטר) פותחת מסך שיחה נקי, בלי לשחזר שיחה קודמת ובלי
   // למחוק אותה. רענון בתוך שיחה פעילה שומר את ?c= ולכן משחזר אותה.
@@ -56,7 +54,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ c
       <ChatWave />
       <AppHeader
         leading={<ConversationSidebar summaries={summaries} activeCaseId={caseId} />}
-        actions={<AccountMenu email={user.email} isStaff={staff.isStaff} />}
+        actions={<AccountMenu email={user.email} />}
       />
       <DemoBadge />
 
