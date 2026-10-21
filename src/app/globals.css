@@ -262,9 +262,13 @@ body.chat-locked #main-content.app-main {
 }
 .app-brand { display: inline-flex; align-items: center; gap: var(--space-2); text-decoration: none; }
 .app-brand img { height: 42px; width: auto; object-fit: contain; transition: height 380ms cubic-bezier(0.22, 1, 0.36, 1); }
+/* "יועץ הרכב" ליד הלוגו, מופרד בקו אנכי עדין - נקי ומזמין. */
 .app-brand-sub {
   color: var(--color-graphite); font-weight: 700; font-size: var(--font-base);
-  transition: opacity 320ms ease, max-width 380ms cubic-bezier(0.22, 1, 0.36, 1);
+  padding-inline-start: var(--space-2);
+  border-inline-start: 1px solid var(--color-border);
+  transition: opacity 320ms ease, max-width 380ms cubic-bezier(0.22, 1, 0.36, 1),
+              padding 380ms cubic-bezier(0.22, 1, 0.36, 1);
   overflow: hidden; white-space: nowrap;
 }
 .app-header-actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; justify-content: flex-end; }
@@ -273,7 +277,7 @@ body.chat-locked #main-content.app-main {
    מפנה גובה לכרטיסים/הודעות בשיחה ארוכה, בלי להעלים לגמרי את הניווט. ─── */
 body.chat-scrolled .app-header { padding-top: var(--space-2); padding-bottom: var(--space-2); }
 body.chat-scrolled .app-brand img { height: 30px; }
-body.chat-scrolled .app-brand-sub { opacity: 0; max-width: 0; }
+body.chat-scrolled .app-brand-sub { opacity: 0; max-width: 0; padding-inline-start: 0; border-inline-start: none; }
 @media (prefers-reduced-motion: reduce) {
   .app-header, .app-brand img, .app-brand-sub { transition: none; }
 }
