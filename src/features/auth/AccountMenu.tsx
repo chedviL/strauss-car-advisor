@@ -1,6 +1,6 @@
 // src/features/auth/AccountMenu.tsx
-// תפריט חשבון בכותרת, אחיד בכל המסכים: המייל המחובר, "אזור עובד", "אזור נציג" והחלפת חשבון/יציאה.
-// שלושת הכפתורים באותו גודל וסגנון; האזור הנוכחי מסומן (aria-current) ומלא, כך שתמיד יש דרך
+// תפריט חשבון בכותרת, אחיד בכל המסכים: "אזור עובד", "אזור נציג" והחלפת חשבון/יציאה (ללא כתובת מייל).
+// שלושת הכפתורים באותו גודל וסגנון; האזור הנוכחי מסומן (aria-current) ברקע רך, כך שתמיד יש דרך
 // לעבור בין העובד לנציג. "אזור נציג" מוצג לכל משתמש מחובר: נציג מורשה נכנס ישירות, ואחרים רואים
 // הסבר ואפשרות התנסות (כשהיא פעילה בשרת). ההרשאה האמיתית נקבעת בשרת ולא בתפריט.
 // "החלפת חשבון" ו"יציאה" מסיימות את הסשן בשרת ומנקות כל מצביע למשתמש הקודם.
@@ -17,19 +17,18 @@ const navBtn: CSSProperties = {
   display: "inline-flex",
   alignItems: "center",
 };
+// האזור הנוכחי: רקע רך בלבד (לא כפתור מלא), כדי שלא ימשוך את העין.
 const currentBtn: CSSProperties = {
   ...navBtn,
-  background: "var(--color-graphite)",
-  borderColor: "var(--color-graphite)",
-  color: "#fff",
+  background: "var(--color-accent-soft)",
+  borderColor: "var(--color-border-strong)",
+  color: "var(--color-text)",
 };
 
-export function AccountMenu({ email, area = "employee" }: { email: string | null; area?: "employee" | "rep" }) {
+// email נשמר בחתימה לתאימות עם הקוראים הקיימים, אך אינו מוצג עוד בכותרת.
+export function AccountMenu({ area = "employee" }: { email?: string | null; area?: "employee" | "rep" }) {
   return (
     <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "center", flexWrap: "wrap" }}>
-      {email && (
-        <bdi dir="ltr" style={{ color: "var(--color-muted)", fontSize: "var(--font-sm)" }} title="החשבון המחובר">{email}</bdi>
-      )}
       <a
         className="btn" href="/" style={area === "employee" ? currentBtn : navBtn}
         aria-current={area === "employee" ? "page" : undefined}
