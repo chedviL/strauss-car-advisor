@@ -6,12 +6,18 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { createPortal } from "react-dom";
+import { ArrowLeft } from "lucide-react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { PayslipUpload } from "./PayslipUpload.js";
+import { VoiceInput } from "./VoiceInput.js";
 import { MessageBubble } from "./ChatMessage.js";
 import { LightTrail } from "../brand/LightTrail.js";
-
+import "./vehicle-match/vehicle-match.css";
+import { VehicleMatchDrawer, SparkleIcon } from "./vehicle-match/VehicleMatchDrawer.js";
+import { FEATURE_NAME, INVITE } from "./vehicle-match/copy.js";
+import { moveMatchState, planPrefill, scopeKey } from "./vehicle-match/match-state.js";
 
 export interface ChatPanelProps {
   initialMessages?: Array<{ id: string; role: string; parts: unknown }>;
@@ -19,6 +25,10 @@ export interface ChatPanelProps {
   showExamples?: boolean;
   /** כרטיס ההשוואה (מרונדר בשרת) - מוצג בתוך זרימת השיחה, מתחת להודעה האחרונה. */
   comparison?: React.ReactNode;
+  /** המשתמש/ת המאומת/ת - רק לבידוד מצב השאלון בצד הלקוח (לא הרשאה). */
+  userId: string;
+  /** מזהה הבירור הפעיל מה-URL, או null בשיחה חדשה. */
+  caseId?: string | null;
 }
 
 // שלבי חיווי חשיבה גנריים (מתחלפים כדי שלא ישעמם). אינם מתארים שלב אמיתי במערכת
@@ -33,8 +43,18 @@ const PLACEHOLDER_EXAMPLES = [
   "מה יקרה אם אוותר על הרכב?",
 ];
 
-export function ChatPanel({ initialMessages = [], showExamples = false, comparison = null }: ChatPanelProps) {
+export function ChatPanel({ initialMessages = [], showExamples = false, comparison = null, userId, caseId = null }: ChatPanelProps) {
   const [input, setInput] = useState("");
+  // "איזה רכב מתאים לי?": מגירה, פתיחה מפורשת בלבד. הפעולה אינה שולחת הודעה ואינה נוגעת בתיק.
+  const [matchOpen, setMatchOpen] = useState(false);
+  const matchOpenerRef = useRef<HTMLElement | null>(null);
+  // הכפתור מוצג בכותרת (למעלה בשמאל, תמיד) דרך portal ל-slot שהעמוד מרנדר. אם אין slot
+  // (מסך אחר) - נופלים לשורה מעל תיבת ההקלדה. undefined = טרם נבדק (לא מציירים כפתור).
+  const [launcherSlot, setLauncherSlot] = useState<HTMLElement | null | undefined>(undefined);
+  useEffect(() => { setLauncherSlot(document.getElementById("vm-launcher-slot")); }, []);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const [draftAsk, setDraftAsk] = useState<{ draft: string; proposed: string } | null>(null);
+  const [replacedDraft, setReplacedDraft] = useState<string | null>(null);
   const [phIndex, setPhIndex] = useState(0);
   const [inputFocused, setInputFocused] = useState(false);
   const [busyStage, setBusyStage] = useState(0);
@@ -175,6 +195,51 @@ export function ChatPanel({ initialMessages = [], showExamples = false, comparis
     }
   }, [activeCase]);
 
+  // שיחה שהתחילה "חדשה" ונפתח לה בירור: מעבירים את מצב השאלון למפתח הבירור (לא מערבבים בירורים).
+  const effectiveCaseId = caseId ?? activeCase;
+  useEffect(() => {
+    if (caseId === null && activeCase && typeof window !== "undefined") {
+      moveMatchState(window.sessionStorage, scopeKey(userId, null), scopeKey(userId, activeCase));
+    }
+  }, [caseId, activeCase, userId]);
+
+  const openMatch = useCallback((e: React.MouseEvent<HTMLElement>) => {
+    matchOpenerRef.current = e.currentTarget;
+    setMatchOpen(true);
+  }, []);
+  const closeMatch = useCallback(() => {
+    setMatchOpen(false);
+    // אחרי שהדיאלוג חדל להיות מודאלי (inert הוסר) - מחזירים פוקוס לכפתור הפתיחה.
+    requestAnimationFrame(() => matchOpenerRef.current?.focus());
+  }, []);
+  // "בדקו אותו מול הרכב שלי": סוגר ומכין טקסט בתיבה. לא שולח, לא פותח בירור, לא משנה רכב/חלופה.
+  // טיוטה קיימת אינה נדרסת בלי החלטה: אפשר להוסיף, להחליף (עם החזרה) או להשאיר.
+  const prefillFromMatch = useCallback((text: string) => {
+    setMatchOpen(false);
+    const plan = planPrefill(input, text);
+    if (plan.kind === "set") { setInput(plan.text); setDraftAsk(null); setReplacedDraft(null); }
+    else setDraftAsk({ draft: plan.draft, proposed: plan.proposed });
+    requestAnimationFrame(() => {
+      const el = inputRef.current;
+      if (!el) return;
+      el.focus();
+      const end = el.value.length;
+      el.setSelectionRange(end, end);
+    });
+  }, [input]);
+  function resolveDraft(choice: "append" | "replace" | "keep") {
+    if (!draftAsk) return;
+    if (choice === "append") setInput(`${draftAsk.draft.trimEnd()}\n${draftAsk.proposed}`);
+    if (choice === "replace") { setReplacedDraft(draftAsk.draft); setInput(draftAsk.proposed); }
+    setDraftAsk(null);
+    inputRef.current?.focus();
+  }
+  function restoreDraft() {
+    if (replacedDraft !== null) setInput(replacedDraft);
+    setReplacedDraft(null);
+    inputRef.current?.focus();
+  }
+
   const empty = messages.length === 0;
 
   // סבב שלבי החשיבה כל ~1.6 שנ׳ בזמן עבודה; מתאפס כשמסתיים.
@@ -227,6 +292,17 @@ export function ChatPanel({ initialMessages = [], showExamples = false, comparis
   }
 
   const isOpening = empty && !comparison;
+  const launcherButton = (
+    <button
+      type="button"
+      className="vm-chip vm-chip-header"
+      aria-haspopup="dialog"
+      aria-expanded={matchOpen}
+      onClick={openMatch}
+    >
+      <SparkleIcon /> {FEATURE_NAME}
+    </button>
+  );
   return (
     <section
       className={`chat-card ${isOpening ? "chat-card-opening" : ""}`.trim()}
@@ -292,9 +368,36 @@ export function ChatPanel({ initialMessages = [], showExamples = false, comparis
 
       {/* קומפוזר - תיבת בוט מסוגננת בסגנון הכניסה. אין כפתורי הצעות. */}
       <div className="composer" style={{ borderTop: empty ? "none" : "1px solid var(--color-border)" }}>
+        {launcherSlot === null && <div className="composer-extras">{launcherButton}</div>}
+        {launcherSlot && createPortal(launcherButton, launcherSlot)}
+        {draftAsk && (
+          <div className="vm-draft-notice" role="group" aria-label="יש טיוטה בתיבת ההקלדה">
+            <p>יש כבר טיוטה בתיבה. מה לעשות עם ההצעה: ״{draftAsk.proposed}״?</p>
+            <div className="vm-actions-row">
+              <button type="button" className="btn" onClick={() => resolveDraft("append")}>הוספה בסוף הטיוטה</button>
+              <button type="button" className="btn" onClick={() => resolveDraft("replace")}>החלפת הטיוטה</button>
+              <button type="button" className="btn btn-ghost" onClick={() => resolveDraft("keep")}>השארת הטיוטה כמות שהיא</button>
+            </div>
+          </div>
+        )}
+        {replacedDraft !== null && !draftAsk && (
+          <div className="vm-draft-notice" role="status">
+            <span>הטיוטה הקודמת הוחלפה.</span>
+            <button type="button" className="btn btn-ghost" onClick={restoreDraft}>החזרת הטיוטה הקודמת</button>
+          </div>
+        )}
         <form onSubmit={submit} className={`composer-row ${empty ? "is-hero" : ""}`.trim()}>
           {/* צירוף תלוש: העלאה + חילוץ (באישור) + אישור/עריכה + החלה על התיק */}
           <PayslipUpload onApplied={() => router.refresh()} />
+
+          {/* קלט דיבור: התמלול נכנס לתיבת הטקסט לעריכה - לא נשלח אוטומטית.
+              מצטרף לטקסט קיים אם כבר הוקלד משהו. */}
+          <VoiceInput
+            disabled={busy}
+            onTranscript={(text) => {
+              setInput((prev) => (prev.trim() === "" ? text : `${prev.trim()} ${text}`));
+            }}
+          />
 
           <div className="composer-field">
             {/* placeholder מונפש: עף למעלה ונכנס מלמטה. מוסתר כשיש טקסט/focus.
@@ -305,6 +408,7 @@ export function ChatPanel({ initialMessages = [], showExamples = false, comparis
               </span>
             )}
             <textarea
+              ref={inputRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) submit(e); }}
@@ -323,7 +427,28 @@ export function ChatPanel({ initialMessages = [], showExamples = false, comparis
             <SendIcon />
           </button>
         </form>
+        {/* הזמנה עדינה במסך פתיחה בלבד. אינה פותחת את המגירה אוטומטית. */}
+        {isOpening && (
+          <button type="button" className="vm-invite" onClick={openMatch} aria-haspopup="dialog">
+            <span className="vm-invite-icon" aria-hidden="true"><SparkleIcon size={20} /></span>
+            <span className="vm-invite-text">
+              <strong className="vm-invite-title">
+                {INVITE.titleParts.map((p) => <span key={p} className="vm-nobreak">{p} </span>)}
+              </strong>
+              <span>{INVITE.body}</span>
+            </span>
+            <span className="vm-invite-go">{INVITE.cta} <ArrowLeft size={15} aria-hidden={true} /></span>
+          </button>
+        )}
       </div>
+
+      <VehicleMatchDrawer
+        open={matchOpen}
+        onClose={closeMatch}
+        onPrefill={prefillFromMatch}
+        userId={userId}
+        caseId={effectiveCaseId}
+      />
     </section>
   );
 }

@@ -225,6 +225,9 @@ input::placeholder, textarea::placeholder { color: var(--color-muted); opacity: 
   position: relative;
   min-height: 100vh; min-height: 100dvh;
   display: flex; flex-direction: column;
+  /* רשת ביטחון מפני גלילה אופקית מקרית (למשל כותרת צרה בנייד). */
+  max-width: 100%;
+  overflow-x: hidden;
   background:
     radial-gradient(1100px 520px at 85% -10%, var(--brand-teal-soft) 0%, transparent 58%),
     radial-gradient(900px 460px at 8% 110%, var(--brand-orange-soft) 0%, transparent 56%),
@@ -253,12 +256,34 @@ body.chat-locked #main-content.app-main {
 .app-main > * { position: relative; z-index: 1; }
 
 .app-header {
-  display: flex; align-items: center; justify-content: space-between;
+  /* שלוש עמודות: start | center | end. העמודות הצדדיות שוות (1fr) כך שהמרכז
+     ממורכז במדויק ביחס לכל הכותרת, ללא תלות ברוחב הלוגו או הכפתור השמאלי. */
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
   gap: var(--space-3);
   width: 100%; max-width: 1040px; margin: 0 auto;
   padding: var(--space-4) var(--space-4) var(--space-3);
   /* הנפשת כיווץ חלקה ורכה כשגוללים בשיחה (ראו body.chat-scrolled). */
   transition: padding 380ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+/* אזור הניווט הממורכז: שלושת כפתורי החשבון, תמיד במרכז הכותרת. */
+.app-header-center { display: flex; align-items: center; justify-content: center; gap: var(--space-2); flex-wrap: wrap; min-width: 0; }
+
+/* תפריט החשבון (3 כפתורים) + כפתורי הניווט. סגנון אחיד: אותו padding, גודל
+   גופן ורדיוס. האזור הנוכחי (is-current) מסומן ברקע רך בלבד. */
+.account-menu { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; justify-content: center; min-width: 0; }
+.account-menu .signout-form { display: flex; }
+.nav-btn {
+  padding: 6px 16px; font-size: var(--font-sm); line-height: 1.4;
+  white-space: nowrap; text-decoration: none;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.nav-btn.is-current {
+  background: var(--color-accent-soft);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  font-weight: 700;
 }
 .app-brand { display: inline-flex; align-items: center; gap: var(--space-2); text-decoration: none; }
 .app-brand img { height: 42px; width: auto; object-fit: contain; transition: height 380ms cubic-bezier(0.22, 1, 0.36, 1); }
@@ -271,7 +296,44 @@ body.chat-locked #main-content.app-main {
               padding 380ms cubic-bezier(0.22, 1, 0.36, 1);
   overflow: hidden; white-space: nowrap;
 }
+/* הפעולה הראשית (שמאל ב-RTL): "איזה רכב מתאים לי?". תמיד צמוד לקצה השמאלי. */
 .app-header-actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; justify-content: flex-end; }
+
+/* ─── נייד: אין מספיק רוחב לשלוש עמודות. עוברים לשתי שורות נקיות: הלוגו +
+   הפעולה הראשית בשורה העליונה (start | end), וכפתורי הניווט ממורכזים מתחתיהם.
+   כל העמודות משתמשות ב-minmax(0,…) והילדים ב-min-width:0 כדי שאף אלמנט לא
+   ידחוף את הרוחב מעבר למסך (מניעת גלילה אופקית). ─── */
+@media (max-width: 760px) {
+  .app-header {
+    grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+    grid-template-areas:
+      "start actions"
+      "center center";
+    row-gap: var(--space-2);
+    padding-inline: var(--space-3);
+  }
+  .app-header-start { grid-area: start; min-width: 0; }
+  .app-header-actions { grid-area: actions; min-width: 0; flex-wrap: nowrap; }
+  .app-header-center { grid-area: center; width: 100%; min-width: 0; }
+  /* הכפתורים נחלקים שווה בשווה על כל הרוחב, ריווח קומפקטי, בלי גלישה החוצה. */
+  .account-menu { width: 100%; gap: var(--space-1); flex-wrap: nowrap; }
+  .account-menu .signout-form { flex: 1 1 0; min-width: 0; }
+  .nav-btn { flex: 1 1 0; min-width: 0; justify-content: center; padding-inline: 10px; }
+  /* הלוגו רשאי להצטמצם; התת-כותרת "יועץ הרכב" מוסתרת בנייד לפינוי מקום. */
+  .app-brand { min-width: 0; }
+  .app-brand img { height: 34px; }
+  .app-brand-sub { display: none; }
+  /* כפתור "איזה רכב מתאים לי?" רשאי להצטמצם ולא לגלוש. */
+  .app-header-actions .vm-chip,
+  .app-header-actions .vm-launcher-slot { min-width: 0; max-width: 100%; }
+  .app-header-actions .vm-chip { white-space: normal; text-align: center; }
+}
+
+/* מסך צר במיוחד: מכווצים עוד את הכפתורים ומאפשרים גלישת טקסט לשתי שורות
+   במקום לדחוף רוחב (מניעת גלילה אופקית סופית). */
+@media (max-width: 420px) {
+  .nav-btn { padding-inline: 8px; font-size: 0.78rem; white-space: normal; line-height: 1.2; text-align: center; }
+}
 
 /* ─── כיווץ הכותרת כשגוללים בשיחה: פחות padding, לוגו קטן יותר, תת-כותרת נעלמת.
    מפנה גובה לכרטיסים/הודעות בשיחה ארוכה, בלי להעלים לגמרי את הניווט. ─── */
@@ -503,8 +565,99 @@ body.chat-scrolled .app-brand-sub { opacity: 0; max-width: 0; padding-inline-sta
 .composer-send:active:not(:disabled) { transform: scale(0.94); }
 .composer-send:disabled { opacity: 0.4; cursor: not-allowed; }
 
+/* ─── "דבר איתי": כפתור רמקול + בועת הסבר + חיווי מצב ─── */
+/* הכפתור הוא אייקון בלבד; "דבר איתי" מופיע בבועה במעבר עכבר/מיקוד מקלדת.
+   מצב האזנה מסומן בצורה שאינה צבע-בלבד: קשתות הרמקול פועמות, aria-pressed,
+   וטקסט חיווי ("מקשיב…") - בנוסף להילה בצבעי המותג. */
+.voice-btn { flex: 0 0 auto; position: relative; }
+
+/* האזנה: רקע/מסגרת בצבעי המותג (במקום אדום, שמייצג "הפסד" בשאר המוצר). הטקסט
+   והאייקון נשארים גרפיט: ה-teal לבדו חלש כצבע טקסט על רקע בהיר. */
+.voice-btn.is-listening {
+  color: var(--color-graphite);
+  border-color: var(--brand-teal);
+  background: var(--brand-teal-soft);
+  animation: voiceHalo 1.8s ease-in-out infinite;
+}
+@keyframes voiceHalo {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--brand-teal) 45%, transparent); }
+  50%      { box-shadow: 0 0 0 6px color-mix(in srgb, var(--brand-teal) 0%, transparent); }
+}
+
+/* גלי קול: הפסים סטטיים במנוחה, ובזמן האזנה מקפצים בהשהיות שונות. scaleY סביב
+   מרכז כל פס (transform-box: fill-box) כדי שיתכווצו ויתארכו סימטרית. */
+.voice-bar { transform-box: fill-box; transform-origin: center; }
+.voice-wave.is-active .voice-bar { animation: voiceBar 0.9s ease-in-out infinite; }
+.voice-wave.is-active .voice-bar-1 { animation-delay: 0.00s; }
+.voice-wave.is-active .voice-bar-2 { animation-delay: 0.15s; }
+.voice-wave.is-active .voice-bar-3 { animation-delay: 0.30s; }
+.voice-wave.is-active .voice-bar-4 { animation-delay: 0.10s; }
+.voice-wave.is-active .voice-bar-5 { animation-delay: 0.22s; }
+@keyframes voiceBar {
+  0%, 100% { transform: scaleY(0.4); }
+  50%      { transform: scaleY(1); }
+}
+
+/* ספינר העיבוד. */
+.voice-spinner { animation: voiceSpin 900ms linear infinite; }
+@keyframes voiceSpin { to { transform: rotate(360deg); } }
+
+/* בועת "דבר איתי": ממוקמת לצד הכפתור (בצד הסיום, לכיוון תיבת הטקסט) ולא מעליו,
+   כי .chat-card חותך גלישה (overflow:hidden) ובמסך הפתיחה הקומפוזר צמוד לקצה
+   העליון של הכרטיס - בועה מעל הכפתור הייתה נחתכת. */
+.has-tip { position: relative; }
+.ui-tip {
+  position: absolute;
+  top: 50%;
+  inset-inline-start: calc(100% + 8px);
+  transform: translateY(-50%) translateX(4px);
+  background: var(--color-graphite);
+  color: #fff;
+  font-size: var(--font-sm);
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  padding: 7px 11px;
+  border-radius: var(--radius-pill);
+  box-shadow: var(--shadow);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--t-fast) ease, transform var(--t-fast) ease;
+  z-index: 3;
+}
+.has-tip:hover .ui-tip,
+.has-tip:focus-visible .ui-tip {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
+}
+/* במסכי מגע אין hover; הבועה לא מוצגת, והשם הנגיש נשאר ב-aria-label. */
+@media (hover: none) { .ui-tip { display: none; } }
+
+/* חיווי טקסטואלי קצר ליד הכפתור; מתקצר במסך צר כדי לא לדחוס את הקומפוזר. */
+.voice-status {
+  flex: 0 1 auto;
+  font-size: var(--font-sm);
+  color: var(--color-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 26ch;
+}
+.voice-status.is-error { color: var(--color-loss); max-width: 28ch; white-space: normal; }
+@media (max-width: 640px) {
+  /* במסך צר שומרים את תיבת הטקסט רחבה: החיווי מוסתר, אך נשאר נגיש לקוראי מסך. */
+  .voice-status:not(.is-error) {
+    position: absolute; width: 1px; height: 1px;
+    overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .composer-ph { animation: none; }
+  .voice-btn.is-listening { animation: none; }
+  .voice-wave.is-active .voice-bar { animation: none; transform: none; }
+  .voice-spinner, .cmp-pdf-spinner { animation: none; }
+  .ui-tip { transition: none; }
 }
 
 /* ─── כרטיס השוואה קומפקטי (המשך לשיחה, מעל תשובת המודל) ─── */
@@ -529,7 +682,40 @@ body.chat-scrolled .app-brand-sub { opacity: 0; max-width: 0; padding-inline-sta
 /* ההשהיה על ה-tile עצמו (לא על ה-inner) כדי לא להתנגש בטרנספורם ה-flip. */
 .cmp-card .cmp-tile:nth-child(1) { animation: cmpRise 420ms ease both; animation-delay: 500ms; }
 .cmp-card .cmp-tile:nth-child(2) { animation: cmpRise 420ms ease both; animation-delay: 600ms; }
-.cmp-top { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+/* z-index: אנימציית cmpRise (fill-mode both) יוצרת stacking context לכל אחד מילדי הכרטיס,
+   והם מצוירים לפי סדר ה-DOM. בלי z-index, בועת ההסבר של כפתור ה-PDF (שנפתחת מתחת לכפתור
+   וחופפת את שורת ההפרש והאריחים) נשארת בתוך ה-context של .cmp-top ומוסתרת מאחוריהם. */
+.cmp-top { position: relative; z-index: 5; display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.cmp-top-actions { display: inline-flex; align-items: center; gap: var(--space-1); }
+
+/* הורדת PDF: אייקון קטן וללא מסגרת במנוחה - נוכחות עדינה; מסגרת רק במעבר עכבר. */
+.cmp-pdf-btn {
+  width: 34px; height: 34px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--color-muted);
+}
+.cmp-pdf-btn:hover:not(:disabled) { background: var(--color-surface-2); border-color: var(--color-border); color: var(--color-text); }
+.cmp-pdf-spinner { animation: voiceSpin 900ms linear infinite; }
+.cmp-pdf-error {
+  margin-top: var(--space-2);
+  font-size: var(--font-sm);
+  color: var(--color-loss);
+  background: var(--color-loss-soft);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+}
+
+/* בועת הסבר שנפתחת מתחת לכפתור (ולא הצידה): לכפתורים שליד קצה כרטיס/מכל גלילה,
+   שבהם בועה צדדית נחתכת. ממורכזת מתחת לכפתור. */
+.ui-tip.ui-tip-below {
+  top: calc(100% + 8px);
+  inset-inline-start: auto;
+  left: 50%;
+  transform: translate(-50%, -4px);
+}
+.has-tip:hover .ui-tip.ui-tip-below,
+.has-tip:focus-visible .ui-tip.ui-tip-below { transform: translate(-50%, 0); }
 .cmp-kicker { display: inline-flex; align-items: center; gap: var(--space-2); font-weight: 700; font-size: var(--font-sm); color: var(--color-muted); }
 .cmp-kicker-trail { width: 44px; opacity: 0.9; }
 
@@ -1484,6 +1670,12 @@ html[data-a11y-contrast] body textarea {
   color: #fff !important;
   border-color: #fff !important;
 }
+/* "דבר איתי" בניגודיות גבוהה: מצב האזנה נשאר מובחן (צהוב נגישות), והבועה בשחור
+   עם מסגרת לבנה כדי שלא תיבלע ברקע. */
+html[data-a11y-contrast] body .voice-btn.is-listening { color: #ffe600 !important; border-color: #ffe600 !important; background: #000 !important; }
+html[data-a11y-contrast] body .ui-tip { background: #000 !important; color: #fff !important; border: 1px solid #fff; }
+html[data-a11y-contrast] body .cmp-pdf-btn { border-color: #fff !important; color: #fff !important; background: #000 !important; }
+html[data-a11y-contrast] body .voice-status { color: #fff !important; }
 html[data-a11y-contrast] body a { color: #ffe600 !important; }
 html[data-a11y-contrast] body .btn,
 html[data-a11y-contrast] body .btn-primary,

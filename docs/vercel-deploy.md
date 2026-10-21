@@ -21,6 +21,11 @@
 - `MODEL_API_KEY3`           — מפתח Gemini הפעיל לחילוץ תלושים (החליף את KEY2).
 - `MODEL_API_KEY2`           — מפתח Gemini גיבוי לחילוץ (אם KEY3 לא הוגדר). אופציונלי אם KEY3 קיים.
 
+אופציונלי — תמלול דיבור (STT) בקומפוזר:
+- `TRANSCRIBE_API_KEY`        — מפתח Groq (חינמי, https://console.groq.com) לתמלול הקלטות.
+  מכסה נפרדת מ-Gemini/Claude. **אם לא מוגדר, כפתור המיקרופון אינו מוצג** (אין יכולת מדומה).
+- `TRANSCRIBE_MODEL_ID`       — ברירת מחדל whisper-large-v3-turbo.
+
 אופציונלי (ברירות מחדל בקוד; הגדירו רק לשינוי):
 - `CHAT_FAST_PATH`           — מסלול השיחה. השאירו `0` (מסלול B) כפי שסוכם.
 - `MODEL_ID`                 — ברירת מחדל claude-sonnet-5-5.

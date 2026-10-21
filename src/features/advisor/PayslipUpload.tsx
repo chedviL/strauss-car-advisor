@@ -165,8 +165,7 @@ export function PayslipUpload({ onApplied }: { onApplied?: () => void }) {
         hidden onChange={(e) => pick(e.target.files)}
       />
       <button
-        type="button" className="icon-btn" aria-label="העלאת תלוש"
-        title="העלאת תלוש (PDF או תמונה)"
+        type="button" className="icon-btn has-tip" aria-label="העלאת תלוש (PDF או תמונה)"
         disabled={busy}
         onClick={() => fileRef.current?.click()}
         onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
@@ -175,11 +174,19 @@ export function PayslipUpload({ onApplied }: { onApplied?: () => void }) {
         style={dragOver ? { borderColor: "var(--color-primary)", background: "var(--color-accent-soft)" } : undefined}
       >
         <PaperclipIcon />
+        {/* אותה בועה כמו "דבר איתי" (ראו .ui-tip ב-globals.css). דקורטיבית: השם
+            הנגיש המלא כבר ב-aria-label. */}
+        <span className="ui-tip" aria-hidden="true">העלאת תלוש (PDF או תמונה)</span>
       </button>
 
       {phase !== "idle" && (
         <div role="dialog" aria-label="העלאת תלוש" style={overlayStyle} onClick={(e) => { if (e.target === e.currentTarget && !busy) reset(); }}>
-          <div className="card anim-card" style={panelStyle}>
+          <div
+            className="card anim-card"
+            style={panelStyle}
+            // החלון מרונדר בתוך <form> של הצ'אט: Enter בשדה מספר היה שולח את הודעת הצ'אט שבתיבה.
+            onKeyDown={(e) => { if (e.key === "Enter" && (e.target as HTMLElement).tagName === "INPUT") e.preventDefault(); }}
+          >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "var(--space-3)" }}>
               <h3 style={{ fontSize: "var(--font-lg)" }}>נתוני התלוש</h3>
               {!busy && <button type="button" className="icon-btn" aria-label="סגירה" onClick={reset}><CloseIcon /></button>}

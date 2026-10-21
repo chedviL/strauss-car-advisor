@@ -15,6 +15,9 @@ const csp = [
   "frame-ancestors 'none'",
   "object-src 'none'",
   "img-src 'self' data: blob:",
+  // media-src אינו יורש מ-img-src; נדרש blob: כדי שהקלטת הדיבור (MediaRecorder)
+  // תהיה ניתנת להשמעה/טיפול בדפדפן לפני השליחה לתמלול.
+  "media-src 'self' blob:",
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   scriptSrc,
   isDev ? "connect-src 'self' ws: wss:" : "connect-src 'self'",
@@ -27,7 +30,10 @@ const securityHeaders = [
   { key: "X-Frame-Options", value: "DENY" },
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-  { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+  // microphone=(self): נדרש לקלט דיבור בקומפוזר (הקלטה -> תמלול בצד שרת).
+  // ההרשאה מוגבלת למקור שלנו בלבד (לא ל-iframes/צד שלישי), והדפדפן עדיין
+  // מבקש אישור מפורש מהמשתמש/ת. מצלמה ומיקום נשארים חסומים לחלוטין.
+  { key: "Permissions-Policy", value: "camera=(), microphone=(self), geolocation=()" },
 ];
 
 const nextConfig = {
@@ -37,6 +43,9 @@ const nextConfig = {
   // אוטומטית; בלי זה מתקבל ENOENT בפריסה. הקובץ קטן ומחויב ב-Git.
   outputFileTracingIncludes: {
     "/**": ["./data/source/strauss-rules.json"],
+    // ה-PDF של ההשוואה קורא פונטים ולוגו מהדיסק בזמן ריצה (נתיב מחושב ש-Next אינו
+    // עוקב אחריו אוטומטית) - בלי זה מתקבל ENOENT בפריסה, כמו עם קובץ הכללים.
+    "/api/comparison-pdf": ["./assets/fonts/*.ttf", "./assets/brand/strauss-logo-pdf.png"],
   },
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];

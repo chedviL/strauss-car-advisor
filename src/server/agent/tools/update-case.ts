@@ -8,6 +8,7 @@ import type { CaseService } from "../../services/case-service.js";
 import type { FactsPatch } from "../../repositories/case-repository.js";
 import type { ToolContext, ToolResult } from "../tool-contracts.js";
 import { ok, conflict, missing } from "../tool-contracts.js";
+import { InvalidFactsError } from "../../services/facts-validation.js";
 
 // שדות שכר/פרופיל מותרים לעדכון עובדה משותפת. אין קבוצת זכאות דרך כאן בלי בירור.
 const numericField = z.number().finite().nonnegative();
@@ -48,9 +49,14 @@ export async function updateCase(
   if (Object.keys(patch).length === 0) {
     return missing(["set|clear"], "לא נמסרו שדות לעדכון");
   }
-  const res = await service.updateFacts(
-    ctx.caseId, ctx.ownerId, patch, input.expectedFactsRevision,
-  );
+  let res;
+  try {
+    res = await service.updateFacts(ctx.caseId, ctx.ownerId, patch, input.expectedFactsRevision);
+  } catch (e) {
+    // ערך לא תקין (עיסוק לא מוכר, שיעור מחוץ לטווח) - לא נשמר; המודל מקבל סיבה ושואל את העובד/ת.
+    if (e instanceof InvalidFactsError) return missing([e.field], e.message);
+    throw e;
+  }
   if (res.status === "conflict") {
     return conflict(
       "העובדות עודכנו בינתיים; יש לטעון מצב עדכני לפני עדכון חוזר",

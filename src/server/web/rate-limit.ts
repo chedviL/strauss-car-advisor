@@ -6,6 +6,9 @@
 
 type Bucket = number[]; // חותמות זמן (ms) של פעולות בחלון
 const buckets = new Map<string, Bucket>();
+const MAX_KEYS = 5000;
+// חלונות שונים לאותו מפתח אינם ידועים בזמן הניקוי; שומרים מרווח ביטחון (החלון הארוך בשימוש: 15 דקות).
+const MAX_WINDOW_SLACK_MS = 15 * 60_000;
 
 export interface RateLimitResult {
   allowed: boolean;
@@ -22,6 +25,13 @@ export interface RateLimitResult {
  */
 export function checkRateLimit(key: string, limit: number, windowMs: number, now: number = Date.now()): RateLimitResult {
   const cutoff = now - windowMs;
+  // מניעת גידול בלתי מוגבל של המפה (מפתח לכל מייל/בעלים): כשהיא גדולה, מסירים מפתחות שפגו.
+  if (buckets.size > MAX_KEYS) {
+    for (const [k, b] of buckets) {
+      const last = b[b.length - 1];
+      if (last === undefined || last <= cutoff - MAX_WINDOW_SLACK_MS) buckets.delete(k);
+    }
+  }
   const prev = buckets.get(key) ?? [];
   // משאירים רק פעולות בתוך החלון.
   const recent = prev.filter((t) => t > cutoff);

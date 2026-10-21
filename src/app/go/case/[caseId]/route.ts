@@ -6,6 +6,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSessionUser } from "../../../../server/auth/next-session.js";
 import { caseService } from "../../../../server/web/service.js";
+import { isUuid } from "../../../../domain/ids.js";
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +17,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ caseId: str
 
   const user = await getSessionUser();
   if (!user) return to("/login");
-  if (!/^[0-9a-f-]{36}$/i.test(caseId)) return to("/inquiries");
+  if (!isUuid(caseId)) return to("/inquiries");
 
   const state = await caseService().getCaseState(caseId, user.id);
   if (!state) return to("/inquiries"); // לא בבעלות / לא קיים - בלי חשיפה

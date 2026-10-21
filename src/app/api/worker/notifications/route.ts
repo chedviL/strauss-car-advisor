@@ -2,6 +2,7 @@
 // נקודת עיבוד תור ההתראות. מופעלת ע"י Vercel Cron (או קריאה ידנית מורשית).
 // הגנה: דורש כותרת Authorization: Bearer <CRON_SECRET> (Vercel Cron שולח אותה
 // אוטומטית כש-CRON_SECRET מוגדר). אין כאן מידע משתמש בתגובה - רק מונים.
+import { createHash, timingSafeEqual } from "node:crypto";
 import { processNotifications } from "../../../../server/notify/worker.js";
 
 export const runtime = "nodejs";
@@ -13,7 +14,10 @@ function authorized(req: Request): boolean {
   // בלי CRON_SECRET מוגדר: חוסמים (לא מאפשרים הפעלה פתוחה בפרודקשן).
   if (!secret) return false;
   const h = req.headers.get("authorization") ?? "";
-  return h === `Bearer ${secret}`;
+  // השוואה בזמן קבוע (על גיבובים באורך זהה) - ללא מידע דרך זמן תגובה.
+  const a = createHash("sha256").update(h).digest();
+  const b = createHash("sha256").update(`Bearer ${secret}`).digest();
+  return timingSafeEqual(a, b);
 }
 
 async function handle(req: Request): Promise<Response> {

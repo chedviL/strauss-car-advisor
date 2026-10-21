@@ -3,8 +3,9 @@
 // תצוגת השוואה: כרטיס לצד השיחה. סכומים מפלט המנוע בלבד.
 // הפרש נטו עם סימון שאינו צבע-בלבד (חץ + מילה). "חלופה ממתינה" כשחסר נתון.
 
-import { useTransition } from "react";
-import { resetDemo } from "../../app/actions.js";
+import { useState, useTransition } from "react";
+import { clearActiveInquiry } from "../../app/inquiry-actions.js";
+import { isComparisonStale } from "../../domain/calculation/staleness.js";
 import { LightTrail } from "../brand/LightTrail.js";
 import type { CaseState } from "../../domain/contracts/case.js";
 import type { NetBreakdown, ScenarioResult } from "../../domain/contracts/types.js";
@@ -27,6 +28,47 @@ export function ComparisonView({
 }) {
   const [pending, startTransition] = useTransition();
   const cmp = state.latestComparison!;
+
+  // הורדת סיכום PDF. ה-PDF נוצר בשרת מההשוואה השמורה (אותם סכומים שבכרטיס); כאן רק
+  // מבקשים אותו ומורידים. שולחים את מזהה ההשוואה המוצגת, כדי שהשרת יסרב (409) אם
+  // בינתיים חושבה אחרת - ולא יורד מסמך שאינו תואם למה שרואים על המסך.
+  const [pdfPhase, setPdfPhase] = useState<"idle" | "loading" | "error">("idle");
+  const [pdfError, setPdfError] = useState("");
+
+  async function downloadPdf() {
+    if (pdfPhase === "loading") return;
+    setPdfPhase("loading");
+    setPdfError("");
+    try {
+      const qs = new URLSearchParams({ c: state.case.id, cmp: cmp.id });
+      const res = await fetch(`/api/comparison-pdf?${qs.toString()}`);
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        setPdfPhase("error");
+        setPdfError(data.error ?? "ההורדה נכשלה. אפשר לנסות שוב.");
+        return;
+      }
+      // שם הקובץ מהשרת (filename* בקידוד RFC 5987), עם גיבוי אם הכותרת חסרה.
+      const disp = res.headers.get("content-disposition") ?? "";
+      const m = /filename\*=UTF-8''([^;]+)/i.exec(disp);
+      let fileName = "strauss-net-comparison.pdf";
+      if (m?.[1]) { try { fileName = decodeURIComponent(m[1]); } catch { /* נשארים עם הגיבוי */ } }
+
+      const blobUrl = URL.createObjectURL(await res.blob());
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 10_000);
+      setPdfPhase("idle");
+    } catch {
+      setPdfPhase("error");
+      setPdfError("שגיאת רשת בהורדה. אפשר לנסות שוב.");
+    }
+  }
+  const pdfLoading = pdfPhase === "loading";
   const baseNet = Number(cmp.result.baseline.netDisplay);
   const altNet = Number(cmp.result.alternative.netDisplay);
   const delta = cmp.result.netDeltaDisplay;
@@ -36,7 +78,7 @@ export function ComparisonView({
   const alternative = state.scenarios.find((s) => s.role === "alternative")!;
 
   // תוצאה מיושנת: גרסת-העובדות בהשוואה שונה מהנוכחית.
-  const stale = cmp.factsRevision !== state.case.factsRevision;
+  const stale = isComparisonStale(state);
   // הנחות (למשל השתתפות ברירת-מחדל) שזרמו לתוצאה.
   const assumptions = [
     ...(cmp.result.baseline.assumptions ?? []),
@@ -63,10 +105,33 @@ export function ComparisonView({
           <LightTrail mode="result" variant="inline" className="cmp-kicker-trail" />
           השוואת נטו חודשי
         </span>
-        <button className="btn btn-ghost" disabled={pending} onClick={() => startTransition(() => resetDemo())} style={{ fontSize: "var(--font-sm)" }}>
-          התחל מחדש
-        </button>
+        <span className="cmp-top-actions">
+          {/* הורדת סיכום PDF: אייקון עדין בלבד; "הורדת סיכום PDF" בבועה במעבר עכבר/מיקוד
+              (אותו עיצוב כמו "דבר איתי"). הבועה נפתחת מתחת לכפתור כי הוא קרוב לקצה הכרטיס
+              ואזור הגלילה היה חותך בועה שנפתחת הצידה. */}
+          <button
+            type="button"
+            className="icon-btn has-tip cmp-pdf-btn"
+            aria-label={pdfLoading ? "מכין את המסמך להורדה" : "הורדת סיכום ההשוואה כקובץ PDF"}
+            aria-busy={pdfLoading}
+            disabled={pdfLoading}
+            onClick={downloadPdf}
+          >
+            {pdfLoading ? <DownloadSpinner /> : <DownloadIcon />}
+            {!pdfLoading && <span className="ui-tip ui-tip-below" aria-hidden="true">הורדת סיכום PDF</span>}
+          </button>
+          <button className="btn btn-ghost" disabled={pending} onClick={() => startTransition(async () => {
+              // הבירור הפעיל נקבע לפי ?c= ב-URL (לא לפי עוגייה): מנקים את המצביע וטוענים "/" נקי.
+              try { await clearActiveInquiry(); } finally { window.location.assign("/"); }
+            })} style={{ fontSize: "var(--font-sm)" }}>
+            התחל מחדש
+          </button>
+        </span>
       </div>
+
+      {pdfPhase === "error" && (
+        <div role="alert" className="cmp-pdf-error">{pdfError}</div>
+      )}
 
       {/* ההפרש - המשמעות + מספר, בשורה אחת קומפקטית */}
       <div role="status" className={`cmp-delta ${gain ? "is-gain" : "is-loss"}`}>
@@ -164,6 +229,25 @@ function fmt(s: string): string {
 function sum(a: string, b: string): string {
   return String(Number(a) + Number(b));
 }
+function DownloadIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 4v11" />
+      <path d="M7.5 11.5 12 16l4.5-4.5" />
+      <path d="M5 19.5h14" />
+    </svg>
+  );
+}
+
+function DownloadSpinner() {
+  return (
+    <svg className="cmp-pdf-spinner" width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" opacity="0.25" />
+      <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 function shekelFromBreakdown(taxable: string, cash: string): string {
   // שווי שימוש = בסיס מס פחות מזומן
   return fmt(String(Number(taxable) - Number(cash)));

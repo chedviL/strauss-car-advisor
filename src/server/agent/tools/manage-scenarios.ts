@@ -39,15 +39,28 @@ export async function manageScenarios(
         if (v !== undefined) (overrides as Record<string, number>)[k] = v;
       }
     }
-    // השתתפות: אם *לא נמסרה כלל* (undefined) - יורשת *במפורש* את ההשתתפות הנוכחית
-    // (baseline), ונשמרת כערך קונקרטי - לא null שמסתמך על ברירת מחדל מקרית של הקטלוג.
-    // כך "אותה השתתפות" נשמר כערך הנוכחי בפועל. null מפורש (נמסר) נשמר כ-null.
+    // השתתפות בחלופת רכב: ערך מספרי שנמסר משמש כפי שהוא. כשלא נמסר ערך מספרי -
+    // *בין אם הושמט (undefined) ובין אם המודל שלח null* - הוא יורש *במפורש* את ההשתתפות
+    // הנוכחית (baseline) ונשמר כערך קונקרטי, ולא כ-null שמסתמך בשקט על ברירת מחדל של
+    // הקטלוג. (קודם null נשמר כמות שהוא, והחישוב נפל על ברירת המחדל של הדגם בלי שהמשתמש/ת
+    // בחר/ה בכך - בניגוד להוראה "אל תשאיר null בהסתמך על ברירת מחדל... אל תמציא".)
+    // אם גם ההשתתפות הנוכחית אינה ידועה - לא ממציאים: מחזירים "חסר" כדי שהמודל ישאל.
+    // ויתור אינו דורש השתתפות (אפס מובנה).
     let participation: number | null;
-    if (input.participation !== undefined) {
-      participation = input.participation; // כולל null מפורש
+    if (typeof input.participation === "number") {
+      participation = input.participation;
+    } else if (input.route === "waiver") {
+      participation = null; // ויתור: אין השתתפות ברכב; המנוע מציב אפס מובנה
     } else {
       const cur = await service.getCaseState(ctx.caseId, ctx.ownerId);
       const baseP = cur?.scenarios.find((s) => s.role === "baseline")?.participation ?? null;
+      if (baseP === null) {
+        return missing(
+          ["participation"],
+          "ההשתתפות ברכב החדש לא נמסרה וגם ההשתתפות הנוכחית אינה ידועה. יש לשאול את העובד/ת, " +
+            "ואם אינו/ה יודע/ת - לברר מול הנציג (openInquiry). לא להניח ערך.",
+        );
+      }
       participation = baseP; // ירושה מפורשת מהמצב הנוכחי
     }
     const scenario = await service.pickAlternative(ctx.caseId, ctx.ownerId, {

@@ -11,8 +11,7 @@ import type { CaseState, Scenario } from "../../domain/contracts/case.js";
 import type { FactsPatch } from "../repositories/case-repository.js";
 import { getModel, getEffort } from "./model.js";
 import { buildContext } from "./context.js";
-import { findOccupation } from "../../../data/source/occupations.js";
-import type { Occupation } from "../../domain/eligibility/engine.js";
+import { occupationOrGroup } from "../../../data/source/occupations.js";
 
 /**
  * זכאות לרכב חברה נקבעת לפי קבוצת הזכאות. אם העיסוק ידוע -> משתמשים בו (כולל
@@ -32,14 +31,6 @@ function labelMissing(fields: string[]): string {
   return [...new Set(labels)].join(", ");
 }
 
-function occupationOrGroup(occCode: string | null, group: string | null): Occupation | undefined {
-  const occ = findOccupation(occCode);
-  if (occ) return occ;
-  if (group) {
-    return { code: "reported", name: "לפי קבוצה שנמסרה", group, carMandatory: false, waiverAllowed: false, maintenanceAllowance: 0 };
-  }
-  return undefined;
-}
 
 // --- רשימת פעולות סגורה ---
 const salaryFields = z.object({
@@ -328,7 +319,9 @@ export async function executeFastPlan(
         await service.updateBaselineVehicle(caseId, ownerId, {
           route: base?.route ?? "company_car",
           vehicleCode: action.vehicleCode,
-          participation: base?.participation ?? null,
+          // השתתפות שייכת לרכב: רכב אחר -> לא נושאים את ההשתתפות של הקודם.
+          // (רק אם כבר היה רכב קודם שונה; השתתפות שנמסרה לפני שנבחר רכב נשמרת.)
+          participation: base?.vehicleCode != null && base.vehicleCode !== action.vehicleCode ? null : (base?.participation ?? null),
           maintenanceAllowance: base?.maintenanceAllowance ?? 0,
         });
         did.currentVehicle = true;

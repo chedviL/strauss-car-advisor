@@ -15,6 +15,8 @@ import {
 } from "../../../server/web/payslip-storage.js";
 import { extractPayslip, PayslipQuotaError, PayslipFallbackUnavailable, type PayslipExtraction } from "../../../server/agent/payslip-extract.js";
 import { checkRateLimit } from "../../../server/web/rate-limit.js";
+import { isUuid } from "../../../domain/ids.js";
+import { InvalidFactsError } from "../../../server/services/facts-validation.js";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -27,7 +29,8 @@ async function activeCaseId(owner: string): Promise<string> {
   const store = await cookies();
   let caseId = store.get("strauss_case")?.value ?? null;
   const service = caseService();
-  const state = caseId ? await service.getCaseState(caseId, owner) : null;
+  // עוגייה פגומה (לא UUID) לא מגיעה ל-DB: מתייחסים אליה כאל "אין תיק פעיל".
+  const state = isUuid(caseId) ? await service.getCaseState(caseId, owner) : null;
   if (!state) {
     const created = await service.startBlankCase(owner);
     caseId = created.case.id;
@@ -46,7 +49,7 @@ export async function GET(req: Request): Promise<Response> {
   if (url.searchParams.get("pending") !== "1") return json({ pending: null });
   const store = await cookies();
   const caseId = store.get("strauss_case")?.value ?? null;
-  if (!caseId) return json({ pending: null });
+  if (!isUuid(caseId)) return json({ pending: null });
   const pend = await loadPendingExtraction({ connectionString: conn, ownerId: owner, caseId }).catch(() => null);
   return json({ pending: pend });
 }
@@ -92,7 +95,7 @@ export async function POST(req: Request): Promise<Response> {
 
     if (action === "extract") {
       const body = (await req.json().catch(() => ({}))) as { uploadId?: string };
-      if (!body.uploadId) return json({ error: "חסר מזהה העלאה." }, 400);
+      if (!isUuid(body.uploadId)) return json({ error: "חסר מזהה העלאה." }, 400);
 
       // מניעת קריאת מודל חוזרת: אם כבר קיים חילוץ שמור לאותו מסמך (רענון/לחיצה
       // כפולה), מחזירים אותו מיד - *ללא* קריאת מודל ו*ללא* צריכת מגבלת הקצב.
@@ -151,10 +154,10 @@ export async function POST(req: Request): Promise<Response> {
 
     if (action === "apply") {
       const body = (await req.json().catch(() => ({}))) as { uploadId?: string; patch?: Record<string, number | null> };
-      if (!body.uploadId || !body.patch) return json({ error: "חסרים נתונים להחלה." }, 400);
+      if (!isUuid(body.uploadId) || !body.patch) return json({ error: "חסרים נתונים להחלה." }, 400);
       const store = await cookies();
       const caseId = store.get("strauss_case")?.value ?? null;
-      if (!caseId) return json({ error: "אין תיק פעיל." }, 400);
+      if (!isUuid(caseId)) return json({ error: "אין תיק פעיל." }, 400);
 
       const cur = await service.getCaseState(caseId, owner);
       if (!cur) return json({ error: "התיק לא נמצא." }, 404);
@@ -171,14 +174,17 @@ export async function POST(req: Request): Promise<Response> {
 
     if (action === "discard") {
       const body = (await req.json().catch(() => ({}))) as { uploadId?: string };
-      if (body.uploadId) await discardPayslip({ connectionString: conn, ownerId: owner, uploadId: body.uploadId }).catch(() => {});
+      if (isUuid(body.uploadId)) await discardPayslip({ connectionString: conn, ownerId: owner, uploadId: body.uploadId }).catch(() => {});
       return json({ status: "discarded" });
     }
 
     return json({ error: "פעולה לא מוכרת." }, 400);
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    const safe = msg.replace(/sk-[A-Za-z0-9_-]{8,}/g, "sk-***");
-    return json({ error: safe }, 500);
+    // ערך לא תקין בהחלה: הודעה עברית ברורה (לא טקסט פנימי).
+    if (e instanceof InvalidFactsError) return json({ error: e.message, kind: "invalid" }, 400);
+    // שגיאה פנימית: לוג בשרת בלבד. שמות טבלאות/נתיבים/הגדרות אינם חוזרים ללקוח.
+    const msg = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+    console.error(`[payslip] failed: ${msg.replace(/postgres(ql)?:\/\/\S+/gi, "postgres://***").replace(/sk-[A-Za-z0-9_-]{8,}/g, "sk-***").slice(0, 300)}`);
+    return json({ error: "אירעה תקלה בעיבוד הבקשה. אפשר לנסות שוב בעוד רגע." }, 500);
   }
 }

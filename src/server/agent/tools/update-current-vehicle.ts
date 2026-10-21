@@ -37,7 +37,13 @@ export async function updateCurrentVehicle(
   const scenario = await service.updateBaselineVehicle(ctx.caseId, ctx.ownerId, {
     route: input.route ?? base?.route ?? "company_car",
     vehicleCode: input.vehicleCode !== undefined ? input.vehicleCode : (base?.vehicleCode ?? null),
-    participation: input.participation !== undefined ? input.participation : (base?.participation ?? null),
+    // השתתפות שייכת לרכב: כשהרכב מוחלף ולא נמסרה השתתפות חדשה, לא נושאים את זו של הרכב הקודם
+    // (חוזרים ל"לא נמסרה" -> ברירת מחדל מתועדת של הדגם או שאלה), ולא מחשבים נטו על ערך שגוי.
+    participation: input.participation !== undefined
+      ? input.participation
+      : (input.vehicleCode !== undefined && base?.vehicleCode != null && input.vehicleCode !== base.vehicleCode
+          ? null
+          : (base?.participation ?? null)),
     maintenanceAllowance: input.maintenanceAllowance ?? base?.maintenanceAllowance ?? 0,
   });
   return ok(

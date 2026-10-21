@@ -18,6 +18,15 @@ export interface EligibilityQuery {
   /** קבוצת הרכב הנבחר (למסלול רגיל). */
   targetGroup?: string | undefined;
   qualifyingChildren?: number | undefined;
+  /** הרכב הנבחר (קוד + קבוצה בקטלוג). במסלול משפחתי חייב להיות רכב משפחתי; במסלול רגיל לא רכב משפחתי. */
+  vehicle?: { code: string; group: string } | undefined;
+}
+
+const FAMILY_GROUP = "משפחתי";
+
+function isFamilyVehicle(vehicle: { code: string; group: string }, rules: RuleSet): boolean {
+  const cars = rules.familyTrack.cars;
+  return cars.length > 0 ? cars.includes(vehicle.code) : vehicle.group === FAMILY_GROUP;
 }
 
 export type EligibilityStatus = "eligible" | "ineligible" | "missing";
@@ -49,7 +58,7 @@ export function validateEligibility(
 
   if (q.route === "family") {
     const children = q.qualifyingChildren;
-    if (children === undefined) {
+    if (children === undefined || !Number.isFinite(children)) {
       return { status: "missing", reasons: ["חסר מספר ילדים העומדים בקריטריון"] };
     }
     if (children < rules.familyTrack.minChildren) {
@@ -58,7 +67,15 @@ export function validateEligibility(
         reasons: [`מסלול משפחתי דורש ${rules.familyTrack.minChildren} ילדים ומעלה`],
       };
     }
+    if (q.vehicle && !isFamilyVehicle(q.vehicle, rules)) {
+      return { status: "ineligible", reasons: ["המסלול המשפחתי זמין רק לרכבי הקבוצה המשפחתית"] };
+    }
     return { status: "eligible", reasons: ["זכאי למסלול ברוכת ילדים"] };
+  }
+
+  // רכב משפחתי אינו חלק מהמסלול הרגיל (אין לו קבוצת זכאות רגילה): נדרש מסלול משפחתי.
+  if (q.targetGroup === FAMILY_GROUP || (q.vehicle && isFamilyVehicle(q.vehicle, rules))) {
+    return { status: "ineligible", reasons: ["רכב משפחתי זמין רק במסלול המשפחתי (4 ילדים ומעלה)"] };
   }
 
   // מסלול רגיל: בחירה מקבוצת הזכאות או נמוכה ממנה.

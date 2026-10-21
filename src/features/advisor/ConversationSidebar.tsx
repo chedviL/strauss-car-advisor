@@ -9,7 +9,8 @@
 
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { continueInquiry, startNewInquiry, deleteInquiry } from "../../app/inquiry-actions.js";
+import { continueInquiry, clearActiveInquiry, deleteInquiry } from "../../app/inquiry-actions.js";
+import { clearNewScopeState } from "./vehicle-match/match-state.js";
 
 export type ConversationSummary = {
   caseId: string;
@@ -37,13 +38,30 @@ export function ConversationSidebar({
   const [mounted, setMounted] = useState(false); // ל-portal (זמין רק בצד הלקוח)
   useEffect(() => setMounted(true), []);
 
+  // סוגרים את המגירה רק אחרי שאירוע ה-submit כבר נשלח. סגירה סינכרונית ב-onClick
+  // מסירה את ה-<form> מה-DOM לפני שהדפדפן מבצע את השליחה, ולכן ה-server action
+  // לא רץ ו"כלום לא קורה".
+  const closeAfterSubmit = () => {
+    setTimeout(() => setOpen(false), 0);
+  };
+
+  async function startNew() {
+    try {
+      // שיחה חדשה מתחילה בלי תשובות שאלון קודמות של שיחה חדשה שטרם נפתח לה בירור.
+      clearNewScopeState(window.sessionStorage);
+      await clearActiveInquiry();
+    } finally {
+      window.location.assign("/");
+    }
+  }
+
   const list = (
     <nav className="sidebar-nav" aria-label="היסטוריית בירורים">
-      <form action={startNewInquiry}>
-        <button type="submit" className="btn btn-graphite sidebar-new" onClick={() => setOpen(false)}>
-          <PlusIcon /> שיחה חדשה
-        </button>
-      </form>
+      {/* טעינה מלאה (ולא ניווט צד-לקוח): מאפסת את מצב useChat גם אם השיחה
+          הנוכחית נפתחה מ-"/" ועדכנה את ה-URL ב-replaceState. */}
+      <button type="button" className="btn btn-graphite sidebar-new" onClick={startNew}>
+        <PlusIcon /> שיחה חדשה
+      </button>
 
       <div className="sidebar-list scroll-y">
         {summaries.length === 0 ? (
@@ -60,7 +78,7 @@ export function ConversationSidebar({
                     type="submit"
                     className="sidebar-item"
                     aria-current={isActive ? "page" : undefined}
-                    onClick={() => setOpen(false)}
+                    onClick={closeAfterSubmit}
                   >
                     <span className="sidebar-item-title">{s.title ?? "שיחה חדשה"}</span>
                     <span className="sidebar-item-meta">

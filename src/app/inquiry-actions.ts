@@ -7,6 +7,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { requireOwner } from "../server/auth/next-session.js";
 import { caseService } from "../server/web/service.js";
+import { isUuid } from "../domain/ids.js";
 
 const CASE_COOKIE = "strauss_case";
 
@@ -17,12 +18,19 @@ export async function startNewInquiry(): Promise<void> {
   redirect("/");
 }
 
+/** ניקוי מצביע התיק בלבד, בלי הפניה. הלקוח מבצע אחריו טעינה מלאה של "/" כדי
+ *  לאפס גם את מצב ה-chat בצד הלקוח (useChat). */
+export async function clearActiveInquiry(): Promise<void> {
+  await requireOwner();
+  (await cookies()).delete(CASE_COOKIE);
+}
+
 /** מחיקת בירור: רק אם בבעלות המשתמש/ת. אם זו השיחה הפעילה - מנקים את המצביע.
  *  לא מפנה לדף אחר (המחיקה מתבצעת "במקום" מהסרגל); revalidate מרענן את הרשימה. */
 export async function deleteInquiry(formData: FormData): Promise<void> {
   const owner = await requireOwner();
   const caseId = String(formData.get("caseId") ?? "");
-  if (!/^[0-9a-f-]{36}$/i.test(caseId)) return;
+  if (!isUuid(caseId)) return;
   const ok = await caseService().deleteCase(caseId, owner);
   if (!ok) return; // לא בבעלות / לא קיים - בלי חשיפה
   const store = await cookies();
@@ -36,7 +44,7 @@ export async function deleteInquiry(formData: FormData): Promise<void> {
 export async function continueInquiry(formData: FormData): Promise<void> {
   const owner = await requireOwner();
   const caseId = String(formData.get("caseId") ?? "");
-  if (!/^[0-9a-f-]{36}$/i.test(caseId)) redirect("/inquiries");
+  if (!isUuid(caseId)) redirect("/inquiries");
   const state = await caseService().getCaseState(caseId, owner);
   if (!state) redirect("/inquiries");
   (await cookies()).set(CASE_COOKIE, state.case.id, {

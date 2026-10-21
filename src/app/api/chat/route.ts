@@ -14,6 +14,7 @@ import {
   consumeStream, type UIMessage,
 } from "ai";
 import { caseService } from "../../../server/web/service.js";
+import { isUuid } from "../../../domain/ids.js";
 import { getSessionUser } from "../../../server/auth/next-session.js";
 import { streamChat, stripReasoning, type ChatBudgetState } from "../../../server/agent/chat-runtime.js";
 import { getFallbackChatModel, getFallbackChatModelId } from "../../../server/agent/model.js";
@@ -98,7 +99,8 @@ function isProviderUnavailable(e: unknown): boolean {
       cur = (cur as { cause?: unknown }).cause;
     } else { parts.push(String(cur)); break; }
   }
-  return /overloaded|unavailable|503|502|500|timeout|timed out|ETIMEDOUT|ECONNRESET|service is temporarily/i.test(parts.join(" "));
+  // קודי HTTP מעוגנים (\b): "250000 tokens" אינו מכיל 500 כשגיאת שרת.
+  return /overloaded|unavailable|\b(?:500|502|503)\b|timeout|timed out|ETIMEDOUT|ECONNRESET|service is temporarily/i.test(parts.join(" "));
 }
 
 /** כשל חיוב/יתרה של ספק (למשל Anthropic 'credit balance is too low', 400/402/403):
@@ -113,7 +115,7 @@ function isProviderBilling(e: unknown): boolean {
       cur = (cur as { cause?: unknown }).cause;
     } else { parts.push(String(cur)); break; }
   }
-  return /credit balance is too low|plans ?& ?billing|insufficient (credit|quota|balance|funds)|billing|payment required|402/i.test(parts.join(" "));
+  return /credit balance is too low|plans ?& ?billing|insufficient (credit|quota|balance|funds)|billing|payment required|\b402\b/i.test(parts.join(" "));
 }
 
 /**
@@ -152,7 +154,7 @@ async function handleChat(req: Request): Promise<Response> {
   // הבירור הפעיל: מזהה מפורש מהלקוח (מה-URL ?c=) קודם - *מאומת בעלות בשרת* (מזהה
   // מהלקוח אינו הרשאה: תיק שאינו של המשתמש -> לא נמצא, וייפתח חדש). עוגייה היא
   // גיבוי תאימות בלבד. אין fallback שמחבר הודעה חדשה לתיק ישן של מסך נקי.
-  const reqCaseId = typeof body.caseId === "string" && /^[0-9a-f-]{36}$/i.test(body.caseId) ? body.caseId : null;
+  const reqCaseId = isUuid(body.caseId) ? body.caseId : null;
   let caseId = reqCaseId;
   let state = caseId ? await service.getCaseState(caseId, owner) : null;
   if (!state) {

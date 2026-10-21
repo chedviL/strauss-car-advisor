@@ -1,21 +1,30 @@
 // src/features/auth/AccountMenu.tsx
-// תפריט חשבון: המייל המחובר, קישור לבירורים, "אזור נציג" והחלפת חשבון/יציאה.
-// "אזור נציג" מוצג לכל משתמש מחובר: נציג מורשה נכנס ישירות, ואחרים רואים הסבר ואפשרות התנסות
-// (כשהיא פעילה בשרת). ההרשאה האמיתית נקבעת בשרת ולא בתפריט.
+// תפריט חשבון בכותרת, אחיד בכל המסכים: "אזור עובד", "אזור נציג" והחלפת חשבון/יציאה (ללא כתובת מייל).
+// שלושת הכפתורים באותו גודל וסגנון; האזור הנוכחי מסומן (aria-current) ברקע רך, כך שתמיד יש דרך
+// לעבור בין העובד לנציג. "אזור נציג" מוצג לכל משתמש מחובר: נציג מורשה נכנס ישירות, ואחרים רואים
+// הסבר ואפשרות התנסות (כשהיא פעילה בשרת). ההרשאה האמיתית נקבעת בשרת ולא בתפריט.
 // "החלפת חשבון" ו"יציאה" מסיימות את הסשן בשרת ומנקות כל מצביע למשתמש הקודם.
-import { signOut } from "../../app/auth-actions.js";
+// הסגנון מוגדר במחלקות CSS (nav-btn / is-current) ולא ב-inline, כדי שה-media
+// queries בנייד יוכלו לכווץ ריווח ולאפשר גלישת טקסט (מניעת גלילה אופקית).
+import { SignOutForm } from "./SignOutForm.js";
 
-export function AccountMenu({ email, showInquiriesLink = false }: { email: string | null; showInquiriesLink?: boolean }) {
+// email נשמר בחתימה לתאימות עם הקוראים הקיימים, אך אינו מוצג עוד בכותרת.
+export function AccountMenu({ area = "employee" }: { email?: string | null; area?: "employee" | "rep" }) {
   return (
-    <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "center", flexWrap: "wrap" }}>
-      {email && (
-        <bdi dir="ltr" style={{ color: "var(--color-muted)", fontSize: "var(--font-sm)" }} title="החשבון המחובר">{email}</bdi>
-      )}
-      {showInquiriesLink && <a className="btn btn-ghost" href="/inquiries" style={{ borderRadius: "var(--radius-pill)" }}>הבירורים שלי</a>}
-      <a className="btn btn-ghost" href="/representative" style={{ borderRadius: "var(--radius-pill)" }}>אזור נציג</a>
-      <form action={signOut}>
-        <button type="submit" className="btn" title="מסיים את הסשן ומנקה את הנתונים מהמסך">החלפת חשבון / יציאה</button>
-      </form>
-    </div>
+    <nav className="account-menu" aria-label="מעבר בין אזורים">
+      <a
+        className={`btn nav-btn${area === "employee" ? " is-current" : ""}`} href="/"
+        aria-current={area === "employee" ? "page" : undefined}
+      >
+        אזור עובד
+      </a>
+      <a
+        className={`btn nav-btn${area === "rep" ? " is-current" : ""}`} href="/representative"
+        aria-current={area === "rep" ? "page" : undefined}
+      >
+        אזור נציג
+      </a>
+      <SignOutForm />
+    </nav>
   );
 }

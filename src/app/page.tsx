@@ -14,6 +14,7 @@ import { AppHeader } from "../features/brand/AppHeader.js";
 import { LightTrail } from "../features/brand/LightTrail.js";
 import { ChatWave } from "../features/brand/ChatWave.js";
 import type { CaseState } from "../domain/contracts/case.js";
+import { isUuid } from "../domain/ids.js";
 
 // עמוד מאומת פר-משתמש: לעולם לא סטטי (קורא סשן/עוגיות). חובה לבנייה ב-Vercel.
 export const dynamic = "force-dynamic";
@@ -28,7 +29,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ c
   // למחוק אותה. רענון בתוך שיחה פעילה שומר את ?c= ולכן משחזר אותה.
   const sp = await searchParams;
   const rawC = (sp?.c ?? "").trim();
-  const caseId = /^[0-9a-f-]{36}$/i.test(rawC) ? rawC : null;
+  const caseId = isUuid(rawC) ? rawC : null;
 
   let state: CaseState | null = null;
   let initialMessages: Array<{ id: string; role: string; parts: unknown }> = [];
@@ -54,7 +55,11 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ c
       <ChatWave />
       <AppHeader
         leading={<ConversationSidebar summaries={summaries} activeCaseId={caseId} />}
-        actions={<AccountMenu email={user.email} />}
+        center={<AccountMenu email={user.email} />}
+        actions={
+          /* "איזה רכב מתאים לי?": הכפתור מוצג כאן (למעלה בשמאל, תמיד) ע"י ChatPanel דרך portal. */
+          <span id="vm-launcher-slot" className="vm-launcher-slot" />
+        }
       />
       <DemoBadge />
 
@@ -75,7 +80,13 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ c
           )}
 
           {/* כרטיס ההשוואה מוצג בתוך זרימת השיחה, מתחת לתשובת המודל (ראו ChatPanel). */}
+          {/* key לפי הבירור: useChat מכבד את initialMessages רק ביצירה. בלי key,
+              מעבר בין שיחות (ניווט צד-לקוח) שומר את מצב השיחה הישן ומציג רק את
+              כרטיס ההשוואה שמרונדר בשרת, בלי ההודעות. */}
           <ChatPanel
+            key={`${owner}:${caseId ?? "new"}`}
+            userId={owner}
+            caseId={state ? caseId : null}
             initialMessages={initialMessages}
             showExamples={!hasHistory && !hasComparison}
             comparison={hasComparison ? <ComparisonView state={state!} employee={null} vehicleNames={vehicleNames} /> : null}

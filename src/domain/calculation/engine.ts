@@ -16,6 +16,35 @@ Decimal.set({ precision: 40 });
 
 const D = (n: Decimal.Value): Decimal => new Decimal(n);
 
+/** קלט חישוב שאינו תקין (NaN, שלילי, שיעור מחוץ לטווח, קבוצה לא מוכרת). לעולם לא מחזיר "נטו" שגוי בשקט. */
+export class InvalidInputError extends RangeError {
+  constructor(public readonly field: string, detail: string) {
+    super(`קלט חישוב לא תקין (${field}): ${detail}`);
+    this.name = "InvalidInputError";
+  }
+}
+
+function assertFiniteNonNegative(field: string, v: number): void {
+  if (typeof v !== "number" || !Number.isFinite(v)) throw new InvalidInputError(field, "אינו מספר סופי");
+  if (v < 0) throw new InvalidInputError(field, "שלילי");
+}
+
+/** אימות קלט המנוע. מבוצע לפני כל חישוב; המנוע נשאר טהור ודטרמיניסטי. */
+export function assertValidInput(input: CompleteInput, rules: RuleSet): void {
+  for (const f of [
+    "baseSalary", "commission", "bonus", "creditPoints", "valueOfUse",
+    "participation", "companyCarCost", "maintenanceAllowance",
+  ] as const) assertFiniteNonNegative(f, input[f]);
+  for (const f of ["pensionRate", "trainingRate"] as const) {
+    assertFiniteNonNegative(f, input[f]);
+    if (input[f] > 1) throw new InvalidInputError(f, "שיעור חייב להיות שבר בין 0 ל-1");
+  }
+  // מסלול משפחתי: הפער מחושב מול תקציב הקבוצה. קבוצה לא מוכרת = תקציב 0 = הנטו נפגע בשקט.
+  if (input.route === "family" && !Object.prototype.hasOwnProperty.call(rules.budgets, input.group)) {
+    throw new InvalidInputError("group", `אין תקציב מוגדר לקבוצה '${input.group}'`);
+  }
+}
+
 /** מס שולי לפי מדרגות: כל שקל ממוסה בשיעור המדרגה שאליה הוא שייך. */
 function marginalTax(base: Decimal, brackets: TaxBracket[]): Decimal {
   if (base.lte(0)) return D(0);
@@ -79,19 +108,30 @@ function computeCore(
   const maintenance = D(input.maintenanceAllowance);
   const valueOfUse = D(input.valueOfUse);
   const participation = D(input.participation);
+  // עיגול ביניים לפי הכללים (during="agora"); ברירת מחדל "none" = ללא עיגול.
+  const rnd = (d: Decimal): Decimal =>
+    nm.rounding.during === "agora" ? d.toDecimalPlaces(2, Decimal.ROUND_HALF_UP) : d;
 
   // (1) שכר מזומן: בסיס + עמלות + בונוס + אחזקה + גילום חשמל
   const gross = base.plus(commission).plus(bonus);
   const cashSalary = gross.plus(maintenance).plus(electricGrossUp);
 
-  // (2) בסיסי הפרשות עובד לפי contributionsBase (O2: gross = בסיס+עמלות+בונוס)
-  const contribBase = nm.contributionsBase === "gross" ? gross : base;
-  const pensionEmployee = contribBase.times(input.pensionRate);
-  const trainingEmployee = contribBase.times(input.trainingRate);
+  // (2) בסיסי הפרשות עובד לפי contributionsBase (O2: gross = בסיס+עמלות+בונוס).
+  // אחזקת ויתור נכנסת לבסיס ההפרשות רק אם הכללים קובעים שהיא פנסיונית.
+  let contribBase = nm.contributionsBase === "gross" ? gross : base;
+  if (rules.waiver.maintenanceIsPensionable) contribBase = contribBase.plus(maintenance);
+  const pensionEmployee = rnd(contribBase.times(input.pensionRate));
+  const trainingEmployee = rnd(contribBase.times(input.trainingRate));
 
-  // (3) שווי שימוש נכנס לבסיס המס ולבסיס הביטוח (אינו מזומן)
-  const taxableIncome = cashSalary.plus(valueOfUse);
-  const insuranceBase = cashSalary.plus(valueOfUse);
+  // (3) שווי שימוש נכנס לבסיס המס ולבסיס הביטוח (אינו מזומן).
+  // reducesValueOfUse: השתתפות העובד מקטינה את שווי השימוש החייב (לא פחות מאפס).
+  // maintenanceIsTaxable=false: אחזקה מזומנת אך אינה חייבת במס/ביטוח.
+  const taxableCash = rules.waiver.maintenanceIsTaxable ? cashSalary : cashSalary.minus(maintenance);
+  const taxableValueOfUse = nm.participation.reducesValueOfUse
+    ? Decimal.max(0, valueOfUse.minus(participation))
+    : valueOfUse;
+  const taxableIncome = taxableCash.plus(taxableValueOfUse);
+  const insuranceBase = taxableCash.plus(taxableValueOfUse);
 
   // (4) מס שולי פחות זיכויים
   const grossTax = marginalTax(taxableIncome, nm.brackets);
@@ -103,19 +143,20 @@ function computeCore(
     D(pc.maxContributionRate).times(pc.incomeCeiling),
   );
   const pensionCredit = creditableContribution.times(pc.rate);
-  let incomeTax = grossTax.minus(creditPointsCredit).minus(pensionCredit);
+  let incomeTax = rnd(grossTax.minus(creditPointsCredit).minus(pensionCredit));
   if (incomeTax.lt(0)) incomeTax = D(0); // זיכוי שאינו בר-החזר
 
   // (5) ביטוח לאומי ובריאות
-  const nationalInsurance = twoRate(insuranceBase, nm.nationalInsurance);
-  const health = twoRate(insuranceBase, nm.health);
+  const nationalInsurance = rnd(twoRate(insuranceBase, nm.nationalInsurance));
+  const health = rnd(twoRate(insuranceBase, nm.health));
 
-  // (6) פער משפחתי: max(0, עלות רכב - תקציב קבוצה) × חלק העובד
+  // (6) פער משפחתי: max(0, עלות רכב - תקציב קבוצה) × חלק העובד.
+  // קבוצה ללא תקציב נדחית ב-assertValidInput (אין "תקציב 0" שקט).
   let familyGap = D(0);
   if (input.route === "family") {
     const budget = D(rules.budgets[input.group] ?? 0);
     const gap = Decimal.max(0, D(input.companyCarCost).minus(budget));
-    familyGap = gap.times(rules.familyTrack.gapSplitEmployee);
+    familyGap = rnd(gap.times(rules.familyTrack.gapSplitEmployee));
   }
 
   // (7) נטו: מזומן פחות מס, ביטוח, הפרשות, השתתפות ופער משפחתי
@@ -162,6 +203,10 @@ function solveElectricGrossUp(input: CompleteInput, rules: RuleSet): Decimal {
   let hi = target.times(10); // חסם בטוח: גם בשיעור 90% זה מספיק
   const tolerance = D("0.00000001");
   const maxIter = 200;
+  // אם גם בחסם העליון ההפרש קטן מהיעד, אין פתרון: לא מחזירים ערך שגוי בשקט.
+  if (computeCore(input, rules, hi).netExact.minus(netWithout).lt(target)) {
+    throw new InvalidInputError("electric", "לא נמצא פתרון לגילום החזר החשמל בתחום הסביר");
+  }
 
   for (let i = 0; i < maxIter; i++) {
     const mid = lo.plus(hi).div(2);
@@ -179,11 +224,20 @@ function solveElectricGrossUp(input: CompleteInput, rules: RuleSet): Decimal {
   return lo.plus(hi).div(2);
 }
 
+function displayDecimals(rules: RuleSet): 0 | 2 {
+  return rules.netMethod.rounding.display === "shekel" ? 0 : 2;
+}
+
 function roundDisplay(value: Decimal, rules: RuleSet): Decimal {
-  if (rules.netMethod.rounding.display === "shekel") {
-    return value.toDecimalPlaces(0, Decimal.ROUND_HALF_UP);
-  }
-  return value.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+  return value.toDecimalPlaces(displayDecimals(rules), Decimal.ROUND_HALF_UP);
+}
+
+/** גילום החזר חשמל: gross_up = פתרון מספרי כך שהפרש הנטו = netBonus; gross_fixed = תוספת ברוטו קבועה = netBonus. */
+function electricAmount(input: CompleteInput, rules: RuleSet): Decimal {
+  if (!input.isElectric) return D(0);
+  if (rules.electric.method === "gross_fixed") return D(rules.electric.netBonus);
+  const solved = solveElectricGrossUp(input, rules);
+  return rules.netMethod.rounding.during === "agora" ? solved.toDecimalPlaces(2, Decimal.ROUND_HALF_UP) : solved;
 }
 
 function toBreakdown(b: CoreResult["breakdown"]): NetBreakdown {
@@ -213,14 +267,15 @@ export function calculateScenario(
   input: CompleteInput,
   rules: RuleSet,
 ): ScenarioResult {
+  assertValidInput(input, rules);
   const assumptions: string[] = [];
 
-  const electricGrossUp = input.isElectric
-    ? solveElectricGrossUp(input, rules)
-    : D(0);
+  const electricGrossUp = electricAmount(input, rules);
   if (input.isElectric) {
     assumptions.push(
-      `גילום החזר חשמל חושב כך שהפרש הנטו = ${rules.electric.netBonus} ₪`,
+      rules.electric.method === "gross_fixed"
+        ? `החזר חשמל נוסף כתוספת ברוטו קבועה של ${rules.electric.netBonus} ₪`
+        : `גילום החזר חשמל חושב כך שהפרש הנטו = ${rules.electric.netBonus} ₪`,
     );
   }
 
@@ -229,7 +284,7 @@ export function calculateScenario(
 
   return {
     netExact: core.netExact.toFixed(2),
-    netDisplay: netDisplay.toFixed(0),
+    netDisplay: netDisplay.toFixed(displayDecimals(rules)),
     breakdown: toBreakdown(core.breakdown),
     incomplete: false,
     missingFields: [],
@@ -242,7 +297,8 @@ export function electricNetDelta(
   input: CompleteInput,
   rules: RuleSet,
 ): { grossUp: string; netDelta: string } {
-  const grossUp = input.isElectric ? solveElectricGrossUp(input, rules) : D(0);
+  assertValidInput(input, rules);
+  const grossUp = electricAmount(input, rules);
   const withGrossUp = computeCore(input, rules, grossUp).netExact;
   const withoutInput: CompleteInput = { ...input, isElectric: false };
   const without = computeCore(withoutInput, rules, D(0)).netExact;

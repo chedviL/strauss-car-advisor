@@ -4,8 +4,12 @@
 // ל-15 clients משותפים: max נמוך + שחרור idle מהיר מונעים EMAXCONNSESSION.
 // מטפל בשגיאות pool + retry (withClient) למקרה שחיבור idle נסגר.
 
-import { Pool, type PoolClient } from "pg";
+import { Pool, types, type PoolClient } from "pg";
 import { sslFor } from "./pg-ssl.js";
+
+// עמודות DATE (למשל inquiries.effective_from) מוחזרות כמחרוזת "YYYY-MM-DD" ולא כ-Date מקומי:
+// ההמרה ל-Date ואז toISOString() הזיזה את התאריך יום אחורה בשרת מקדים-UTC (למשל ישראל).
+types.setTypeParser(1082, (v: string) => v);
 
 // ב-Next.js dev כל hot-reload טוען מחדש את המודול ומאפס משתני מודול. בלי מטמון
 // גלובלי, כל קומפילציה הייתה יוצרת Pool חדש בעוד הישן מחזיק חיבורים פתוחים,

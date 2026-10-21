@@ -4,7 +4,10 @@
 // כ-children כדי לשמור גמישות לכל מסך.
 import type { ReactNode } from "react";
 
-export function AppHeader({ actions, leading }: { actions?: ReactNode; leading?: ReactNode }) {
+// פריסה בשלושה אזורים כדי ש"הניווט" (center) יישאר ממורכז במדויק ללא תלות
+// ברוחב הצדדים: start = לוגו + היסטוריה (ימין ב-RTL), center = כפתורי הניווט,
+// actions = פעולה ראשית (שמאל ב-RTL, למשל "איזה רכב מתאים לי?").
+export function AppHeader({ actions, center, leading }: { actions?: ReactNode; center?: ReactNode; leading?: ReactNode }) {
   return (
     <header className="app-header">
       <div className="app-header-start">
@@ -14,7 +17,8 @@ export function AppHeader({ actions, leading }: { actions?: ReactNode; leading?:
           <span className="app-brand-sub">יועץ הרכב</span>
         </a>
       </div>
-      {actions && <div className="app-header-actions">{actions}</div>}
+      {center && <div className="app-header-center">{center}</div>}
+      <div className="app-header-actions">{actions}</div>
     </header>
   );
 }

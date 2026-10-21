@@ -73,7 +73,14 @@ export async function sendOneJob(
     const link = caseLink(baseUrl || "", job.caseId);
     const content = buildContent(job.kind, link);
     const r = await sendMail({ to: email, subject: content.subject, text: content.text, html: content.html });
-    if (r.ok) { await markSent(workerConn, job.id); return "sent"; }
+    if (r.ok) {
+      // המייל כבר נשלח. כשל בסימון אינו "כשל משלוח": לא קוראים ל-markFailed (היה מחזיר ל-pending
+      // ושולח שוב = מייל כפול). המשימה תישאר pending וה-claim הבא ישלח שוב לכל היותר פעם אחת.
+      await markSent(workerConn, job.id).catch((e) => {
+        console.warn("[notify] markSent failed after successful send: " + (e instanceof Error ? e.name : "Error"));
+      });
+      return "sent";
+    }
     await markFailed(workerConn, job.id, r.error ?? "send_failed");
     return "failed";
   } catch (e) {

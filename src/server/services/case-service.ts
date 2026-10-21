@@ -2,7 +2,7 @@
 // שירות אפליקציה משותף (UI + סוכן + worker). מגשר בין repository למנוע הטהור.
 // המנוע נשאר טהור; השירות מרכיב CompleteInput מהעובדות, התרחיש וה-dataset.
 
-import { calculateScenario } from "../../domain/calculation/engine.js";
+import { calculateScenario, InvalidInputError } from "../../domain/calculation/engine.js";
 import type {
   CompleteInput,
   ScenarioResult,
@@ -22,7 +22,10 @@ import type {
 } from "../repositories/case-repository.js";
 import type { ResolvedVehicle } from "../repositories/catalog-import.js";
 import { validateEligibility, type Occupation } from "../../domain/eligibility/engine.js";
-import type { RouteKind } from "../../domain/contracts/types.js";
+import { findOccupation, occupationOrGroup } from "../../../data/source/occupations.js";
+import { validateFactsPatch, PAYSLIP_FACT_KEYS } from "./facts-validation.js";
+import type { RouteKind, RuleSet } from "../../domain/contracts/types.js";
+import type { CatalogEntry, NetContext } from "../../domain/vehicle-match/types.js";
 import { getActiveDataset, getActiveDatasetFromDb, findActiveDatasetId, type ActiveDataset } from "./dataset-provider.js";
 import {
   SAMPLE_EMPLOYEES,
@@ -61,7 +64,8 @@ export function resolveScenarioInput(
   const pensionRate = req(facts.pensionRate, "pensionRate");
   const trainingRate = req(facts.trainingRate, "trainingRate");
   const creditPoints = req(facts.creditPoints, "creditPoints");
-  if (!facts.reportedGroup) missing.push("reportedGroup");
+  // קבוצה חסרה או שאינה ברשימת הקבוצות של הכללים = חסר (לא ניחוש/תקציב אפס).
+  if (!facts.reportedGroup || !dataset.rules.groupOrder.includes(facts.reportedGroup)) missing.push("reportedGroup");
 
   let valueOfUse = 0;
   let isElectric = false;
@@ -135,7 +139,14 @@ export function computeScenario(
   if (resolved.status !== "ok" || !resolved.input) {
     return { status: "missing_data", missingFields: resolved.missingFields ?? [] };
   }
-  const result = calculateScenario(resolved.input, dataset.rules);
+  let result: ScenarioResult;
+  try {
+    result = calculateScenario(resolved.input, dataset.rules);
+  } catch (e) {
+    // קלט לא תקין (NaN/שלילי/קבוצה לא מוכרת) אינו הופך לנטו שגוי: מדווחים כשדה בעייתי.
+    if (e instanceof InvalidInputError) return { status: "missing_data", missingFields: [e.field] };
+    throw e;
+  }
   // משלבים הנחות מהפתרון (למשל ברירת מחדל של השתתפות) עם הנחות המנוע.
   const assumptions = [...(resolved.assumptions ?? []), ...result.assumptions];
   return { status: "ok", result: { ...result, assumptions } };
@@ -509,6 +520,64 @@ export class CaseService {
     return out;
   }
 
+  /**
+   * נתוני בסיס לשאלון ההתאמה: קטלוג הרכבים הפעיל + כללי הזכאות. קריאה בלבד.
+   */
+  async matchDataset(): Promise<{ catalog: CatalogEntry[]; rules: RuleSet }> {
+    const dataset = await this.getDataset();
+    const catalog: CatalogEntry[] = [...dataset.vehiclesByCode.values()].map((v) => ({
+      id: v.id, name: v.commercialName, group: v.group, propulsion: v.propulsion,
+    }));
+    return { catalog, rules: dataset.rules };
+  }
+
+  /**
+   * הפרש נטו לכל רכב בקטלוג מול הרכב הנוכחי (baseline) - קריאה בלבד.
+   * משתמש באותו מנוע חישוב, אך *אינו* שומר הרצת השוואה, אינו משנה חלופה ואינו נוגע
+   * ב-baseline. השתתפות העובד לכל רכב מועמד = ברירת המחדל של הדגם (כמו בסריקת
+   * ההשוואה), ומתועדת כהנחה. אין מילוי שכר/עמלות/השתתפות בערכי דוגמה.
+   */
+  async previewNetForCatalog(state: CaseState, factsOverride?: CaseFacts): Promise<NetContext> {
+    const dataset = await this.getDataset();
+    const facts = factsOverride ?? state.facts;
+    const baseline = state.scenarios.find((s) => s.role === "baseline");
+    const all = [...dataset.vehiclesByCode.values()];
+    const unavailable = (missing: string[]): NetContext => ({
+      baselineName: null, baselineNet: null, baselineAssumptions: [], caseMissingFields: missing,
+      byVehicle: Object.fromEntries(all.map((v) => [v.id, { status: "unavailable" as const, missingFields: missing }])),
+    });
+    if (!baseline) return unavailable(["baseline"]);
+    const baseCalc = computeScenario(facts, baseline, dataset);
+    if (baseCalc.status !== "ok") return unavailable(baseCalc.missingFields);
+
+    const baselineNet = Number(baseCalc.result.netDisplay);
+    const baselineName = baseline.route === "waiver"
+      ? "ויתור על הרכב"
+      : (baseline.vehicleCode ? (dataset.vehiclesByCode.get(baseline.vehicleCode)?.commercialName ?? null) : null);
+    const byVehicle: NetContext["byVehicle"] = {};
+    for (const v of all) {
+      const scenario: Scenario = {
+        id: "preview:" + v.id, caseId: state.case.id, role: "alternative",
+        route: v.group === "משפחתי" ? "family" : "company_car",
+        vehicleCode: v.id, participation: null, maintenanceAllowance: 0, overrides: {}, revision: 0,
+      };
+      const calc = computeScenario(facts, scenario, dataset);
+      if (calc.status !== "ok") {
+        byVehicle[v.id] = { status: "unavailable", missingFields: calc.missingFields };
+        continue;
+      }
+      const net = Number(calc.result.netDisplay);
+      byVehicle[v.id] = { status: "ok", net, netDelta: net - baselineNet, assumptions: calc.result.assumptions };
+    }
+    return {
+      baselineName,
+      baselineNet,
+      baselineAssumptions: baseCalc.result.assumptions.map((a) => `ברכב הנוכחי: ${a}`),
+      byVehicle,
+      caseMissingFields: [],
+    };
+  }
+
   /** קביעה/ניקוי של הבקשה הפעילה הממתינה לנתונים. */
   async setPendingRequest(caseId: string, ownerId: string, req: import("../../domain/contracts/case.js").PendingRequest | null) {
     return await this.repo.setPendingRequest(caseId, ownerId, req);
@@ -526,7 +595,8 @@ export class CaseService {
     patch: FactsPatch,
     expectedRevision: number,
   ): Promise<UpdateFactsOutcome> {
-    return await this.repo.updateFacts(caseId, ownerId, patch, expectedRevision);
+    // אימות בזמן ריצה בנקודה אחת: טופס, שיחה ותלוש עוברים כאן. InvalidFactsError לקורא.
+    return await this.repo.updateFacts(caseId, ownerId, validateFactsPatch(patch), expectedRevision);
   }
 
   /**
@@ -540,7 +610,13 @@ export class CaseService {
     patch: FactsPatch,
     expectedRevision: number,
   ) {
-    return await this.repo.applyPayslipAndUpdateFacts(caseId, ownerId, uploadId, patch, expectedRevision);
+    // חילוץ תלוש מעדכן רק שדות תלוש; null אינו דורס (חסר = "לא זוהה", לא "אפס/נמחק").
+    const clean = Object.fromEntries(
+      Object.entries(patch as Record<string, unknown>).filter(([, v]) => v !== null && v !== undefined),
+    );
+    return await this.repo.applyPayslipAndUpdateFacts(
+      caseId, ownerId, uploadId, validateFactsPatch(clean, PAYSLIP_FACT_KEYS), expectedRevision,
+    );
   }
 
   /**
@@ -606,7 +682,8 @@ export class CaseService {
       { he: /קורולה/, latin: "corolla" },
       { he: /אטו|אטו\s*3|אאטו/, latin: "atto" },
       { he: /דולפין/, latin: "dolphin" },
-      { he: /סיל\b/, latin: "seal" },
+      // \b אינו עובד עם עברית (תווי עברית אינם "word chars" ב-JS) - גבולות מפורשים.
+      { he: /(?<![א-ת])סיל(?![א-ת])/, latin: "seal" },
       { he: /טוסון/, latin: "tucson" },
       { he: /קונה/, latin: "kona" },
       { he: /נירו/, latin: "niro" },
@@ -635,9 +712,14 @@ export class CaseService {
       return { status: "ambiguous", matches: matches.map((v) => ({ id: v.id, commercialName: v.commercialName, group: v.group })) };
     }
     const v = matches[0]!;
+    const isFamilyCar = v.group === "משפחתי";
     const elig = occupation
       ? validateEligibility(
-          { occupation, route: "company_car", targetGroup: v.group, qualifyingChildren: undefined },
+          {
+            occupation, route: isFamilyCar ? "family" : "company_car",
+            targetGroup: isFamilyCar ? undefined : v.group, qualifyingChildren: undefined,
+            vehicle: { code: v.id, group: v.group },
+          },
           dataset.rules,
         )
       : { status: "unknown" as const, reasons: [] };
@@ -672,6 +754,17 @@ export class CaseService {
     }
     const baselineNet = Number(baseCalc.result.netDisplay);
 
+    // זכאות נקבעת מהמצב *העדכני* בתיק (לא מצילום ישן שהקורא החזיק): עיסוק מוכר, אחרת
+    // העיסוק שהקורא העביר, אחרת קבוצת זכאות בלבד (רכב חברה; ויתור דורש עיסוק מאומת).
+    // כך אין דילוג שקט על בדיקת זכאות כשידועה רק הקבוצה.
+    const occupation: Occupation | undefined =
+      findOccupation(state.facts.occupationCode) ??
+      request.occupation ??
+      occupationOrGroup(null, state.facts.reportedGroup);
+    // סימולציית שכר שמורה על החלופה (manageScenarios / set_simulation) חלה על כל המועמדות;
+    // override שהועבר במפורש על מועמד גובר עליה. ה-baseline תמיד מחושב מהעובדות האמיתיות.
+    const storedOverrides = state.scenarios.find((s) => s.role === "alternative")?.overrides ?? {};
+
     // בניית רשימת חלופות מועמדות.
     let candidateInputs: CandidateSpec[];
     if (request.mode === "explicit") {
@@ -692,35 +785,45 @@ export class CaseService {
           route: "waiver",
           vehicleCode: null,
           participation: 0,
-          maintenanceAllowance: request.waiverMaintenance ?? 0,
+          maintenanceAllowance: occupation?.waiverAllowed ? occupation.maintenanceAllowance : (request.waiverMaintenance ?? 0),
         });
       }
     }
 
-    const occupation = request.occupation;
     const comparisons: CompareRow[] = [];
     const excluded: ExcludedRow[] = [];
     const incomplete: IncompleteRow[] = [];
 
     for (const cand of candidateInputs) {
+      const overrides = { ...storedOverrides, ...(cand.overrides ?? {}) };
       const scenario = {
         id: "cand:" + cand.label, caseId, role: "alternative" as const,
         route: cand.route, vehicleCode: cand.vehicleCode,
         participation: cand.participation, maintenanceAllowance: cand.maintenanceAllowance,
-        overrides: cand.overrides ?? {},
+        overrides,
         revision: 0,
       };
-      // זכאות בקוד.
+      // זכאות בקוד. "חסר" (למשל מספר ילדים לא ידוע) אינו זכאות: המועמד לא מחושב.
       if (occupation) {
-        const targetGroup = cand.route === "company_car" && cand.vehicleCode
-          ? dataset.vehiclesByCode.get(cand.vehicleCode)?.group
-          : undefined;
+        const veh = cand.vehicleCode ? dataset.vehiclesByCode.get(cand.vehicleCode) : undefined;
+        const targetGroup = cand.route === "company_car" ? veh?.group : undefined;
         const elig = validateEligibility(
-          { occupation, route: cand.route, targetGroup, qualifyingChildren: state.facts.qualifyingChildren ?? undefined },
+          {
+            occupation, route: cand.route, targetGroup,
+            qualifyingChildren: state.facts.qualifyingChildren ?? undefined,
+            vehicle: veh ? { code: veh.id, group: veh.group } : undefined,
+          },
           dataset.rules,
         );
         if (elig.status === "ineligible") {
           excluded.push({ label: cand.label, reasons: elig.reasons });
+          continue;
+        }
+        if (elig.status === "missing") {
+          incomplete.push({
+            label: cand.label,
+            missingFields: [cand.route === "family" ? "qualifyingChildren" : "vehicleGroup"],
+          });
           continue;
         }
       }
@@ -729,7 +832,18 @@ export class CaseService {
         incomplete.push({ label: cand.label, missingFields: calc.missingFields });
         continue;
       }
-      const net = Number(calc.result.netDisplay);
+      // שקיפות: סימולציית שכר היפותטית מוצגת כהנחה בראש רשימת ההנחות של התוצאה.
+      const simKeys = Object.keys(overrides) as Array<keyof typeof overrides>;
+      const result = simKeys.length === 0
+        ? calc.result
+        : {
+            ...calc.result,
+            assumptions: [
+              `סימולציית שכר היפותטית בחלופה: ${simKeys.map((k) => `${SIM_LABELS[k] ?? k}=${overrides[k]} ₪`).join(", ")} (השכר האמיתי לא השתנה)`,
+              ...calc.result.assumptions,
+            ],
+          };
+      const net = Number(result.netDisplay);
       comparisons.push({
         label: cand.label,
         name: cand.vehicleCode ? (dataset.vehiclesByCode.get(cand.vehicleCode)?.commercialName ?? cand.label) : cand.label,
@@ -737,9 +851,10 @@ export class CaseService {
         vehicleCode: cand.vehicleCode,
         participation: cand.participation,
         maintenanceAllowance: cand.maintenanceAllowance,
+        overrides,
         net,
         netDelta: net - baselineNet,
-        result: calc.result,
+        result,
       });
     }
 
@@ -784,7 +899,8 @@ export class CaseService {
         // השמור יתאים למה שהוצג (ולא יתאפס ל-null ויסתמך על ברירת מחדל בחישוב חוזר).
         participation: top.participation,
         maintenanceAllowance: top.maintenanceAllowance,
-        overrides: {},
+        // הסימולציה שבה חושבה החלופה נשמרת עם התרחיש (לא נמחקת), כדי שחישוב חוזר ותצוגה יתאימו.
+        overrides: top.overrides,
       });
       const baselineScenario = state.scenarios.find((s) => s.role === "baseline")!;
       await this.repo.saveComparison(caseId, ownerId, {
@@ -889,10 +1005,13 @@ export interface CompareRow {
   vehicleCode: string | null;
   participation: number | null;
   maintenanceAllowance: number;
+  /** סימולציית השכר שחלה על החלופה בחישוב (ריק = עובדות אמיתיות). */
+  overrides: import("../../domain/contracts/case.js").ScenarioOverrides;
   net: number;
   netDelta: number;
   result: ScenarioResult;
 }
+const SIM_LABELS: Record<string, string> = { baseSalary: "שכר בסיס", commission: "עמלות", bonus: "בונוס" };
 export interface ExcludedRow { label: string; reasons: string[]; }
 export interface IncompleteRow { label: string; missingFields: string[]; }
 

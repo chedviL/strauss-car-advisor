@@ -5,6 +5,7 @@
 
 import type { CaseState, Scenario } from "../../domain/contracts/case.js";
 import { findOccupation } from "../../../data/source/occupations.js";
+import { isComparisonStale } from "../../domain/calculation/staleness.js";
 
 function money(n: number | null): string {
   return n === null || n === undefined ? "חסר" : `${n} ₪`;
@@ -55,7 +56,7 @@ export function buildContext(state: CaseState): string {
   if (!cmp) {
     cmpLine = "השוואה אחרונה: אין. (חישוב מתבצע כשמבקשים וכשיש קלט.)";
   } else {
-    const stale = cmp.factsRevision !== state.case.factsRevision;
+    const stale = isComparisonStale(state);
     cmpLine = `השוואה אחרונה (${cmp.completedAt.slice(0, 16).replace("T", " ")}): דלתא-נטו=${cmp.result.netDeltaDisplay} ₪` +
       ` [נבנתה על גרסת-עובדות ${cmp.factsRevision}; הגרסה הנוכחית ${state.case.factsRevision}].` +
       (stale ? " ⚠️ מיושנת — העובדות השתנו מאז; יש לחשב מחדש לפני הצגה כעדכנית." : " עדכנית.");

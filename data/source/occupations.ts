@@ -24,3 +24,17 @@ export function findOccupation(code: string | null): Occupation | undefined {
   if (!code) return undefined;
   return OCCUPATIONS.find((o) => o.code === code);
 }
+
+/**
+ * זכאות לרכב חברה נקבעת לפי קבוצת הזכאות. עיסוק מוכר -> משתמשים בו (כולל דגלי
+ * ויתור/רכב-חובה). אחרת, אם נמסרה קבוצה -> עיסוק סינתטי לפי קבוצה, בלי הרשאת ויתור
+ * (ויתור דורש עיסוק מאומת). undefined רק אם אין עיסוק ואין קבוצה.
+ */
+export function occupationOrGroup(occCode: string | null, group: string | null): Occupation | undefined {
+  const occ = findOccupation(occCode);
+  if (occ) return occ;
+  if (group) {
+    return { code: "reported", name: "לפי קבוצה שנמסרה", group, carMandatory: false, waiverAllowed: false, maintenanceAllowance: 0 };
+  }
+  return undefined;
+}

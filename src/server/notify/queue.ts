@@ -129,7 +129,7 @@ export async function markFailed(workerConnection: string, id: string, error: st
       `update notification_jobs
           set last_error = $2,
               status = case when attempts >= max_attempts then 'failed' else 'pending' end
-        where id = $1`,
+        where id = $1 and status = 'pending'`,
       [id, error.slice(0, 300)],
     );
   });

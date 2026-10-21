@@ -8,9 +8,10 @@ import type { CaseService } from "../../services/case-service.js";
 import type { ToolContext, ToolResult } from "../tool-contracts.js";
 import { ok, missing } from "../tool-contracts.js";
 import { labeledBreakdown } from "../../../domain/calculation/breakdown-labels.js";
+import { isComparisonStale } from "../../../domain/calculation/staleness.js";
 
 export const readComparisonInput = z.object({
-  compareRunId: z.string().min(1),
+  compareRunId: z.string().uuid(),
   // ברירת מחדל: כל החלופות שחושבו. אפשר טווח דירוג או ref ספציפי.
   ref: z.string().min(1).optional(),          // vehicleCode/label ספציפי לפירוט מלא
   fromRank: z.number().int().min(1).optional(), // טווח דירוג (1-based)
@@ -38,7 +39,7 @@ export async function readComparison(
 
   // עדכניות: אם גרסת העובדות השתנתה מאז, מסמנים.
   const state = await service.getCaseState(ctx.caseId, ctx.ownerId);
-  const stale = !!state && state.case.factsRevision !== run.factsRevision;
+  const stale = !!state && (state.case.factsRevision !== run.factsRevision || isComparisonStale(state));
 
   const result = run.result as SavedResult;
   const rows = result.comparisons;

@@ -170,6 +170,14 @@ function buildTools(service: CaseService, ctx: ToolContext) {
       inputSchema: compareScenariosInput,
       execute: (input) => compareScenarios(service, ctx, input),
     }),
+    readComparison: tool({
+      description:
+        "פירוט לפי דרישה מתוך השוואה שמורה (compareRunId מתוצאת compareScenarios), בלי חישוב מחדש: " +
+        "'למה דווקא זה' (ref), 'מה במקום השישי' (fromRank/toRank), 'תראה את כולן'. " +
+        "אם stale=true התוצאה מיושנת - יש לחשב מחדש לפני הצגה כעדכנית. אינו משנה דבר.",
+      inputSchema: readComparisonInput,
+      execute: (input) => readComparison(service, ctx, input),
+    }),
     openInquiry: tool({
       description:
         "פתיחת פנייה לנציג רק לנושא שבתחום אחריותו: employee_participation (ההשתתפות האמיתית ברכב) או " +
