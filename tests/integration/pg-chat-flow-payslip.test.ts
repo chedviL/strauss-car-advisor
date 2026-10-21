@@ -70,6 +70,14 @@ run("רצף שיחה מלא: רכב נוכחי + חלופה + תלוש + השו�
     // רק alternative אחת (לא נרשם רכב נוכחי כחלופה)
     expect(st!.scenarios.filter((s) => s.role === "alternative").length).toBe(1);
 
+    // עיסוק/קבוצה/ילדים נקבעים בשיחה (updateCase) — *לא* מתלוש. התלוש נושא רק
+    // שדות שכר. כך בפועל: המודל מעדכן עובדות משותפות דרך updateFacts, ואז מגיע תלוש.
+    st = await service.getCaseState(caseId, owner);
+    const upd = await service.updateFacts(caseId, owner, {
+      qualifyingChildren: 0, occupationCode: "product_manager", reportedGroup: "ג",
+    }, st!.case.factsRevision);
+    expect(upd.status).toBe("ok");
+
     // 3) זרימת תלוש: יוצרים שורת upload במצב extracted, ואז applyPayslip.
     const up = await admin.query(
       "insert into payslip_uploads (case_id, stored_key, mime, size_bytes, original_name, status, storage_backend, extraction) values ($1,$2,'application/pdf',1024,'payslip.pdf','extracted','fs',$3::jsonb) returning id",
@@ -80,11 +88,12 @@ run("רצף שיחה מלא: רכב נוכחי + חלופה + תלוש + השו�
     st = await service.getCaseState(caseId, owner);
     expect(st!.payslipStatus).toBe("extracted");
 
-    // אישור והחלה: שכר 18,500, עמלות 0, בונוס 0 (0 הוא ערך אמיתי), + רכיבים נוספים.
+    // אישור והחלה: רק שדות תלוש (שכר 18,500, עמלות 0, בונוס 0 — 0 הוא ערך אמיתי,
+    // + שיעורי הפרשה ונק' זיכוי). התלוש *אינו* מעדכן עיסוק/קבוצה/ילדים (אלה נקבעו
+    // בשיחה לעיל); ניסיון לעדכנם דרך החלת תלוש נדחה מכוון (PAYSLIP_FACT_KEYS).
     const applyRes = await service.applyPayslip(caseId, owner, uploadId, {
       baseSalary: 18500, commission: 0, bonus: 0,
-      pensionRate: 0.06, trainingRate: 0.025, creditPoints: 2.75, qualifyingChildren: 0,
-      occupationCode: "product_manager", reportedGroup: "ג",
+      pensionRate: 0.06, trainingRate: 0.025, creditPoints: 2.75,
     } as never, st!.case.factsRevision);
     expect(applyRes.status).toBe("applied");
 
