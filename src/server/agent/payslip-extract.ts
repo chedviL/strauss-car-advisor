@@ -50,14 +50,14 @@ export async function extractPayslip(bytes: Buffer, mime: AllowedMime): Promise<
     "חלץ/י את שדות השכר מהתלוש המצורף לפי הסכמה בלבד. החזר/י JSON תקין יחיד. " +
     "נתון שאינו מופיע = value:null, confidence:\"low\". אל תוסיף/י שדות שאינם בסכמה.";
 
-  // תקרת זמן לכל קריאה: 105 שניות (פחות מ-maxDuration=120 של ה-route, כך שנחזיר
-  // תשובת JSON מסודרת לפני ש-Vercel הורג את הפונקציה בכוח → "שגיאת רשת" ללקוח).
+  // תקרת זמן *כוללת* לכל זרימת החילוץ (ניסיון ראשון + ניסיון חוזר יחד):
+  // 105 שניות מרגע תחילת extractPayslip. כך גם אם הניסיון הראשון נכשל בפענוח
+  // (לא ב-timeout) והניסיון החוזר מתחיל, שניהם חולקים את אותו שעון. הסף 105s
+  // נבחר כדי להשאיר ~15s מרווח לשמירת החילוץ ולהחזרת תגובת JSON לפני
+  // מגבלת maxDuration=120 של ה-route.
   // PAYSLIP_EXTRACT_TIMEOUT_MS מאפשר שינוי בלי deploy (ל-staging / בדיקות).
-  function extractSignal(): AbortSignal {
-    const ms = Number(process.env.PAYSLIP_EXTRACT_TIMEOUT_MS ?? "105000");
-    const t = Number.isFinite(ms) && ms > 0 ? ms : 105_000;
-    return AbortSignal.timeout(t);
-  }
+  const totalMs = Number(process.env.PAYSLIP_EXTRACT_TIMEOUT_MS ?? "105000");
+  const extractBudget = AbortSignal.timeout(Number.isFinite(totalMs) && totalMs > 0 ? totalMs : 105_000);
 
   // קריאה בודדת לספק נתון. maxRetries:0 מבטל ניסיונות פנימיים של ה-SDK (לא לשרוף
   // מכסה חינמית). מחזיר את התוצאה + usage (לחישוב עלות בגיבוי Claude).
@@ -67,7 +67,7 @@ export async function extractPayslip(bytes: Buffer, mime: AllowedMime): Promise<
       schema: extractionSchema,
       system: SYSTEM,
       maxRetries: 0,
-      abortSignal: extractSignal(),
+      abortSignal: extractBudget,
       messages: [
         { role: "user", content: [{ type: "text", text: userText + extraNudge }, filePart as never] },
       ],

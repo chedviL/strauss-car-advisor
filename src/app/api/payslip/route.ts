@@ -137,7 +137,7 @@ export async function POST(req: Request): Promise<Response> {
           // Gemini לא ענה בזמן. קובץ נשמר — אפשר לנסות שוב.
           console.warn("[payslip] extraction timed out");
           return json({
-            error: "החילוץ לקח יותר מדי זמן. אפשר לנסות שוב — לרוב הניסיון הבא מהיר יותר — או להזין ידנית ב״הפרטים שלי״.",
+            error: "החילוץ מתעכב כרגע. אפשר לנסות שוב או להזין את הנתונים ידנית. הקובץ שלך נשמר.",
             kind: "timeout",
             canRetry: true,
           }, 504);
