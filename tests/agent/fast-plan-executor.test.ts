@@ -143,6 +143,33 @@ describe("fast-plan executor (ללא מודל)", () => {
     expect(r.did.searched).toBe(true); // לא נחסם בגלל חוסר עיסוק
     expect(r.partialFailure).toBeUndefined();
   });
+
+  it("שומר קבוצה ומזהה רכב באותה הודעה לפני השוואה", async () => {
+    const ds = getActiveDataset();
+    const repo = new FileCaseRepository(dir);
+    const noGroup = { ...facts, occupationCode: null, reportedGroup: null };
+    const created = await repo.createCase({
+      ownerId: OWNER, isDemo: true, datasetId: ds.contentId, facts: noGroup,
+      baseline: { role: "baseline", route: "company_car", vehicleCode: "CAR-09", participation: 300, maintenanceAllowance: 0 },
+    });
+    const r = await executeFastPlan(service, created.case.id, OWNER, (await st(created.case.id))!, {
+      clarify: false, needsFollowup: true, reply: "בודקת",
+      actions: [
+        { type: "search_vehicles", name: "Dolphin" },
+        { type: "compare", mode: "discover" },
+        { type: "update_facts", set: { reportedGroup: "ג" } },
+      ],
+    });
+    const saved = (await st(created.case.id))!;
+    const search = r.actionResults.find((item) => item.type === "search_vehicles");
+
+    expect(saved.facts.reportedGroup).toBe("ג");
+    expect(search).toBeTruthy();
+    expect((search!.summary as { status?: string }).status).toBe("found");
+    expect(r.did.compared).toBe(true);
+    expect(r.partialFailure).toBeUndefined();
+  });
+
   // --- בקשה פעילה עמידה (pending request) + המשך אוטומטי אחרי השלמת נתונים ---
 
   // תיק ללא שכר בסיס -> compare נעצר על מידע חסר.

@@ -130,7 +130,7 @@ export async function POST(req: Request): Promise<Response> {
     const rid = randomUUID().slice(0, 8);
     console.error(`[chat] reqId=${rid} unhandled(pre-stream) ${e instanceof Error ? e.name : "Error"}: ${detail}`);
     return new Response(
-      JSON.stringify({ error: "שגיאת שרת בשיחה.", code: e instanceof Error ? e.name : "Error", detail, reqId: rid }),
+      JSON.stringify({ error: "אירעה תקלה בשיחה. אפשר לנסות שוב בעוד רגע.", reqId: rid }),
       { status: 500, headers: { "content-type": "application/json" } },
     );
   }
@@ -362,9 +362,8 @@ async function handleChat(req: Request): Promise<Response> {
         console.warn(`[chat] path=B user-save on model-fail FAILED: ${se instanceof Error ? se.message : String(se)}`),
       );
     }
-    const msg = e instanceof Error ? e.message : String(e);
-    const safe = msg.replace(/sk-[A-Za-z0-9_-]{8,}/g, "sk-***");
-    return new Response(JSON.stringify({ error: safe }), {
+    console.error(`[chat] reqId=${reqId} failed after stream setup: ${sanitizeError(e)}`);
+    return new Response(JSON.stringify({ error: "אירעה תקלה בשיחה. אפשר לנסות שוב בעוד רגע.", reqId }), {
       status: 500, headers: { "content-type": "application/json" },
     });
   }

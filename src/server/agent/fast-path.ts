@@ -244,13 +244,14 @@ export async function executeFastPlan(
 
   // תמונת מצב מקומית שמתעדכנת מתוצאות השירות (ללא טעינה חוזרת פר-פעולה).
   let factsRevision = state.case.factsRevision;
+  let facts = { ...state.facts };
   let alt: Scenario | undefined = state.scenarios.find((s) => s.role === "alternative");
   const base = state.scenarios.find((s) => s.role === "baseline");
 
   type PendingReq = import("../../domain/contracts/case.js").PendingRequest;
   // בניית CompareRequest לשירות מתוך תיאור בקשה (action או בקשה שמורה).
   function buildCompareRequest(spec: { mode: "discover" | "explicit"; vehicleCodes?: string[]; includeWaiver?: boolean }): CompareRequest {
-    const occupation = occupationOrGroup(state.facts.occupationCode, state.facts.reportedGroup);
+    const occupation = occupationOrGroup(facts.occupationCode, facts.reportedGroup);
     if (spec.mode === "explicit" && spec.vehicleCodes && spec.vehicleCodes.length > 0) {
       return {
         mode: "explicit",
@@ -283,7 +284,12 @@ export async function executeFastPlan(
   let explicitCompareInPlan = false;
 
   // ולידציה מוקדמת: לפחות הסדר הגיוני (update_facts/סימולציה לפני compare) כבר בסכמה.
-  for (const action of object.actions) {
+  // עובדות שנמסרו באותו תור חייבות להישמר לפני כל פעולה שתלויה בזכאות.
+  // הסדר היחסי של שאר הפעולות נשמר (למשל בחירת רכב לפני השוואה).
+  const orderedActions = [...object.actions].sort((a, b) =>
+    Number(b.type === "update_facts") - Number(a.type === "update_facts"),
+  );
+  for (const action of orderedActions) {
     try {
       if (action.type === "update_facts") {
         const patch: FactsPatch = {};
@@ -293,6 +299,9 @@ export async function executeFastPlan(
         const res = await service.updateFacts(caseId, ownerId, patch, factsRevision);
         if (res.status === "conflict") { conflict = true; partialFailure = "העובדות עודכנו ממקור אחר בינתיים; לא שמרתי."; break; }
         factsRevision = res.factsRevision; did.facts = true;
+        for (const [key, value] of Object.entries(patch)) {
+          (facts as unknown as Record<string, unknown>)[key] = value;
+        }
       } else if (action.type === "set_simulation") {
         const overrides: Record<string, number> = { ...(alt?.overrides ?? {}) };
         for (const [k, v] of Object.entries(action.overrides)) if (v !== undefined) overrides[k] = v;
@@ -337,7 +346,7 @@ export async function executeFastPlan(
           await service.setPendingRequest(caseId, ownerId, { kind: "compare", ...spec } as PendingReq).catch(() => {});
         }
       } else if (action.type === "search_vehicles") {
-        const occupation = occupationOrGroup(state.facts.occupationCode, state.facts.reportedGroup);
+        const occupation = occupationOrGroup(facts.occupationCode, facts.reportedGroup);
         // זיהוי לפי שם: מחזיר vehicleCode מאומת או שגיאת עמימות/אי-מציאה — אין ניחוש.
         if (action.name) {
           const nr = await service.lookupVehicleByName(action.name, occupation ?? undefined);
@@ -365,13 +374,13 @@ export async function executeFastPlan(
         const scen = alt ?? base;
         const res = await service.openInquiry(caseId, ownerId, action.inquiryType, scen?.id ?? null, {
           type: action.inquiryType, route: scen?.route ?? "", vehicle: scen?.vehicleCode ?? "",
-          group: state.facts.reportedGroup ?? "", factsRevision,
+          group: facts.reportedGroup ?? "", factsRevision,
         });
         did.inquiry = true;
         actionResults.push({ type: "open_inquiry", summary: { deduped: res.deduped } });
       }
     } catch (err) {
-      partialFailure = `הפעולה ${action.type} נכשלה: ${err instanceof Error ? err.message : String(err)}`;
+      partialFailure = "לא הצלחתי להשלים את הפעולה כרגע. הנתונים שנשמרו נשמרו; אפשר לנסות שוב.";
       break;
     }
   }
