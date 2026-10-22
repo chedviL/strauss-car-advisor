@@ -33,3 +33,5 @@ tests/fixtures/payslips/_hebfont.ttf
 
 # קבצי דוגמה שנוצרו מקומית לצפייה (למשל PDF השוואה) - לא נכנסים ל-git
 samples/
+.vercel
+.env*

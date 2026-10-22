@@ -30,9 +30,9 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 // הודעות שגיאה ידידותיות למשתמש/ת (בלי ניסוח פנימי/טכני).
-const ERR_FULL = "מצטער/ת, משהו השתבש בעיבוד התשובה. הנתונים שכבר נשמרו נשמרו. אפשר לנסות שוב בעוד רגע.";
+const ERR_FULL = "מצטער/ת, לא הצלחתי להשלים את התשובה. ייתכן שחלק מהעדכונים כבר בוצעו; כדאי לבדוק את מצב התיק לפני ניסיון נוסף.";
 const ERR_SUFFIX = "(ההמשך נקטע עקב תקלה זמנית. אפשר לנסות שוב.)";
-const ERR_BOTH_BLOCKED = "השירות עמוס כרגע גם בגיבוי. הנתונים שנשמרו נשמרו. אפשר לנסות שוב בעוד מספר דקות.";
+const ERR_BOTH_BLOCKED = "השירות אינו זמין כרגע. ייתכן שחלק מהעדכונים כבר בוצעו; כדאי לבדוק את מצב התיק לפני ניסיון נוסף.";
 
 // cooldown חיוב ל-Claude: אחרי כשל חיוב, מדלגים על Claude ל-5 דקות (לכל מופע חם)
 // כדי לא לנסות-ולהיכשל בכל הודעה. פג מעצמו (בדיקת התאוששות) ו-cold-start מאפס.
@@ -184,9 +184,16 @@ async function handleChat(req: Request): Promise<Response> {
       console.log(
         `[chat] path=A did=${Object.entries(fp.did).filter(([, v]) => v).map(([k]) => k).join(",") || "none"} followup=${fp.needsFollowup}`,
       );
-      const reply = fp.needsFollowup
-        ? await narrateResult(userText, fp.actionResults)
-        : fp.reply;
+      let reply = fp.reply;
+      if (fp.needsFollowup && !fp.partialFailure) {
+        try { reply = await narrateResult(userText, fp.actionResults); }
+        catch (narrationError) {
+          console.warn(`[chat] reqId=${reqId} path=A narration failed after actions: ${sanitizeError(narrationError)}`);
+          reply = "הפעולה הושלמה, אך לא הצלחתי לנסח את סיכום התוצאה. אפשר לבדוק את הכרטיס שמופיע בשיחה.";
+        }
+      } else if (fp.partialFailure) {
+        reply = fp.reply;
+      }
       console.log(`[measure] path=A modelCalls=${fp.needsFollowup ? 2 : 1} ttft_ms=${Date.now() - tA0}`);
       const asstId = "asst-" + randomUUID();
       const stream = createUIMessageStream({
@@ -232,6 +239,7 @@ async function handleChat(req: Request): Promise<Response> {
     let toolRan = false;
     let primaryError: unknown = null;
     let firstChunk = false;
+    let primaryText = "";
     // cooldown חיוב: אם Claude נחסם בחיוב לאחרונה, מדלגים עליו ישירות לגיבוי כדי
     // לא לנסות-ולהיכשל בכל הודעה. פג אחרי CLAUDE_BILLING_COOLDOWN_MS (בדיקת התאוששות).
     const claudeBlocked = Date.now() < claudeBillingBlockedUntil;
@@ -243,8 +251,12 @@ async function handleChat(req: Request): Promise<Response> {
       onToolCalled: () => { toolRan = true; },
       onFirstChunk: () => { firstChunk = true; resolveFirst?.(); },
       onProviderError: (pe) => { if (!primaryError) primaryError = pe; resolveFirst?.(); },
+      onTextDelta: (text) => { primaryText += text; },
     });
-    if (result) void Promise.resolve(result.consumeStream()).catch((err) => { if (!primaryError) primaryError = err; resolveFirst?.(); });
+    if (result) void Promise.resolve(result.consumeStream()).then(
+      () => resolveFirst?.(),
+      (err) => { if (!primaryError) primaryError = err; resolveFirst?.(); },
+    );
     else console.log(`[chat] reqId=${reqId} skipping claude (billing cooldown active) -> fallback`);
 
     const stream = createUIMessageStream({
@@ -269,8 +281,10 @@ async function handleChat(req: Request): Promise<Response> {
             // המודל התחיל להחזיר -> מזרימים חי (ללא רגרסיית streaming). שגיאה
             // *אחרי* פלט חלקי -> לא מתחילים תור מחדש; מוצג כשל שניתן להתאוששות.
             writer.merge(result.toUIMessageStream({ sendFinish: false, sendStart: false }));
-            try { assistantText = (await result.text) ?? ""; answerOk = assistantText.trim().length > 0; }
-            catch (e) { console.warn(`[chat] reqId=${reqId} path=B mid-stream fail after output (no restart): ${sanitizeError(primaryError ?? e)}`); answerOk = assistantText.trim().length > 0; }
+            try { await result.text; }
+            catch (e) { console.warn(`[chat] reqId=${reqId} path=B mid-stream fail after output (no restart): ${sanitizeError(primaryError ?? e)}`); }
+            assistantText = primaryText;
+            answerOk = assistantText.trim().length > 0;
             if (cardPending && !cardSent) { cardSent = true; emitCard!(); }
           }
         }
@@ -286,15 +300,19 @@ async function handleChat(req: Request): Promise<Response> {
             // אותה משמעת כמו ה-primary: *לא ממזגים את זרם הגיבוי לפני אות ראשון*,
             // כדי שגם כשל גיבוי (מכסה/שגיאה) לא יפלוט error part ללקוח.
             fellBack = true;
-            let fbFirst = false; let fbError: unknown = null;
+            let fbFirst = false; let fbError: unknown = null; let fbText = "";
             let resolveFb: (() => void) | null = null;
             const fbFirstOrError = new Promise<void>((res) => { resolveFb = res; });
-            const fbRes = streamChat({ service, ctx, state, messages: modelMessages, budget: { estimatedUsd: 0, calls: 0 }, model: fb, onComparisonReady: fireCard, onToolCalled: () => { toolRan = true; }, onFirstChunk: () => { fbFirst = true; resolveFb?.(); }, onProviderError: (pe) => { if (!fbError) fbError = pe; resolveFb?.(); } });
-            void Promise.resolve(fbRes.consumeStream()).catch((e) => { if (!fbError) fbError = e; resolveFb?.(); });
+            const fbRes = streamChat({ service, ctx, state, messages: modelMessages, budget: { estimatedUsd: 0, calls: 0 }, model: fb, onComparisonReady: fireCard, onToolCalled: () => { toolRan = true; }, onFirstChunk: () => { fbFirst = true; resolveFb?.(); }, onProviderError: (pe) => { if (!fbError) fbError = pe; resolveFb?.(); }, onTextDelta: (text) => { fbText += text; } });
+            void Promise.resolve(fbRes.consumeStream()).then(
+              () => resolveFb?.(),
+              (e) => { if (!fbError) fbError = e; resolveFb?.(); },
+            );
             await fbFirstOrError;
             if (fbFirst) {
               writer.merge(fbRes.toUIMessageStream({ sendFinish: false, sendStart: false }));
-              try { assistantText = (await fbRes.text) ?? ""; } catch { /* mid-stream fail after output */ }
+              try { await fbRes.text; } catch { /* mid-stream fail after output */ }
+              assistantText = fbText;
               answerOk = assistantText.trim().length > 0;
               if (cardPending && !cardSent) { cardSent = true; emitCard!(); }
             } else {
@@ -304,16 +322,21 @@ async function handleChat(req: Request): Promise<Response> {
         }
         const hadText = assistantText.trim().length > 0;
         if (!answerOk || !hadText) {
-          // אם גם הגיבוי נוצל/חסום - הודעה ברורה שמסיימת את ההמתנה, בלי ניסיון נוסף.
+          // הודעת שגיאה לפי מצב — ניטרלית כשאין אישור הצלחה.
+          // לא מסמכים על toolRan כי כשל בניסוח אינו מאשר שהפעולה אכן הצליחה.
           const baseErr = fellBack ? ERR_BOTH_BLOCKED : ERR_FULL;
           const errText = hadText
             ? assistantText + nlErr() + ERR_SUFFIX
             : baseErr;
           if (!hadText) {
-            // אין טקסט כלל -> כותבים הודעת שגיאה כחלק טקסט חדש (הממשק יציג אותה).
             const eid = "t-err-" + randomUUID();
             writer.write({ type: "text-start", id: eid });
             writer.write({ type: "text-delta", id: eid, delta: baseErr });
+            writer.write({ type: "text-end", id: eid });
+          } else {
+            const eid = "t-err-" + randomUUID();
+            writer.write({ type: "text-start", id: eid });
+            writer.write({ type: "text-delta", id: eid, delta: nlErr() + ERR_SUFFIX });
             writer.write({ type: "text-end", id: eid });
           }
           assistantText = errText;

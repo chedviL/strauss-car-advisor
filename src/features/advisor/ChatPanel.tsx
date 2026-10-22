@@ -59,7 +59,7 @@ export function ChatPanel({ initialMessages = [], showExamples = false, comparis
   const [inputFocused, setInputFocused] = useState(false);
   const [busyStage, setBusyStage] = useState(0);
   const router = useRouter();
-  const { messages, sendMessage, status, error } = useChat({
+  const { messages, sendMessage, setMessages, status, error } = useChat({
     transport: new DefaultChatTransport({
       api: "/api/chat",
       // שולחים את מזהה הבירור הפעיל מה-URL (?c=). הבעלות נאכפת בשרת; מזהה מהלקוח
@@ -154,13 +154,33 @@ export function ChatPanel({ initialMessages = [], showExamples = false, comparis
 
   const wasBusy = useRef(false);
   const cardRefreshedThisTurn = useRef(false);
+  const refreshCardAfterTurn = useRef(false);
+  const resumePayslip = useRef<{ caseId: string; uploadId: string } | null>(null);
   useEffect(() => {
     // בסיום התור: רק מאפסים את הדגל. אין צורך ב-router.refresh() לתור טקסט רגיל
     // (ההודעות כבר במצב הלקוח דרך useChat) - רענון כזה גרם לקפיצה של כל החלון
     // בגלל רינדור-שרת מחדש. רענון השרת מתבצע רק כשמגיע אירוע השוואה אמיתי
     // (ה-effect הבא), שבו הכרטיס המרונדר-בשרת אכן צריך להישלף מחדש.
     if (wasBusy.current && status === "ready") {
+      if (resumePayslip.current) {
+        const { caseId: resumeCaseId, uploadId } = resumePayslip.current;
+        resumePayslip.current = null;
+        const marker = `strauss:payslip-resume:${uploadId}`;
+        if (sessionStorage.getItem(marker) !== "sent") {
+          sessionStorage.setItem(marker, "sent");
+          void sendMessage(
+            { text: "הנתונים שאושרו מהתלוש זמינים. המשך/י את הבקשה הקודמת שממתינה בתיק הזה; אל תפתח/י בקשה חדשה." },
+            { body: { caseId: resumeCaseId } },
+          );
+          wasBusy.current = false;
+          return;
+        }
+      }
       cardRefreshedThisTurn.current = false;
+      if (refreshCardAfterTurn.current) {
+        refreshCardAfterTurn.current = false;
+        router.refresh();
+      }
     }
     wasBusy.current = busy;
   }, [status, busy]);
@@ -179,13 +199,26 @@ export function ChatPanel({ initialMessages = [], showExamples = false, comparis
         console.log(`[card] event received at ${Math.round(performance.now())}ms -> router.refresh()`);
       }
       cardRefreshedThisTurn.current = true;
-      router.refresh();
+      refreshCardAfterTurn.current = true;
+      if (!busy) {
+        refreshCardAfterTurn.current = false;
+        router.refresh();
+      }
     }
-  }, [cardEvents, router]);
+  }, [cardEvents, router, busy]);
 
   // סנכרון ה-URL למזהה הבירור הפעיל שהשרת החזיר (data-activeCase): כך רענון
   // ישחזר את אותה שיחה. replaceState - בלי ניווט/טעינה מחדש.
   const activeCase = latestActiveCase(messages as never);
+  const previousCaseId = useRef(caseId);
+  useEffect(() => {
+    const previous = previousCaseId.current;
+    if (previous !== caseId) {
+      const serverCreatedThisConversation = !!caseId && activeCase === caseId;
+      if (!serverCreatedThisConversation) setMessages(initialMessages as never[]);
+      previousCaseId.current = caseId;
+    }
+  }, [activeCase, caseId, initialMessages, setMessages]);
   useEffect(() => {
     if (!activeCase || typeof window === "undefined") return;
     const url = new URL(window.location.href);
@@ -388,7 +421,32 @@ export function ChatPanel({ initialMessages = [], showExamples = false, comparis
         )}
         <form onSubmit={submit} className={`composer-row ${empty ? "is-hero" : ""}`.trim()}>
           {/* צירוף תלוש: העלאה + חילוץ (באישור) + אישור/עריכה + החלה על התיק */}
-          <PayslipUpload onApplied={() => router.refresh()} />
+          <PayslipUpload
+            onApplied={({ caseId: resumeCaseId, uploadId, shouldResume }) => {
+              if (resumeCaseId && typeof window !== "undefined") {
+                const url = new URL(window.location.href);
+                if (url.searchParams.get("c") !== resumeCaseId) {
+                  url.searchParams.set("c", resumeCaseId);
+                  window.history.replaceState(null, "", url.toString());
+                }
+              }
+              if (resumeCaseId && shouldResume) resumePayslip.current = { caseId: resumeCaseId, uploadId };
+              if (resumeCaseId && shouldResume && status === "ready") {
+                const marker = `strauss:payslip-resume:${uploadId}`;
+                if (sessionStorage.getItem(marker) !== "sent") {
+                  sessionStorage.setItem(marker, "sent");
+                  resumePayslip.current = null;
+                  void sendMessage(
+                    { text: "הנתונים שאושרו מהתלוש זמינים. המשך/י את הבקשה הקודמת שממתינה בתיק הזה; אל תפתח/י בקשה חדשה." },
+                    { body: { caseId: resumeCaseId } },
+                  );
+                }
+              } else if (!shouldResume) {
+                router.refresh();
+              }
+            }}
+            caseId={effectiveCaseId ?? null}
+          />
 
           {/* קלט דיבור: התמלול נכנס לתיבת הטקסט לעריכה - לא נשלח אוטומטית.
               מצטרף לטקסט קיים אם כבר הוקלד משהו. */}

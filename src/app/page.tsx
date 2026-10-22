@@ -80,11 +80,10 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ c
           )}
 
           {/* כרטיס ההשוואה מוצג בתוך זרימת השיחה, מתחת לתשובת המודל (ראו ChatPanel). */}
-          {/* key לפי הבירור: useChat מכבד את initialMessages רק ביצירה. בלי key,
-              מעבר בין שיחות (ניווט צד-לקוח) שומר את מצב השיחה הישן ומציג רק את
-              כרטיס ההשוואה שמרונדר בשרת, בלי ההודעות. */}
+            {/* רכיב השיחה נשאר יציב בעת הקצאת תיק ראשוני; ChatPanel מסנכרן הודעות
+              במעבר בין תיקים בלי לאבד זרם פעיל. */}
           <ChatPanel
-            key={`${owner}:${caseId ?? "new"}`}
+            key={owner}
             userId={owner}
             caseId={state ? caseId : null}
             initialMessages={initialMessages}

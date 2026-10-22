@@ -1,14 +1,15 @@
 // src/server/agent/model.ts
-// הגדרת המודל בצד השרת בלבד. המפתח מועבר מפורשות מ-MODEL_API_KEY (ללא הדפסה).
-// המזהה ניתן להחלפה דרך MODEL_ID (ברירת מחדל: claude-sonnet-5-5, מאומת זמין
-// דרך Models API). אין auto-switch למודל אחר.
+// הגדרת המודל בצד השרת בלבד. מפתחות נטענים מרשימה (CLAUDE_API_KEY_1..N / GEMINI_API_KEY_1..N)
+// עם backward-compatibility ל-MODEL_API_KEY / MODEL_API_KEY2 / MODEL_API_KEY3 הישנים.
+// אין auto-switch למודל אחר. ה-pool בוחר מפתח לפי round-robin; מפתח שנכשל בחיוב/מכסה
+// נדחה אוטומטית לקצה הרשימה (cooldown per-process).
 
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import type { LanguageModel } from "ai";
 
 export const DEFAULT_MODEL_ID = "claude-sonnet-5-5";
-// חילוץ מסמכים בלבד: Gemini (ספק Google), מפתח נפרד MODEL_API_KEY2. השיחה נשארת Claude.
+// חילוץ מסמכים בלבד: Gemini (ספק Google), מפתחות נפרדים. השיחה נשארת Claude.
 export const DEFAULT_EXTRACTION_MODEL_ID = "gemini-3.8-flash";
 
 /** תקרות ניסוי כדי לשמור על תקציב מוערך של עד ~$1 לקבוצת הריצות. */
@@ -29,6 +30,115 @@ export const BUDGET = {
   maxEstimatedUsd: 1.0,
 };
 
+// ---------------------------------------------------------------------------
+// Key pool — round-robin עם cooldown per-key לאחר כשל חיוב/מכסה
+// ---------------------------------------------------------------------------
+
+/** משך ה-cooldown (ms) למפתח אחרי כשל חיוב/מכסה. ברירת מחדל: 10 דקות. */
+const KEY_COOLDOWN_MS = 10 * 60 * 1_000;
+
+/** מצב per-key (per-process). לא גלובלי: cold-start מאפס. */
+const keyCooldowns = new Map<string, number>(); // key -> blockedUntil timestamp
+const keyCounters  = new Map<string, number>(); // poolId -> lastUsedIndex
+
+/**
+ * בונה רשימת מפתחות ייחודיים-ותקינים מסדרת משתני סביבה.
+ *
+ * לוגיקת חיפוש (לפי סדר קדימויות):
+ *  1. CLAUDE_API_KEY_1, CLAUDE_API_KEY_2, ... CLAUDE_API_KEY_N  (עד MAX_KEYS)
+ *     (או GEMINI_API_KEY_1...N עבור ספק Gemini)
+ *  2. fallback לשמות הישנים שמועברים ב-legacyVars, בסדר שהוגדר.
+ *
+ * @param prefix   "CLAUDE_API_KEY" | "GEMINI_API_KEY"
+ * @param legacyVars שמות משתני סביבה ישנים לתאימות לאחור (בסדר עדיפות יורד)
+ * @param maxKeys  מספר מקסימלי של ערכים להסרוק (ברירת מחדל 10)
+ */
+function buildKeyPool(prefix: string, legacyVars: string[], maxKeys = 10): string[] {
+  const seen = new Set<string>();
+  const pool: string[] = [];
+
+  const add = (v: string | undefined) => {
+    const k = v?.trim();
+    if (k && !seen.has(k)) { seen.add(k); pool.push(k); }
+  };
+
+  // 1. מפתחות ממוספרים חדשים
+  for (let i = 1; i <= maxKeys; i++) {
+    add(process.env[`${prefix}_${i}`]);
+  }
+
+  // 2. מפתחות ישנים (backward-compat)
+  for (const name of legacyVars) {
+    add(process.env[name]);
+  }
+
+  return pool;
+}
+
+/**
+ * בוחר את המפתח הבא מהpool לפי round-robin, תוך דילוג על מפתחות ב-cooldown.
+ * אם כולם ב-cooldown — מחזיר את המפתח עם ה-cooldown הקצר ביותר (פחות גרוע).
+ *
+ * @param poolId  מזהה ייחודי לכל pool (לשמירת counter נפרד)
+ * @param pool    רשימת המפתחות
+ * @returns המפתח שנבחר, או null אם ה-pool ריק
+ */
+function pickKey(poolId: string, pool: string[]): string | null {
+  if (pool.length === 0) return null;
+
+  const now = Date.now();
+  const start = keyCounters.get(poolId) ?? 0;
+
+  // עובר על הpool מה-index שאחרי ה-index האחרון שהשתמשנו בו
+  for (let offset = 0; offset < pool.length; offset++) {
+    const idx = (start + offset) % pool.length;
+    const key = pool[idx]!;
+    const blockedUntil = keyCooldowns.get(key) ?? 0;
+    if (now >= blockedUntil) {
+      keyCounters.set(poolId, idx + 1);
+      return key;
+    }
+  }
+
+  // כולם ב-cooldown: בחר את הכי-פחות-חסום
+  // pool.length > 0 מובטח בתחילת הפונקציה, אך TypeScript לא מסיק זאת עבור pool[0]
+  let bestKey: string = pool[0] as string;
+  let bestUntil = keyCooldowns.get(bestKey) ?? 0;
+  for (const k of pool) {
+    const u = keyCooldowns.get(k) ?? 0;
+    if (u < bestUntil) { bestKey = k; bestUntil = u; }
+  }
+  console.warn(`[model] כל מפתחות ה-pool "${poolId}" ב-cooldown; משתמש בפחות-חסום (יפוג בעוד ${Math.round((bestUntil - now) / 1000)}s)`);
+  return bestKey;
+}
+
+/**
+ * מסמן מפתח כ"נכשל" (חיוב/מכסה) — ידחה לקצה ה-pool ל-KEY_COOLDOWN_MS.
+ * קורא לזה מקוד שמטפל בשגיאת ספק (chat/route.ts, payslip-extract.ts).
+ */
+export function markKeyFailed(key: string): void {
+  keyCooldowns.set(key, Date.now() + KEY_COOLDOWN_MS);
+  console.warn(`[model] מפתח API נכשל — ב-cooldown ל-${KEY_COOLDOWN_MS / 60_000} דקות`);
+}
+
+// ---------------------------------------------------------------------------
+// Pool מוגדרים — Claude ו-Gemini
+// ---------------------------------------------------------------------------
+
+/** Pool מפתחות Claude (Anthropic). מחושב פעם אחת per-process. */
+function getClaudePool(): string[] {
+  return buildKeyPool("CLAUDE_API_KEY", ["MODEL_API_KEY"]);
+}
+
+/** Pool מפתחות Gemini (Google). מחושב פעם אחת per-process. */
+function getGeminiPool(): string[] {
+  return buildKeyPool("GEMINI_API_KEY", ["MODEL_API_KEY3", "MODEL_API_KEY2"]);
+}
+
+// ---------------------------------------------------------------------------
+// Public API — זהה לממשק הישן; הלוגיקה הפנימית עברה ל-pool
+// ---------------------------------------------------------------------------
+
 /** דגל ניתן-להחזרה: מסלול מהיר (קריאת מודל אחת + פלט מובנה) להודעות
  *  איסוף/תיקון פשוטות. ברירת מחדל כבוי; CHAT_FAST_PATH=1 מפעיל. */
 export function fastPathEnabled(): boolean {
@@ -47,11 +157,17 @@ export function getModelId(): string {
   return id && id.trim() !== "" ? id.trim() : DEFAULT_MODEL_ID;
 }
 
-/** מחזיר LanguageModel מוגדר, או זורק שגיאה מסוננת-סודות אם אין מפתח. */
+/**
+ * מחזיר LanguageModel מוגדר (Claude). בוחר מפתח לפי round-robin מה-pool.
+ * זורק שגיאה מסוננת-סודות אם אין אף מפתח מוגדר.
+ */
 export function getModel(): LanguageModel {
-  const key = process.env.MODEL_API_KEY;
-  if (!key || key.trim() === "") {
-    throw new Error("MODEL_API_KEY אינו נטען. בדוק את .env.local (נוכחות בלבד).");
+  const pool = getClaudePool();
+  const key = pickKey("claude", pool);
+  if (!key) {
+    throw new Error(
+      "לא נמצא אף מפתח Claude. הגדר CLAUDE_API_KEY_1 (ו/או CLAUDE_API_KEY_2..N) ב-.env.local."
+    );
   }
   const anthropic = createAnthropic({ apiKey: key });
   return anthropic(getModelId());
@@ -69,23 +185,16 @@ export function getExtractionModelId(): string {
 }
 
 /**
- * מודל לחילוץ מסמכים בלבד: ספק Google (Gemini), מפתח נפרד.
- * *אינו* משמש לשיחה — השיחה נשארת Claude (getModel). הפרדה מכוונת: ספק/מפתח
- * שונים, כדי לא לערבב חיוב/מכסה בין השניים. זורק שגיאה מסוננת-סוד אם אין מפתח.
- *
- * מפתח החילוץ: MODEL_API_KEY3 הוא המפתח הפעיל (החליף את MODEL_API_KEY2);
- * MODEL_API_KEY2 נשאר כגיבוי אם 3 לא הוגדר, כדי לא לשבור הגדרות קיימות.
+ * מחזיר את המפתח הבא מה-pool של Gemini (round-robin).
+ * Backward-compatible: MODEL_API_KEY3 → MODEL_API_KEY2 → GEMINI_API_KEY_1..N.
  */
 export function getExtractionApiKey(): string | null {
-  const k3 = process.env.MODEL_API_KEY3;
-  if (k3 && k3.trim() !== "") return k3.trim();
-  const k2 = process.env.MODEL_API_KEY2;
-  if (k2 && k2.trim() !== "") return k2.trim();
-  return null;
+  const pool = getGeminiPool();
+  return pickKey("gemini", pool);
 }
 
 // מודל שיחה גיבוי במכסה החינמית של Gemini (תומך כלים). *אינו* ברירת המחדל -
-// השיחה נשארת Claude; זה רק fallback לכשל ספק. מפתח צד-שרת בלבד (MODEL_API_KEY3/2),
+// השיחה נשארת Claude; זה רק fallback לכשל ספק. מפתח צד-שרת בלבד (GEMINI pool),
 // בלי חיוב. gemini-2.5-flash הוא free-tier ותומך function-calling.
 export const DEFAULT_FALLBACK_CHAT_MODEL_ID = "gemini-3.8-flash"; // זמין בחשבון זה (כמו החילוץ); gemini-2.5-flash אינו זמין למשתמשים חדשים.
 export function getFallbackChatModelId(): string {
@@ -94,7 +203,7 @@ export function getFallbackChatModelId(): string {
 }
 /** מחזיר מודל גיבוי לשיחה (Gemini free-tier) או null אם אין מפתח. לא זורק. */
 export function getFallbackChatModel(): LanguageModel | null {
-  const key = getExtractionApiKey(); // אותו מפתח Gemini צד-שרת (MODEL_API_KEY3/2)
+  const key = getExtractionApiKey(); // אותו pool Gemini
   if (!key) return null;
   const google = createGoogleGenerativeAI({ apiKey: key });
   return google(getFallbackChatModelId());
@@ -103,7 +212,9 @@ export function getFallbackChatModel(): LanguageModel | null {
 export function getExtractionModel(): LanguageModel {
   const key = getExtractionApiKey();
   if (!key) {
-    throw new Error("מפתח Gemini לחילוץ אינו נטען (MODEL_API_KEY3 או MODEL_API_KEY2). בדוק את .env.local (נוכחות בלבד).");
+    throw new Error(
+      "לא נמצא אף מפתח Gemini. הגדר GEMINI_API_KEY_1 (ו/או GEMINI_API_KEY_2..N) ב-.env.local."
+    );
   }
   const google = createGoogleGenerativeAI({ apiKey: key });
   return google(getExtractionModelId());

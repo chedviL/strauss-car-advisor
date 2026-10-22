@@ -43,9 +43,11 @@ export function ComparisonView({
       const qs = new URLSearchParams({ c: state.case.id, cmp: cmp.id });
       const res = await fetch(`/api/comparison-pdf?${qs.toString()}`);
       if (!res.ok) {
-        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        const data = (await res.json().catch(() => ({}))) as { error?: string; errorId?: string };
         setPdfPhase("error");
-        setPdfError(data.error ?? "ההורדה נכשלה. אפשר לנסות שוב.");
+        setPdfError(data.errorId
+          ? `${data.error ?? "יצירת המסמך נכשלה."} (מזהה תקלה: ${data.errorId})`
+          : data.error ?? "ההורדה נכשלה. אפשר לנסות שוב.");
         return;
       }
       // שם הקובץ מהשרת (filename* בקידוד RFC 5987), עם גיבוי אם הכותרת חסרה.

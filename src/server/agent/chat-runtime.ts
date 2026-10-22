@@ -207,6 +207,7 @@ export interface StreamChatArgs {
   state: CaseState;
   messages: ModelMessage[];
   budget: ChatBudgetState;
+  onTextDelta?: (text: string) => void;
 }
 
 /** מריץ תור שיחה עם streaming וכלים. מחזיר את תוצאת streamText. */
@@ -216,6 +217,7 @@ export function streamChat(args: StreamChatArgs & { onMetrics?: (m: TurnMetrics)
   const onToolCalled = args.onToolCalled;
   const onProviderError = args.onProviderError;
   const onFirstChunk = args.onFirstChunk;
+  const onTextDelta = args.onTextDelta;
   let firstChunkFired = false;
   if (budget.estimatedUsd >= BUDGET.maxEstimatedUsd) {
     throw new Error(
@@ -248,8 +250,12 @@ export function streamChat(args: StreamChatArgs & { onMetrics?: (m: TurnMetrics)
     maxOutputTokens: BUDGET.maxOutputTokens,
     onChunk: (ev) => {
       meter.onChunk(ev.chunk as { type?: string });
+      const chunk = ev.chunk as { type?: string; text?: string };
+      if (chunk.type === "text-delta" && typeof chunk.text === "string") {
+        try { onTextDelta?.(chunk.text); } catch { /* best-effort */ }
+      }
       if (!firstChunkFired) {
-        const ty = (ev.chunk as { type?: string }).type;
+        const ty = chunk.type;
         // פלט אמיתי ראשון (טקסט/כלי) - האות ש-'המודל התחיל להחזיר'.
         if (ty === "text-delta" || ty === "text" || ty === "tool-call" || ty === "tool-input-start" || ty === "reasoning-delta") {
           firstChunkFired = true; try { onFirstChunk?.(); } catch { /* best-effort */ }

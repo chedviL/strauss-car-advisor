@@ -34,7 +34,7 @@ const fromDisp = (k: string, s: string): number | null => {
   return RATE_KEYS.has(k) ? Math.round((n / 100) * 10000) / 10000 : n;
 };
 
-export function PayslipUpload({ onApplied }: { onApplied?: () => void }) {
+export function PayslipUpload({ onApplied, caseId: propCaseId }: { onApplied?: (result: { caseId: string | null; uploadId: string; shouldResume: boolean }) => void; caseId?: string | null }) {
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [phase, setPhase] = useState<Phase>("idle");
@@ -42,6 +42,15 @@ export function PayslipUpload({ onApplied }: { onApplied?: () => void }) {
   const [uploadId, setUploadId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Extraction | null>(null);
   const [dragOver, setDragOver] = useState(false);
+
+  // caseId פעיל: מה-URL (?c=) בעדיפות, אחר כך prop מהורה.
+  function getActiveCaseId(): string | null {
+    if (typeof window !== "undefined") {
+      const c = new URLSearchParams(window.location.search).get("c");
+      if (c && c.length > 0) return c;
+    }
+    return propCaseId ?? null;
+  }
 
   async function upload(file: File) {
     setPhase("uploading"); setMsg(file.name);
@@ -87,9 +96,11 @@ export function PayslipUpload({ onApplied }: { onApplied?: () => void }) {
     });
     try {
       // החלה דרך השרת (אידמפוטנטי: לא מחיל אותו אישור פעמיים).
+      // caseId מועבר ב-body כדי לתמוך בלשוניות מרובות (לא רק עוגייה).
+      const activeCid = getActiveCaseId();
       const res = await fetch("/api/payslip?action=apply", {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ uploadId, patch }),
+        body: JSON.stringify({ uploadId, patch, ...(activeCid ? { caseId: activeCid } : {}) }),
       });
       const data = await res.json();
       if (data.status === "applied" || data.status === "already_applied") {
@@ -97,9 +108,12 @@ export function PayslipUpload({ onApplied }: { onApplied?: () => void }) {
         setMsg(data.status === "already_applied"
           ? "הנתונים כבר הוחלו קודם."
           : "הנתונים הוחלו על התיק. אפשר לשנות כל פרט ולהמשיך בשיחה.");
-        // רענון יחיד: onApplied כבר קורא ל-router.refresh() (מהורה). רענון כפול
-        // גורם ל-churn מיותר שעלול להיראות כ"תקיעה".
-        onApplied?.();
+        // המשך שיחה נשלח רק אם הבקשה עדיין ממתינה, ולא על אישור חוזר.
+        if (data.status === "applied" || data.status === "already_applied") onApplied?.({
+          caseId: typeof data.caseId === "string" ? data.caseId : activeCid,
+          uploadId,
+          shouldResume: data.shouldResume === true,
+        });
       } else if (data.status === "conflict") {
         setPhase("error"); setMsg(data.message ?? "הנתונים השתנו בינתיים; רענן/י ונסה/י שוב.");
       } else {
@@ -140,7 +154,10 @@ export function PayslipUpload({ onApplied }: { onApplied?: () => void }) {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch("/api/payslip?pending=1");
+        // מעבירים ?c= כדי לשחזר לתיק הנכון גם בלשוניות מרובות.
+        const cid = getActiveCaseId();
+        const qs = cid ? `&c=${encodeURIComponent(cid)}` : "";
+        const res = await fetch(`/api/payslip?pending=1${qs}`);
         const data = await res.json();
         if (!cancelled && data.pending) {
           setUploadId(data.pending.uploadId);
@@ -150,6 +167,7 @@ export function PayslipUpload({ onApplied }: { onApplied?: () => void }) {
       } catch { /* ignore */ }
     })();
     return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function pick(files: FileList | null) {

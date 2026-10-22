@@ -50,9 +50,12 @@ export async function GET(req: Request): Promise<Response> {
   if (!conn) return json({ pending: null });
   const url = new URL(req.url);
   if (url.searchParams.get("pending") !== "1") return json({ pending: null });
+  // caseId: קודם מ-query param (לשוניות מרובות), אחר כך עוגייה.
+  const qCaseId = (url.searchParams.get("c") ?? "").trim();
   const store = await cookies();
-  const caseId = store.get("strauss_case")?.value ?? null;
-  if (!isUuid(caseId)) return json({ pending: null });
+  const cookieCaseId = store.get("strauss_case")?.value ?? null;
+  const caseId = isUuid(qCaseId) ? qCaseId : (isUuid(cookieCaseId) ? cookieCaseId : null);
+  if (!caseId) return json({ pending: null });
   const pend = await loadPendingExtraction({ connectionString: conn, ownerId: owner, caseId }).catch(() => null);
   return json({ pending: pend });
 }
@@ -165,10 +168,11 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     if (action === "apply") {
-      const body = (await req.json().catch(() => ({}))) as { uploadId?: string; patch?: Record<string, number | null> };
+      const body = (await req.json().catch(() => ({}))) as { uploadId?: string; patch?: Record<string, number | null>; caseId?: string };
       if (!isUuid(body.uploadId) || !body.patch) return json({ error: "חסרים נתונים להחלה." }, 400);
+      // caseId: מפורש מה-body (לשוניות מרובות) קודם; עוגייה כגיבוי תאימות.
       const store = await cookies();
-      const caseId = store.get("strauss_case")?.value ?? null;
+      const caseId = (isUuid(body.caseId) ? body.caseId : null) ?? (store.get("strauss_case")?.value ?? null);
       if (!isUuid(caseId)) return json({ error: "אין תיק פעיל." }, 400);
 
       const cur = await service.getCaseState(caseId, owner);
@@ -176,12 +180,20 @@ export async function POST(req: Request): Promise<Response> {
       // אטומי: סימון applied + עדכון עובדות בטרנזקציה אחת. כשל/קונפליקט מגלגל
       // אחורה את שניהם - לא נשאר חילוץ מסומן "הוחל" בלי עדכון. null לא נשלח ולא דורס.
       const res = await service.applyPayslip(caseId, owner, body.uploadId, body.patch, cur.case.factsRevision);
-      if (res.status === "already_applied") return json({ status: "already_applied" });
+      if (res.status === "already_applied") {
+        return json({
+          status: "already_applied", caseId,
+          shouldResume: cur.case.pendingRequest?.kind === "compare",
+        });
+      }
       if (res.status === "conflict") {
         return json({ status: "conflict", message: "הנתונים השתנו בינתיים; רענן/י ונסה/י שוב." }, 409);
       }
       const after = await service.getCaseState(caseId, owner);
-      return json({ status: "applied", facts: after?.facts ?? null });
+      return json({
+        status: "applied", caseId,
+        shouldResume: cur.case.pendingRequest?.kind === "compare",
+      });
     }
 
     if (action === "discard") {

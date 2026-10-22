@@ -16,6 +16,7 @@ import { caseService } from "../../../server/web/service.js";
 import { checkRateLimit } from "../../../server/web/rate-limit.js";
 import { buildComparisonPdfModel } from "../../../server/pdf/comparison-model.js";
 import { renderComparisonPdf } from "../../../server/pdf/comparison-pdf.js";
+import { randomUUID } from "node:crypto";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -91,8 +92,9 @@ export async function GET(req: Request): Promise<Response> {
       },
     });
   } catch (e) {
+    const eid = randomUUID().slice(0, 8);
     const m = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
-    console.error(`[comparison-pdf] failed: ${m.replace(/postgres(ql)?:\/\/\S+/gi, "postgres://***").slice(0, 200)}`);
-    return json({ error: "יצירת המסמך נכשלה. אפשר לנסות שוב בעוד רגע.", kind: "error", canRetry: true }, 500);
+    console.error(`[comparison-pdf] eid=${eid} failed: ${m.replace(/postgres(ql)?:\/\/\S+/gi, "postgres://***").slice(0, 200)}`);
+    return json({ error: "יצירת המסמך נכשלה. אפשר לנסות שוב בעוד רגע.", kind: "error", canRetry: true, errorId: eid }, 500);
   }
 }
