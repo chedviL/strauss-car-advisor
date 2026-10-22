@@ -156,6 +156,15 @@ export function ChatPanel({ initialMessages = [], showExamples = false, comparis
   const cardRefreshedThisTurn = useRef(false);
   const refreshCardAfterTurn = useRef(false);
   const resumePayslip = useRef<{ caseId: string; uploadId: string } | null>(null);
+  const sendPayslipContinuation = useCallback((caseId: string, uploadId: string) => {
+    const marker = `strauss:payslip-confirmed:${uploadId}`;
+    if (sessionStorage.getItem(marker) === "sent") return;
+    sessionStorage.setItem(marker, "sent");
+    void sendMessage(
+      { text: "אישרתי את נתוני התלוש, אפשר להמשיך." },
+      { body: { caseId } },
+    );
+  }, [sendMessage]);
   useEffect(() => {
     // בסיום התור: רק מאפסים את הדגל. אין צורך ב-router.refresh() לתור טקסט רגיל
     // (ההודעות כבר במצב הלקוח דרך useChat) - רענון כזה גרם לקפיצה של כל החלון
@@ -163,18 +172,9 @@ export function ChatPanel({ initialMessages = [], showExamples = false, comparis
     // (ה-effect הבא), שבו הכרטיס המרונדר-בשרת אכן צריך להישלף מחדש.
     if (wasBusy.current && status === "ready") {
       if (resumePayslip.current) {
-        const { caseId: resumeCaseId, uploadId } = resumePayslip.current;
+        const queued = resumePayslip.current;
         resumePayslip.current = null;
-        const marker = `strauss:payslip-resume:${uploadId}`;
-        if (sessionStorage.getItem(marker) !== "sent") {
-          sessionStorage.setItem(marker, "sent");
-          void sendMessage(
-            { text: "הנתונים שאושרו מהתלוש זמינים. המשך/י את הבקשה הקודמת שממתינה בתיק הזה; אל תפתח/י בקשה חדשה." },
-            { body: { caseId: resumeCaseId } },
-          );
-          wasBusy.current = false;
-          return;
-        }
+        sendPayslipContinuation(queued.caseId, queued.uploadId);
       }
       cardRefreshedThisTurn.current = false;
       if (refreshCardAfterTurn.current) {
@@ -183,7 +183,7 @@ export function ChatPanel({ initialMessages = [], showExamples = false, comparis
       }
     }
     wasBusy.current = busy;
-  }, [status, busy]);
+  }, [status, busy, sendPayslipContinuation, router]);
 
   // רענון מיידי של הכרטיס כשמגיע אירוע data-comparison מהשרת (באמצע התור,
   // לפני סיום הניסוח). לא ממתינים ל-status="ready". מונה כדי לרענן פעם אחת לאירוע.
@@ -422,7 +422,7 @@ export function ChatPanel({ initialMessages = [], showExamples = false, comparis
         <form onSubmit={submit} className={`composer-row ${empty ? "is-hero" : ""}`.trim()}>
           {/* צירוף תלוש: העלאה + חילוץ (באישור) + אישור/עריכה + החלה על התיק */}
           <PayslipUpload
-            onApplied={({ caseId: resumeCaseId, uploadId, shouldResume }) => {
+            onApplied={({ caseId: resumeCaseId, uploadId }) => {
               if (resumeCaseId && typeof window !== "undefined") {
                 const url = new URL(window.location.href);
                 if (url.searchParams.get("c") !== resumeCaseId) {
@@ -430,19 +430,9 @@ export function ChatPanel({ initialMessages = [], showExamples = false, comparis
                   window.history.replaceState(null, "", url.toString());
                 }
               }
-              if (resumeCaseId && shouldResume) resumePayslip.current = { caseId: resumeCaseId, uploadId };
-              if (resumeCaseId && shouldResume && status === "ready") {
-                const marker = `strauss:payslip-resume:${uploadId}`;
-                if (sessionStorage.getItem(marker) !== "sent") {
-                  sessionStorage.setItem(marker, "sent");
-                  resumePayslip.current = null;
-                  void sendMessage(
-                    { text: "הנתונים שאושרו מהתלוש זמינים. המשך/י את הבקשה הקודמת שממתינה בתיק הזה; אל תפתח/י בקשה חדשה." },
-                    { body: { caseId: resumeCaseId } },
-                  );
-                }
-              } else if (!shouldResume) {
-                router.refresh();
+              if (resumeCaseId) {
+                if (busy) resumePayslip.current = { caseId: resumeCaseId, uploadId };
+                else sendPayslipContinuation(resumeCaseId, uploadId);
               }
             }}
             caseId={effectiveCaseId ?? null}

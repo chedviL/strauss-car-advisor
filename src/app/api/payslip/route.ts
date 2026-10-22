@@ -181,19 +181,12 @@ export async function POST(req: Request): Promise<Response> {
       // אחורה את שניהם - לא נשאר חילוץ מסומן "הוחל" בלי עדכון. null לא נשלח ולא דורס.
       const res = await service.applyPayslip(caseId, owner, body.uploadId, body.patch, cur.case.factsRevision);
       if (res.status === "already_applied") {
-        return json({
-          status: "already_applied", caseId,
-          shouldResume: cur.case.pendingRequest?.kind === "compare",
-        });
+        return json({ status: "already_applied", caseId });
       }
       if (res.status === "conflict") {
         return json({ status: "conflict", message: "הנתונים השתנו בינתיים; רענן/י ונסה/י שוב." }, 409);
       }
-      const after = await service.getCaseState(caseId, owner);
-      return json({
-        status: "applied", caseId,
-        shouldResume: cur.case.pendingRequest?.kind === "compare",
-      });
+      return json({ status: "applied", caseId });
     }
 
     if (action === "discard") {

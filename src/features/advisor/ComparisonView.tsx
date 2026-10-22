@@ -33,21 +33,44 @@ export function ComparisonView({
   // מבקשים אותו ומורידים. שולחים את מזהה ההשוואה המוצגת, כדי שהשרת יסרב (409) אם
   // בינתיים חושבה אחרת - ולא יורד מסמך שאינו תואם למה שרואים על המסך.
   const [pdfPhase, setPdfPhase] = useState<"idle" | "loading" | "error">("idle");
-  const [pdfError, setPdfError] = useState("");
+  const [pdfError, setPdfError] = useState<{ message: string; blockedUrl?: string } | null>(null);
 
   async function downloadPdf() {
     if (pdfPhase === "loading") return;
     setPdfPhase("loading");
-    setPdfError("");
+    setPdfError(null);
+    const qs = new URLSearchParams({ c: state.case.id, cmp: cmp.id });
+    const downloadUrl = `${window.location.origin}/api/comparison-pdf?${qs.toString()}`;
     try {
-      const qs = new URLSearchParams({ c: state.case.id, cmp: cmp.id });
-      const res = await fetch(`/api/comparison-pdf?${qs.toString()}`);
+      const res = await fetch(downloadUrl);
+      const contentType = res.headers.get("content-type")?.toLowerCase() ?? "";
       if (!res.ok) {
-        const data = (await res.json().catch(() => ({}))) as { error?: string; errorId?: string };
+        const body = await res.clone().text().catch(() => "");
+        const data = (() => { try { return JSON.parse(body) as { error?: string; errorId?: string }; } catch { return {}; } })();
         setPdfPhase("error");
-        setPdfError(data.errorId
-          ? `${data.error ?? "יצירת המסמך נכשלה."} (מזהה תקלה: ${data.errorId})`
-          : data.error ?? "ההורדה נכשלה. אפשר לנסות שוב.");
+        if (/netfree|net-free|נטפרי/i.test(`${res.url} ${body}`)) {
+          setPdfError({
+            message: "הורדת הקובץ נחסמה על ידי נטפרי. אפשר לשלוח את הקישור לבדיקה. ההשוואה שלך נשמרה וניתן לצפות בה באתר.",
+            blockedUrl: downloadUrl,
+          });
+        } else {
+          setPdfError({
+            message: data.errorId
+              ? `${data.error ?? "יצירת המסמך נכשלה."} (מזהה תקלה: ${data.errorId})`
+              : data.error ?? "ההורדה נכשלה. אפשר לנסות שוב.",
+          });
+        }
+        return;
+      }
+      if (!contentType.includes("application/pdf")) {
+        const body = await res.clone().text().catch(() => "");
+        setPdfPhase("error");
+        setPdfError(/netfree|net-free|נטפרי/i.test(`${res.url} ${body}`)
+          ? {
+              message: "הורדת הקובץ נחסמה על ידי נטפרי. אפשר לשלוח את הקישור לבדיקה. ההשוואה שלך נשמרה וניתן לצפות בה באתר.",
+              blockedUrl: downloadUrl,
+            }
+          : { message: "השרת לא החזיר קובץ PDF תקין. ההשוואה נשמרה באתר; אפשר לנסות שוב מאוחר יותר." });
         return;
       }
       // שם הקובץ מהשרת (filename* בקידוד RFC 5987), עם גיבוי אם הכותרת חסרה.
@@ -67,7 +90,10 @@ export function ComparisonView({
       setPdfPhase("idle");
     } catch {
       setPdfPhase("error");
-      setPdfError("שגיאת רשת בהורדה. אפשר לנסות שוב.");
+      setPdfError({
+        message: "ההורדה לא הושלמה. ההשוואה נשמרה באתר; אפשר לנסות שוב או לשלוח את קישור ההורדה לבדיקה.",
+        blockedUrl: downloadUrl,
+      });
     }
   }
   const pdfLoading = pdfPhase === "loading";
@@ -132,7 +158,12 @@ export function ComparisonView({
       </div>
 
       {pdfPhase === "error" && (
-        <div role="alert" className="cmp-pdf-error">{pdfError}</div>
+        <div role="alert" className="cmp-pdf-error">
+          {pdfError?.message}
+          {pdfError?.blockedUrl && (
+            <a href={pdfError.blockedUrl} target="_blank" rel="noopener noreferrer">פתיחת קישור ההורדה לבדיקה</a>
+          )}
+        </div>
       )}
 
       {/* ההפרש - המשמעות + מספר, בשורה אחת קומפקטית */}

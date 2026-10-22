@@ -34,7 +34,7 @@ const fromDisp = (k: string, s: string): number | null => {
   return RATE_KEYS.has(k) ? Math.round((n / 100) * 10000) / 10000 : n;
 };
 
-export function PayslipUpload({ onApplied, caseId: propCaseId }: { onApplied?: (result: { caseId: string | null; uploadId: string; shouldResume: boolean }) => void; caseId?: string | null }) {
+export function PayslipUpload({ onApplied, caseId: propCaseId }: { onApplied?: (result: { caseId: string | null; uploadId: string }) => void; caseId?: string | null }) {
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [phase, setPhase] = useState<Phase>("idle");
@@ -108,11 +108,10 @@ export function PayslipUpload({ onApplied, caseId: propCaseId }: { onApplied?: (
         setMsg(data.status === "already_applied"
           ? "הנתונים כבר הוחלו קודם."
           : "הנתונים הוחלו על התיק. אפשר לשנות כל פרט ולהמשיך בשיחה.");
-        // המשך שיחה נשלח רק אם הבקשה עדיין ממתינה, ולא על אישור חוזר.
-        if (data.status === "applied" || data.status === "already_applied") onApplied?.({
+        // רק החלה חדשה מפעילה הודעת המשך; אישור חוזר נשאר אידמפוטנטי.
+        if (data.status === "applied") onApplied?.({
           caseId: typeof data.caseId === "string" ? data.caseId : activeCid,
           uploadId,
-          shouldResume: data.shouldResume === true,
         });
       } else if (data.status === "conflict") {
         setPhase("error"); setMsg(data.message ?? "הנתונים השתנו בינתיים; רענן/י ונסה/י שוב.");
