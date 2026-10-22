@@ -3,7 +3,7 @@
 // כולל עטיפת AI_RetryError של ה-SDK, מול כשל פענוח רגיל. מוודא שהודעת המכסה
 // לא מיוחסת בטעות לאיכות הקובץ.
 import { describe, it, expect } from "vitest";
-import { isQuotaError, PayslipQuotaError, quotaDetails } from "../../src/server/agent/payslip-extract.js";
+import { isQuotaError, PayslipQuotaError, quotaDetails, isTimeoutError, PayslipTimeoutError } from "../../src/server/agent/payslip-extract.js";
 
 describe("סיווג כשל חילוץ (ללא מודל)", () => {
   it("מזהה 429 לפי statusCode על גבי שרשרת cause", () => {
@@ -57,5 +57,32 @@ describe("חילוץ פרטי מכסה (ללא מודל): metric + זמן המת
     const d = quotaDetails(new Error("boom key=sk-secret-123 quota"));
     expect(d.raw).not.toContain("sk-secret-123");
     expect(d.raw).toContain("key=***");
+  });
+});
+
+describe("PayslipTimeoutError + isTimeoutError (רגרסיה #timeout-fix)", () => {
+  // ראיה: Gemini לוקח 60–110s; maxDuration=60 גרם ל-Vercel להרוג את הפונקציה
+  // ולקוח ראה "שגיאת רשת בחילוץ" (fetch throw) במקום הודעה ברורה.
+  // התיקון: AbortSignal.timeout(105s) + PayslipTimeoutError → 504 ברור.
+  it("isTimeoutError מזהה TimeoutError לפי שם", () => {
+    const e = Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" });
+    expect(isTimeoutError(e)).toBe(true);
+  });
+  it("isTimeoutError מזהה AbortError לפי שם", () => {
+    const e = Object.assign(new Error("The operation was aborted"), { name: "AbortError" });
+    expect(isTimeoutError(e)).toBe(true);
+  });
+  it("isTimeoutError מזהה AbortError מקונן ב-cause", () => {
+    const inner = Object.assign(new Error("aborted"), { name: "AbortError" });
+    const wrapper = Object.assign(new Error("AI SDK wrapped"), { name: "AI_APICallError", cause: inner });
+    expect(isTimeoutError(wrapper)).toBe(true);
+  });
+  it("isTimeoutError אינו מסווג שגיאת 429 כ-timeout", () => {
+    expect(isTimeoutError(Object.assign(new Error("quota"), { statusCode: 429 }))).toBe(false);
+  });
+  it("PayslipTimeoutError הוא שם מובחן לטיפול ב-route", () => {
+    const e = new PayslipTimeoutError();
+    expect(e).toBeInstanceOf(Error);
+    expect(e.name).toBe("PayslipTimeoutError");
   });
 });

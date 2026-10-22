@@ -50,6 +50,15 @@ export async function extractPayslip(bytes: Buffer, mime: AllowedMime): Promise<
     "חלץ/י את שדות השכר מהתלוש המצורף לפי הסכמה בלבד. החזר/י JSON תקין יחיד. " +
     "נתון שאינו מופיע = value:null, confidence:\"low\". אל תוסיף/י שדות שאינם בסכמה.";
 
+  // תקרת זמן לכל קריאה: 105 שניות (פחות מ-maxDuration=120 של ה-route, כך שנחזיר
+  // תשובת JSON מסודרת לפני ש-Vercel הורג את הפונקציה בכוח → "שגיאת רשת" ללקוח).
+  // PAYSLIP_EXTRACT_TIMEOUT_MS מאפשר שינוי בלי deploy (ל-staging / בדיקות).
+  function extractSignal(): AbortSignal {
+    const ms = Number(process.env.PAYSLIP_EXTRACT_TIMEOUT_MS ?? "105000");
+    const t = Number.isFinite(ms) && ms > 0 ? ms : 105_000;
+    return AbortSignal.timeout(t);
+  }
+
   // קריאה בודדת לספק נתון. maxRetries:0 מבטל ניסיונות פנימיים של ה-SDK (לא לשרוף
   // מכסה חינמית). מחזיר את התוצאה + usage (לחישוב עלות בגיבוי Claude).
   async function runOnce(model: import("ai").LanguageModel, extraNudge: string) {
@@ -58,6 +67,7 @@ export async function extractPayslip(bytes: Buffer, mime: AllowedMime): Promise<
       schema: extractionSchema,
       system: SYSTEM,
       maxRetries: 0,
+      abortSignal: extractSignal(),
       messages: [
         { role: "user", content: [{ type: "text", text: userText + extraNudge }, filePart as never] },
       ],
@@ -71,6 +81,7 @@ export async function extractPayslip(bytes: Buffer, mime: AllowedMime): Promise<
   try {
     return (await runOnce(gemini, "")).object;
   } catch (e) {
+    if (isTimeoutError(e)) throw new PayslipTimeoutError();
     if (isQuotaError(e)) {
       // מכסת Gemini נוצלה. גיבוי ל-Claude *רק אם הופעל במפורש* ובכפוף לתקרות.
       if (claudeFallbackEnabled()) {
@@ -82,6 +93,7 @@ export async function extractPayslip(bytes: Buffer, mime: AllowedMime): Promise<
     try {
       return (await runOnce(gemini, " שים/י לב: החזר/י אך ורק אובייקט JSON יחיד ותקין, ללא טקסט נוסף.")).object;
     } catch (e2) {
+      if (isTimeoutError(e2)) throw new PayslipTimeoutError();
       if (isQuotaError(e2)) {
         if (claudeFallbackEnabled()) {
           return await extractWithClaude(bytes, mime, filePart, userText, runOnce, quotaDetails(e2));
@@ -187,6 +199,26 @@ export class PayslipQuotaError extends Error {
     this.name = "PayslipQuotaError";
     this.details = details;
   }
+}
+
+/** שגיאת timeout: הקריאה ל-Gemini לקחה יותר מ-PAYSLIP_EXTRACT_TIMEOUT_MS. ה-route
+ *  ממפה אותה ל-504 עם הנחיה ברורה ("אפשר לנסות שוב") — לא "שגיאת רשת". */
+export class PayslipTimeoutError extends Error {
+  constructor() {
+    super("payslip extraction timed out");
+    this.name = "PayslipTimeoutError";
+  }
+}
+
+/** זיהוי timeout מ-AbortSignal.timeout (שם TimeoutError או AbortError עם reason). */
+export function isTimeoutError(e: unknown): boolean {
+  if (!(e instanceof Error)) return false;
+  if (e.name === "TimeoutError") return true;
+  if (e.name === "AbortError") return true;
+  // ה-SDK עשוי לעטוף AbortError: נבדק לאורך שרשרת ה-cause.
+  const cause = (e as { cause?: unknown }).cause;
+  if (cause instanceof Error && (cause.name === "TimeoutError" || cause.name === "AbortError")) return true;
+  return false;
 }
 
 /** אוסף את הטקסט המלא של שרשרת השגיאה (message + cause + שדות body/data נפוצים). */

@@ -13,13 +13,16 @@ import {
   validatePayslip, storePayslip, readPayslipBytes,
   saveExtraction, discardPayslip, loadPendingExtraction, loadExtractionByUpload,
 } from "../../../server/web/payslip-storage.js";
-import { extractPayslip, PayslipQuotaError, PayslipFallbackUnavailable, type PayslipExtraction } from "../../../server/agent/payslip-extract.js";
+import { extractPayslip, PayslipQuotaError, PayslipFallbackUnavailable, PayslipTimeoutError, type PayslipExtraction } from "../../../server/agent/payslip-extract.js";
 import { checkRateLimit } from "../../../server/web/rate-limit.js";
 import { isUuid } from "../../../domain/ids.js";
 import { InvalidFactsError } from "../../../server/services/facts-validation.js";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+// 120s: Gemini free-tier extraction can take 60–110s (PDF vision, server cold start).
+// The AbortSignal inside extractPayslip fires at 105s (PAYSLIP_EXTRACT_TIMEOUT_MS)
+// so we always return a clean JSON error before Vercel kills the function at 120s.
+export const maxDuration = 120;
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -129,6 +132,15 @@ export async function POST(req: Request): Promise<Response> {
             retryAfterSeconds: d.retryAfterSeconds ?? null,
             canRetry: true,
           }, 429);
+        }
+        if (e instanceof PayslipTimeoutError) {
+          // Gemini לא ענה בזמן. קובץ נשמר — אפשר לנסות שוב.
+          console.warn("[payslip] extraction timed out");
+          return json({
+            error: "החילוץ לקח יותר מדי זמן. אפשר לנסות שוב — לרוב הניסיון הבא מהיר יותר — או להזין ידנית ב״הפרטים שלי״.",
+            kind: "timeout",
+            canRetry: true,
+          }, 504);
         }
         if (e instanceof PayslipFallbackUnavailable) {
           // מכסת Gemini נוצלה וגיבוי Claude אינו זמין (כבוי/תקרת עמודים/תקרת עלות).
