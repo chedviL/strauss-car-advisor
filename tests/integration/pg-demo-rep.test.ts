@@ -77,9 +77,9 @@ run("התנסות כנציג: הרשאות, בידוד, זריעה והתראו�
     (await admin.query("select kind, recipient_user_id from notification_jobs where case_id = $1", [caseId])).rows;
 
   // ---------- הדגל ----------
-  it("הדגל כבוי כברירת מחדל: אין הצטרפות, קריאה או מענה", { timeout: 60000 }, async () => {
+  it("הדגל כבוי כשמוגדר ל-0: אין הצטרפות, קריאה או מענה", { timeout: 60000 }, async () => {
     const saved = process.env[FLAG];
-    delete process.env[FLAG];
+    process.env[FLAG] = "0"; // כיבוי מפורש (ברירת מחדל עכשיו: פעיל)
     try {
       const fresh = uid();
       await expect(enrollInDemo(service, APP!, fresh)).rejects.toBeInstanceOf(DemoDisabledError);

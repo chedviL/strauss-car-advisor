@@ -63,6 +63,12 @@ export function buildContext(state: CaseState): string {
   }
 
   // פניות ותשובות
+  // פניות פתוחות על השתתפות חוסמות שימוש בברירת מחדל ב-compareScenarios.
+  const blockingInquiryScenarioIds = new Set(
+    state.openInquiries
+      .filter((q) => q.status === "open" && q.type === "employee_participation" && q.scenarioId)
+      .map((q) => q.scenarioId!),
+  );
   const inqLines = state.openInquiries.map((q) => {
     if (q.status === "answered") {
       const val = q.answerValue !== null ? `${q.answerValue} ₪` : "(ללא ערך מספרי)";
@@ -70,8 +76,14 @@ export function buildContext(state: CaseState): string {
       const note = q.answerNote ? ` — ${q.answerNote}` : "";
       return `  - [${q.id}] ${q.type}: נענתה ✓ ערך=${val}${eff}${note}. יש לשקול חישוב מחדש אם רלוונטי.`;
     }
-    return `  - [${q.id}] ${q.type}: ממתינה לתשובת נציג. אפשר להמשיך בבירורים אחרים בינתיים.`;
+    const blocking = q.type === "employee_participation" && q.scenarioId
+      ? " ⛔ compareScenarios יחזיר missing_data לתרחיש זה (לא ישתמש בברירת מחדל). חישוב זמני מותר רק אם המשתמש/ת מבקש/ת זאת במפורש."
+      : "";
+    return `  - [${q.id}] ${q.type} (תרחיש: ${q.scenarioId ?? "—"}): ממתינה לתשובת נציג. אפשר להמשיך בבירורים אחרים בינתיים.${blocking}`;
   });
+  const blockingNote = blockingInquiryScenarioIds.size > 0
+    ? `\n⛔ פנייה פתוחה על השתתפות — compareScenarios יחזיר missing_data לתרחישים: ${[...blockingInquiryScenarioIds].join(", ")}. אין לחשב עם ברירת מחדל ללא אישור מפורש.`
+    : "";
 
   // סטטוס זרימת התלוש - כדי שהמודל יידע אם הנתונים כבר אושרו/הוחלו, בלי לקבל
   // את המסמך עצמו שוב. אחרי apply אסור לומר 'לא הגיע תלוש'; לפני apply החילוץ
@@ -102,6 +114,7 @@ export function buildContext(state: CaseState): string {
     cmpLine,
     `## פניות לנציג`,
     ...(inqLines.length > 0 ? inqLines : ["  אין פניות."]),
+    ...(blockingNote ? [blockingNote] : []),
     `## תלוש ובקשה ממתינה`,
     `  ${payslipLine}`,
     `  ${pendLine}`,

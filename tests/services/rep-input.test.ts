@@ -63,14 +63,16 @@ describe("safeReturnPath: רשימת היתרים סגורה (בלי redirect פ
   });
 });
 
-describe("repDemoEnabled: ברירת מחדל כבויה", () => {
-  it("חסר/ריק/ערך לא מוכר = כבוי; 1/true/on = פעיל", () => {
-    expect(repDemoEnabled({})).toBe(false);
-    expect(repDemoEnabled({ REP_DEMO_ACCESS_ENABLED: "" })).toBe(false);
-    expect(repDemoEnabled({ REP_DEMO_ACCESS_ENABLED: "0" })).toBe(false);
-    expect(repDemoEnabled({ REP_DEMO_ACCESS_ENABLED: "yes please" })).toBe(false);
+describe("repDemoEnabled: ברירת מחדל פעיל", () => {
+  it("חסר/ריק/ערך לא מוכר = פעיל; 0/false/off = כבוי", () => {
+    expect(repDemoEnabled({})).toBe(true);
+    expect(repDemoEnabled({ REP_DEMO_ACCESS_ENABLED: "" })).toBe(true);
+    expect(repDemoEnabled({ REP_DEMO_ACCESS_ENABLED: "yes please" })).toBe(true);
     expect(repDemoEnabled({ REP_DEMO_ACCESS_ENABLED: "1" })).toBe(true);
     expect(repDemoEnabled({ REP_DEMO_ACCESS_ENABLED: " TRUE " })).toBe(true);
+    expect(repDemoEnabled({ REP_DEMO_ACCESS_ENABLED: "0" })).toBe(false);
+    expect(repDemoEnabled({ REP_DEMO_ACCESS_ENABLED: "false" })).toBe(false);
+    expect(repDemoEnabled({ REP_DEMO_ACCESS_ENABLED: "off" })).toBe(false);
   });
 });
 

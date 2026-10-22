@@ -76,7 +76,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ c
           )}
 
           {state && state.openInquiries.some((q) => q.status === "answered") && (
-            <InquiryAnswersNotice inquiries={state.openInquiries} />
+            <InquiryAnswersNotice inquiries={state.openInquiries} state={state} />
           )}
 
           {/* כרטיס ההשוואה מוצג בתוך זרימת השיחה, מתחת לתשובת המודל (ראו ChatPanel). */}

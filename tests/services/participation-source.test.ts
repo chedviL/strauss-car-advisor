@@ -48,6 +48,14 @@ describe("מקור ההשתתפות (step 2)", () => {
     expect((r.assumptions ?? []).join(" ")).toContain("השתתפות");
   });
 
+  it("פנייה פתוחה על אותו תרחיש: ברירת מחדל לא משמשת — חוסר נדרש", () => {
+    const s = scenario({ id: "scen-with-inquiry", participation: null });
+    const openIds = new Set(["scen-with-inquiry"]);
+    const r = resolveScenarioInput(facts, s, dataset, openIds);
+    expect(r.status).toBe("missing_data");
+    expect(r.missingFields).toContain("participation");
+  });
+
   it("ההנחה על ברירת המחדל זורמת לתוצאת החישוב (assumptions)", () => {
     const res = computeScenario(facts, scenario({ participation: null }), dataset);
     expect(res.status).toBe("ok");

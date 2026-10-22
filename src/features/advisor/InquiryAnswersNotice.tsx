@@ -1,16 +1,21 @@
 // src/features/advisor/InquiryAnswersNotice.tsx
-// חיווי שקט לעובד/ת: הנציג השיב לפנייה שנפתחה. התוצאה כבר עודכנה (חישוב מחדש
-// בצד השרת); כאן רק מודיעים שהתקבלה תשובה, בעדינות. אין טקסט טכני.
+// חיווי לעובד/ת: הנציג השיב לפנייה. מציג את תשובת הנציג בנפרד מהכרטיס.
+// "ההשוואה עודכנה" מוצג רק כשיש השוואה עדכנית (לא stale) — לא כשהחישוב נכשל.
 import type { InquiryRecord } from "../../domain/contracts/case.js";
+import type { CaseState } from "../../domain/contracts/case.js";
+import { isComparisonStale } from "../../domain/calculation/staleness.js";
 
 const TYPE_LABEL: Record<InquiryRecord["type"], string> = {
   employee_participation: "השתתפות ברכב",
   occupation_eligibility_clarification: "זכאות לפי עיסוק",
 };
 
-export function InquiryAnswersNotice({ inquiries }: { inquiries: InquiryRecord[] }) {
+export function InquiryAnswersNotice({ inquiries, state }: { inquiries: InquiryRecord[]; state?: Pick<CaseState, "case" | "scenarios" | "latestComparison"> }) {
   const answered = inquiries.filter((q) => q.status === "answered");
   if (answered.length === 0) return null;
+
+  // "ההשוואה עודכנה" רק כשיש השוואה עדכנית בפועל (לא stale, לא null).
+  const hasUpdatedComparison = state && state.latestComparison && !isComparisonStale(state);
 
   return (
     <div
@@ -31,7 +36,9 @@ export function InquiryAnswersNotice({ inquiries }: { inquiries: InquiryRecord[]
         </span>
       ))}
       <span style={{ fontSize: "0.72rem", color: "var(--color-muted)" }}>
-        התוצאה המעודכנת מוצגת בכרטיס ההשוואה.
+        {hasUpdatedComparison
+          ? "ההשוואה עודכנה עם הנתון שהתקבל — ראה/י את הכרטיס למטה."
+          : "התשובה נרשמה. כדי לראות את ההשוואה המעודכנת, המשך/י את השיחה."}
       </span>
     </div>
   );

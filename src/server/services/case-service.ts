@@ -40,11 +40,17 @@ export interface ResolveResult {
   assumptions?: string[];
 }
 
-/** מרכיב CompleteInput מעובדות התיק, התרחיש וה-dataset. אין undefined כאפס. */
+/** מרכיב CompleteInput מעובדות התיק, התרחיש וה-dataset. אין undefined כאפס.
+ * openInquiryScenarioIds: אם התרחיש נמצא בסט — אין שימוש בברירת מחדל להשתתפות
+ * (המשתמש/ת בחר/ה להמתין לנציג; חישוב עם ניחוש אינו הסכמה).
+ * openInquiryVehicleCodes: חלופה לזיהוי לפי vehicleCode (לתרחישים זמניים ב-compareScenarios).
+ */
 export function resolveScenarioInput(
   facts: CaseFacts,
   scenario: Scenario,
   dataset: ActiveDataset,
+  openInquiryScenarioIds?: ReadonlySet<string>,
+  openInquiryVehicleCodes?: ReadonlySet<string>,
 ): ResolveResult {
   const missing: string[] = [];
   const assumptions: string[] = [];
@@ -95,15 +101,18 @@ export function resolveScenarioInput(
     // ערך מאומת שנמסר (כולל 0 מפורש).
     participation = scenario.participation;
   } else {
-    // אין ערך שנמסר: אם לקטלוג יש ברירת מחדל מותרת - משתמשים ומתעדים הנחה.
+    // אין ערך שנמסר: אם לקטלוג יש ברירת מחדל מותרת - משתמשים ומתעדים הנחה,
+    // אלא אם קיימת פנייה פתוחה על תרחיש זה (המשתמש/ת בחר/ה להמתין לנציג).
     const v = scenario.vehicleCode ? dataset.vehiclesByCode.get(scenario.vehicleCode) : undefined;
-    if (v && v.defaultParticipation !== null && v.defaultParticipation !== undefined) {
+    const hasOpenInquiry = (openInquiryScenarioIds?.has(scenario.id) ?? false)
+      || (scenario.vehicleCode !== null && (openInquiryVehicleCodes?.has(scenario.vehicleCode) ?? false));
+    if (!hasOpenInquiry && v && v.defaultParticipation !== null && v.defaultParticipation !== undefined) {
       participation = v.defaultParticipation;
       assumptions.push(
         `השתתפות ברכב לא נמסרה; נלקחה ברירת המחדל של הדגם (${v.defaultParticipation} ₪).`,
       );
     } else {
-      // אין ערך ואין ברירת מחדל מותרת - חסר נדרש.
+      // אין ערך, אין ברירת מחדל מותרת, או שיש פנייה פתוחה - חסר נדרש.
       missing.push("participation");
     }
   }
@@ -134,8 +143,10 @@ export function computeScenario(
   facts: CaseFacts,
   scenario: Scenario,
   dataset: ActiveDataset,
+  openInquiryScenarioIds?: ReadonlySet<string>,
+  openInquiryVehicleCodes?: ReadonlySet<string>,
 ): { status: "ok"; result: ScenarioResult } | { status: "missing_data"; missingFields: string[] } {
-  const resolved = resolveScenarioInput(facts, scenario, dataset);
+  const resolved = resolveScenarioInput(facts, scenario, dataset, openInquiryScenarioIds, openInquiryVehicleCodes);
   if (resolved.status !== "ok" || !resolved.input) {
     return { status: "missing_data", missingFields: resolved.missingFields ?? [] };
   }
@@ -335,8 +346,14 @@ export class CaseService {
       const alternative = state.scenarios.find((s) => s.role === "alternative");
       if (!baseline) throw new Error("אין baseline לתיק");
       if (!alternative) return { status: "no_alternative" };
-      const b = computeScenario(state.facts, baseline, dataset);
-      const a = computeScenario(state.facts, alternative, dataset);
+      // פנייות פתוחות: אם יש פנייה פתוחה על תרחיש — אין שימוש בברירת מחדל להשתתפות.
+      const openScenarioIds = new Set(
+        state.openInquiries
+          .filter((q) => q.status === "open" && q.scenarioId)
+          .map((q) => q.scenarioId!),
+      );
+      const b = computeScenario(state.facts, baseline, dataset, openScenarioIds);
+      const a = computeScenario(state.facts, alternative, dataset, openScenarioIds);
       if (b.status !== "ok") return { status: "missing_data", missingFields: b.missingFields };
       if (a.status !== "ok") return { status: "missing_data", missingFields: a.missingFields };
       const netDeltaDisplay = Number(a.result.netDisplay) - Number(b.result.netDisplay);
@@ -748,7 +765,23 @@ export class CaseService {
     const baselineScenario = state.scenarios.find((s) => s.role === "baseline");
     if (!baselineScenario) throw new Error("אין baseline לתיק");
 
-    const baseCalc = computeScenario(state.facts, baselineScenario, dataset);
+    // פניות פתוחות: אם יש פנייה פתוחה על תרחיש — אין שימוש בברירת מחדל להשתתפות.
+    const openScenarioIdsForCompare = new Set(
+      state.openInquiries
+        .filter((q) => q.status === "open" && q.scenarioId)
+        .map((q) => q.scenarioId!),
+    );
+    // vehicleCodes של פניות פתוחות — לזיהוי תרחישים זמניים ב-compareScenarios.
+    const openInquiryVehicleCodes = new Set(
+      state.openInquiries
+        .filter((q) => q.status === "open" && q.scenarioId)
+        .map((q) => {
+          const scen = state.scenarios.find((s) => s.id === q.scenarioId);
+          return scen?.vehicleCode ?? null;
+        })
+        .filter((v): v is string => v !== null),
+    );
+    const baseCalc = computeScenario(state.facts, baselineScenario, dataset, openScenarioIdsForCompare, openInquiryVehicleCodes);
     if (baseCalc.status !== "ok") {
       return { status: "missing_data", missingFields: baseCalc.missingFields, baseline: null, comparisons: [], excluded: [], incomplete: [] };
     }
@@ -827,7 +860,7 @@ export class CaseService {
           continue;
         }
       }
-      const calc = computeScenario(state.facts, scenario, dataset);
+      const calc = computeScenario(state.facts, scenario, dataset, openScenarioIdsForCompare, openInquiryVehicleCodes);
       if (calc.status !== "ok") {
         incomplete.push({ label: cand.label, missingFields: calc.missingFields });
         continue;

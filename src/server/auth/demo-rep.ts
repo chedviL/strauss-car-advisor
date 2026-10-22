@@ -13,10 +13,15 @@ import type { CaseService } from "../services/case-service.js";
 import { ForbiddenError, withIdentity, mapRepRow, applyAnswerAsOwner, type RepInquiryView, type RepAnswerOutcome } from "./staff.js";
 import type { InquiryType } from "../../domain/contracts/case.js";
 
-/** דגל הפעלה. ברירת מחדל (חסר/ריק/כל ערך אחר) = כבוי. נקרא מחדש בכל קריאה. */
+/**
+ * דגל הפעלה. ברירת מחדל: פעיל (לצורך הגשה/הדגמה).
+ * לכיבוי מפורש: REP_DEMO_ACCESS_ENABLED=0 / false / off.
+ * נקרא מחדש בכל קריאה.
+ */
 export function repDemoEnabled(env: Record<string, string | undefined> = process.env): boolean {
   const v = (env.REP_DEMO_ACCESS_ENABLED ?? "").trim().toLowerCase();
-  return v === "1" || v === "true" || v === "on";
+  if (v === "0" || v === "false" || v === "off") return false;
+  return true; // ברירת מחדל: פעיל
 }
 
 /** שגיאת הדגמה כבויה: מוצגת כ"forbidden" (בלי פרטים נוספים). */
