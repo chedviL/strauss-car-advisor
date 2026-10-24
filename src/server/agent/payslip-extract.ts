@@ -27,7 +27,7 @@ const extractionSchema = z.object({
 export type PayslipExtraction = z.infer<typeof extractionSchema>;
 export { getExtractionModelId };
 
-const ROUTE_MAX_MS = 120_000;
+const ROUTE_MAX_MS = 60_000;
 const RESPONSE_MARGIN_MS = 10_000;
 
 const SYSTEM = `את/ה מחלץ/ת נתונים מתלוש שכר ישראלי. החזר/י אך ורק את השדות בסכמה.
@@ -54,16 +54,13 @@ export async function extractPayslip(bytes: Buffer, mime: AllowedMime): Promise<
     "נתון שאינו מופיע = value:null, confidence:\"low\". אל תוסיף/י שדות שאינם בסכמה.";
 
   // תקרת זמן *כוללת* לכל זרימת החילוץ (ניסיון ראשון + ניסיון חוזר יחד):
-  // 105 שניות מרגע תחילת extractPayslip. כך גם אם הניסיון הראשון נכשל בפענוח
-  // (לא ב-timeout) והניסיון החוזר מתחיל, שניהם חולקים את אותו שעון. הסף 105s
-  // נבחר כדי להשאיר ~15s מרווח לשמירת החילוץ ולהחזרת תגובת JSON לפני
-  // מגבלת maxDuration=120 של ה-route.
-  // PAYSLIP_EXTRACT_TIMEOUT_MS מאפשר שינוי בלי deploy (ל-staging / בדיקות).
-  const totalMs = Number(process.env.PAYSLIP_EXTRACT_TIMEOUT_MS ?? "105000");
-  const configuredBudgetMs = Number.isFinite(totalMs) && totalMs > 0 ? totalMs : 105_000;
+  // gemini-flash-lite-latest מהיר (~5-15s). ברירת מחדל 50s — מספיק לשני ניסיונות
+  // עם מרווח, ומשאיר ~70s לגיבוי Claude ולהחזרת תגובה לפני maxDuration=120.
+  // PAYSLIP_EXTRACT_TIMEOUT_MS מאפשר שינוי בלי deploy.
+  const totalMs = Number(process.env.PAYSLIP_EXTRACT_TIMEOUT_MS ?? "50000");
+  const configuredBudgetMs = Number.isFinite(totalMs) && totalMs > 0 ? totalMs : 50_000;
   const budgetMs = Math.min(configuredBudgetMs, ROUTE_MAX_MS - RESPONSE_MARGIN_MS);
-  // תקציב זמן לגיבוי Claude: לפחות CLAUDE_MIN_MS, גם אם Gemini כילה את רוב הזמן.
-  // הגדרה: PAYSLIP_CLAUDE_MIN_TIMEOUT_MS (ברירת מחדל 25s).
+  // תקציב זמן לגיבוי Claude: לפחות CLAUDE_MIN_MS.
   const claudeMinMs = Number(process.env.PAYSLIP_CLAUDE_MIN_TIMEOUT_MS ?? "25000");
   const claudeMin = Number.isFinite(claudeMinMs) && claudeMinMs > 0 ? claudeMinMs : 25_000;
   const extractStart = Date.now();

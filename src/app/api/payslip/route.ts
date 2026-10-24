@@ -19,10 +19,9 @@ import { isUuid } from "../../../domain/ids.js";
 import { InvalidFactsError } from "../../../server/services/facts-validation.js";
 
 export const runtime = "nodejs";
-// 120s: Gemini free-tier extraction can take 60–110s (PDF vision, server cold start).
-// The AbortSignal inside extractPayslip fires at 105s (PAYSLIP_EXTRACT_TIMEOUT_MS)
-// so we always return a clean JSON error before Vercel kills the function at 120s.
-export const maxDuration = 120;
+// 60s: gemini-flash-lite-latest extracts in ~5-15s. Budget: 50s for extraction
+// (2 attempts) + 10s margin for save and response before Vercel's maxDuration.
+export const maxDuration = 60;
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });

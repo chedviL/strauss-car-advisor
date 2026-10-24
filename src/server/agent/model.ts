@@ -10,7 +10,9 @@ import type { LanguageModel } from "ai";
 
 export const DEFAULT_MODEL_ID = "claude-sonnet-5-5";
 // חילוץ מסמכים בלבד: Gemini (ספק Google), מפתחות נפרדים. השיחה נשארת Claude.
-export const DEFAULT_EXTRACTION_MODEL_ID = "gemini-3.8-flash";
+// gemini-flash-lite-latest: alias יציב שמצביע תמיד על הגרסה הזמינה הנוכחית.
+// gemini-3.8-flash נכשל ב-generateObject (מחזיר תגובה ריקה/לא-parseable, ~70s).
+export const DEFAULT_EXTRACTION_MODEL_ID = "gemini-flash-lite-latest";
 
 /** תקרות ניסוי כדי לשמור על תקציב מוערך של עד ~$1 לקבוצת הריצות. */
 export const BUDGET = {

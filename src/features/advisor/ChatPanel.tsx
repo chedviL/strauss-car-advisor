@@ -157,6 +157,8 @@ export function ChatPanel({ initialMessages = [], showExamples = false, comparis
   const refreshCardAfterTurn = useRef(false);
   const resumePayslip = useRef<{ caseId: string; uploadId: string } | null>(null);
   const sendPayslipContinuation = useCallback((caseId: string, uploadId: string) => {
+    // marker per-session: מונע שליחה כפולה בלחיצה כפולה, אבל לא חוסם אחרי רענון.
+    // sessionStorage נמחק בסגירת הלשונית — כך רענון מאפשר שליחה מחדש אם צריך.
     const marker = `strauss:payslip-confirmed:${uploadId}`;
     if (sessionStorage.getItem(marker) === "sent") return;
     sessionStorage.setItem(marker, "sent");
