@@ -102,7 +102,8 @@ export function ChatPanel({ initialMessages = [], showExamples = false, comparis
     if (el) el.scrollTo({ top: el.scrollHeight, behavior });
   }, []);
 
-  // עדכון isAtBottom בגלילה ידנית + כיווץ הכותרת כשגוללים (לפינוי מקום).
+  // מצב התחתית משתנה רק בגלילת המשתמש/גלילה מפורשת, לא כתוצאה משינוי גובה תוכן.
+  // עדכון מצב הגלילה הידנית + כיווץ הכותרת כשגוללים (לפינוי מקום).
   const headerCollapsed = useRef(false);
   const onScroll = useCallback(() => {
     const el = scrollRef.current;
@@ -180,29 +181,28 @@ export function ChatPanel({ initialMessages = [], showExamples = false, comparis
 
   useEffect(() => {
     const element = scrollRef.current;
-    if (!element || typeof ResizeObserver === "undefined") return;
-    const content = Array.from(element.children);
-    if (!content.length) return;
+    if (!element || !hasConversation || typeof ResizeObserver === "undefined") return;
+    const observed = new Set<Element>();
     const observer = new ResizeObserver(() => {
       const distance = element.scrollHeight - element.scrollTop - element.clientHeight;
-      const atBottom = distance < 80;
-      isAtBottom.current = atBottom;
       setShowScrollBtn(distance > 120);
-      if (atBottom) element.scrollTop = element.scrollHeight;
+      if (isAtBottom.current) element.scrollTop = element.scrollHeight;
     });
-    for (const child of content) observer.observe(child);
-    return () => observer.disconnect();
-  }, [messages, comparison, busy]);
-
-  // בזמן כתיבת התשובה (busy) הטקסט נחשף בהדרגה (אפקט הקלדה) ולכן הגובה גדל בלי
-  // ש-messages.length משתנה. מצמידים לתחתית בקצב קבוע כל עוד המשתמש/ת שם/ה.
-  useEffect(() => {
-    if (!busy) return;
-    const t = setInterval(() => {
-      if (isAtBottom.current) scrollToBottom("auto");
-    }, 120);
-    return () => clearInterval(t);
-  }, [busy, scrollToBottom]);
+    const observeChildren = () => {
+      for (const child of Array.from(element.children)) {
+        if (observed.has(child)) continue;
+        observed.add(child);
+        observer.observe(child);
+      }
+    };
+    observeChildren();
+    const mutations = new MutationObserver(observeChildren);
+    mutations.observe(element, { childList: true });
+    return () => {
+      mutations.disconnect();
+      observer.disconnect();
+    };
+  }, [hasConversation]);
 
   const wasBusy = useRef(false);
   const cardRefreshedThisTurn = useRef(false);
