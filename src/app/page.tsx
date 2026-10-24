@@ -8,7 +8,7 @@ import { caseService } from "../server/web/service.js";
 import { ComparisonView } from "../features/advisor/ComparisonView.js";
 import { DemoBadge } from "../features/advisor/DemoBadge.js";
 import { ChatPanel } from "../features/advisor/ChatPanel.js";
-import { InquiryAnswersNotice } from "../features/advisor/InquiryAnswersNotice.js";
+import { buildRepAnswerTimeline } from "../features/advisor/rep-answer-timeline.js";
 import { ConversationSidebar } from "../features/advisor/ConversationSidebar.js";
 import { AppHeader } from "../features/brand/AppHeader.js";
 import { LightTrail } from "../features/brand/LightTrail.js";
@@ -19,7 +19,7 @@ import { isUuid } from "../domain/ids.js";
 // עמוד מאומת פר-משתמש: לעולם לא סטטי (קורא סשן/עוגיות). חובה לבנייה ב-Vercel.
 export const dynamic = "force-dynamic";
 
-export default async function Page({ searchParams }: { searchParams: Promise<{ c?: string }> }) {
+export default async function Page({ searchParams }: { searchParams: Promise<{ c?: string; answer?: string }> }) {
   // הבעלות = המשתמש המאומת. הרשאה נקבעת בשרת; עוגיית strauss_case היא מצביע בלבד.
   const user = await getSessionUser();
   if (!user) redirect("/login");
@@ -33,11 +33,15 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ c
 
   let state: CaseState | null = null;
   let initialMessages: Array<{ id: string; role: string; parts: unknown }> = [];
+  let latestAnswerMessageId: string | null = null;
   if (owner && caseId) {
     state = await caseService().getCaseState(caseId, owner);
     if (state) {
       const stored = await caseService().loadMessages(caseId, owner);
-      initialMessages = stored.map((m) => ({ id: m.clientMessageId ?? m.id, role: m.role, parts: m.content }));
+      const timeline = buildRepAnswerTimeline(stored, state);
+      initialMessages = timeline.messages;
+      const requestedAnswer = (sp?.answer ?? "").trim();
+      if (requestedAnswer) latestAnswerMessageId = timeline.answerMessageIds[requestedAnswer] ?? null;
     }
   }
   const hasComparison = !!(state && state.latestComparison);
@@ -75,10 +79,6 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ c
             </header>
           )}
 
-          {state && state.openInquiries.some((q) => q.status === "answered") && (
-            <InquiryAnswersNotice inquiries={state.openInquiries} state={state} />
-          )}
-
           {/* כרטיס ההשוואה מוצג בתוך זרימת השיחה, מתחת לתשובת המודל (ראו ChatPanel). */}
             {/* רכיב השיחה נשאר יציב בעת הקצאת תיק ראשוני; ChatPanel מסנכרן הודעות
               במעבר בין תיקים בלי לאבד זרם פעיל. */}
@@ -87,6 +87,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ c
             userId={owner}
             caseId={state ? caseId : null}
             initialMessages={initialMessages}
+            initialScrollMessageId={latestAnswerMessageId}
             showExamples={!hasHistory && !hasComparison}
             comparison={hasComparison ? <ComparisonView state={state!} employee={null} vehicleNames={vehicleNames} /> : null}
           />

@@ -148,6 +148,25 @@ describe("מסך נציג: מענה → החלה → חישוב מחדש → ה�
     expect(deltaAfter2).toBe(deltaAfter1);
   });
 
+  it("retry זהה אינו משנה answeredAt או יוצר comparison חדש", async () => {
+    const owner = "visit-rep-retry-stable";
+    const { caseId, inquiryId } = await setupCaseWithAltInquiry(owner);
+    const answer = { value: 600, note: "אושר", effectiveFrom: null };
+    await service.answerAndApplyInquiry(inquiryId, owner, answer);
+    const first = await service.getCaseState(caseId, owner);
+    const answeredAt = first!.openInquiries.find((item) => item.id === inquiryId)!.answeredAt;
+    const comparisonId = first!.latestComparison!.id;
+    const completedAt = first!.latestComparison!.completedAt;
+
+    const retried = await service.answerAndApplyInquiry(inquiryId, owner, answer);
+    const after = await service.getCaseState(caseId, owner);
+
+    expect(retried.recomputed).toBe(true);
+    expect(after!.openInquiries.find((item) => item.id === inquiryId)!.answeredAt).toBe(answeredAt);
+    expect(after!.latestComparison!.id).toBe(comparisonId);
+    expect(after!.latestComparison!.completedAt).toBe(completedAt);
+  });
+
   it("הבהרת זכאות: נרשמת כתשובה אך אינה ערך-החלה ואינה משנה תרחיש", async () => {
     const owner = "visit-rep-elig";
     const state = await service.createDemoCaseFromEmployee(owner, "E-001");

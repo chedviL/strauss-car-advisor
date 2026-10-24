@@ -12,11 +12,13 @@ import remarkGfm from "remark-gfm";
 import { rowStyle, userEnvelopeStyle, assistantEnvelopeStyle } from "./chat-message-layout.js";
 
 export function MessageBubble({
+  id,
   role,
   parts,
   streaming = false,
   animateEntry = false,
 }: {
+  id?: string;
   role: string;
   parts: Array<Record<string, unknown>>;
   streaming?: boolean;
@@ -30,7 +32,7 @@ export function MessageBubble({
   // מעטפת יציבה ומעוגנת לימין (ראו chat-message-layout.ts): תחילת המשפט לא זזה
   // בזמן streaming. המשתמש/ת עם משטח רך (מצומצם לתוכן); היועץ ברוחב מלא ללא מסגרת.
   return (
-    <div dir="rtl" className={`msg-row ${isUser ? "msg-row-user" : "msg-row-assistant"} ${animateEntry ? "msg-row-enter" : ""}`.trim()} style={rowStyle}>
+    <div id={id} dir="rtl" className={`msg-row ${isUser ? "msg-row-user" : "msg-row-assistant"} ${animateEntry ? "msg-row-enter" : ""}`.trim()} style={rowStyle}>
       <div
         dir="rtl"
         className={isUser ? "msg-bubble msg-bubble-user" : "msg-bubble msg-bubble-assistant"}

@@ -8,9 +8,10 @@ export type NotifyKind = "comparison_ready" | "answer_recorded";
 export interface NotifyContent { subject: string; text: string; html: string }
 
 /** קישור לבירור: עובר דרך שער שמחייב התחברות ומאמת בעלות לפני פתיחת התיק. */
-export function caseLink(baseUrl: string, caseId: string): string {
+export function caseLink(baseUrl: string, caseId: string, inquiryId?: string | null): string {
   const base = baseUrl.replace(/\/+$/, "");
-  return `${base}/go/case/${encodeURIComponent(caseId)}`;
+  const path = `${base}/go/case/${encodeURIComponent(caseId)}`;
+  return inquiryId ? `${path}?answer=${encodeURIComponent(inquiryId)}` : path;
 }
 
 const BRAND = "שטראוס · יועץ הרכב";

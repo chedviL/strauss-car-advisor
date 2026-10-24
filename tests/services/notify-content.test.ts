@@ -12,6 +12,11 @@ describe("תוכן התראות מייל", () => {
     expect(link).toBe("https://app.example.com/go/case/11111111-1111-1111-1111-111111111111");
   });
 
+  it("קישור תשובת נציג כולל מזהה inquiry לקפיצה לתשובה, מקודד URL", () => {
+    expect(caseLink("https://app.example.com", "case-id", "inquiry id"))
+      .toBe("https://app.example.com/go/case/case-id?answer=inquiry%20id");
+  });
+
   it("comparison_ready: מודיע על עדכון ההשוואה, עם קישור", () => {
     const c = buildContent("comparison_ready", link);
     expect(c.subject).toContain("ההשוואה");

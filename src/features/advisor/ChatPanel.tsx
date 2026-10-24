@@ -25,6 +25,8 @@ export interface ChatPanelProps {
   showExamples?: boolean;
   /** כרטיס ההשוואה (מרונדר בשרת) - מוצג בתוך זרימת השיחה, מתחת להודעה האחרונה. */
   comparison?: React.ReactNode;
+  /** הודעת תשובת נציג שאליה גוללים פעם אחת לאחר חזרה מקישור המייל. */
+  initialScrollMessageId?: string | null;
   /** המשתמש/ת המאומת/ת - רק לבידוד מצב השאלון בצד הלקוח (לא הרשאה). */
   userId: string;
   /** מזהה הבירור הפעיל מה-URL, או null בשיחה חדשה. */
@@ -43,7 +45,7 @@ const PLACEHOLDER_EXAMPLES = [
   "מה יקרה אם אוותר על הרכב?",
 ];
 
-export function ChatPanel({ initialMessages = [], showExamples = false, comparison = null, userId, caseId = null }: ChatPanelProps) {
+export function ChatPanel({ initialMessages = [], showExamples = false, comparison = null, initialScrollMessageId = null, userId, caseId = null }: ChatPanelProps) {
   const [input, setInput] = useState("");
   const pendingNewTurn = useRef(false);
   const previousComparison = useRef(comparison);
@@ -88,6 +90,7 @@ export function ChatPanel({ initialMessages = [], showExamples = false, comparis
   // את שליטתם. isAtBottom מתעדכן בגלילה; showScrollBtn מציג כפתור "למטה".
   const isAtBottom = useRef(true);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
+  const initialScrollHandled = useRef(false);
   const knownMessageIds = useRef(new Set(initialMessages.map((message) => message.id)));
   const [newMessageIds, setNewMessageIds] = useState<Set<string>>(() => new Set());
 
@@ -160,6 +163,22 @@ export function ChatPanel({ initialMessages = [], showExamples = false, comparis
     scrollToBottom(busy ? "auto" : "smooth");
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages.length, busy]);
+
+  useEffect(() => {
+    if (!initialScrollMessageId || initialScrollHandled.current) return;
+    const target = document.getElementById(initialScrollMessageId);
+    const container = scrollRef.current;
+    if (!target || !container) return;
+    initialScrollHandled.current = true;
+    const containerRect = container.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    container.scrollTop += targetRect.top - containerRect.top - 24;
+    isAtBottom.current = false;
+    setShowScrollBtn(true);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("answer");
+    window.history.replaceState(null, "", url.toString());
+  }, [initialScrollMessageId, messages.length]);
 
   useEffect(() => {
     const added = messages.filter((message) => !knownMessageIds.current.has(message.id));
@@ -411,6 +430,7 @@ export function ChatPanel({ initialMessages = [], showExamples = false, comparis
             {messages.map((m, idx) => (
               <MessageBubble
                 key={m.id}
+                id={m.id}
                 role={m.role}
                 parts={m.parts}
                 streaming={busy && idx === messages.length - 1 && m.role === "assistant"}

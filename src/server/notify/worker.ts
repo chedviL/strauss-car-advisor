@@ -70,7 +70,7 @@ export async function sendOneJob(
   try {
     const email = await lookupEmail(job.recipientUserId);
     if (!email) { await markFailed(workerConn, job.id, "recipient_email_not_found"); return "failed"; }
-    const link = caseLink(baseUrl || "", job.caseId);
+    const link = caseLink(baseUrl || "", job.caseId, job.inquiryId);
     const content = buildContent(job.kind, link);
     const r = await sendMail({ to: email, subject: content.subject, text: content.text, html: content.html });
     if (r.ok) {

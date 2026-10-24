@@ -22,7 +22,14 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ caseId: str
   const state = await caseService().getCaseState(caseId, user.id);
   if (!state) return to("/inquiries"); // לא בבעלות / לא קיים - בלי חשיפה
 
-  const res = to("/?c=" + caseId); // URL מפורש -> רענון ישחזר את הבירור
+  const requestedAnswer = req.nextUrl.searchParams.get("answer");
+  const answeredInquiry = requestedAnswer
+    ? state.openInquiries.find((inquiry) => inquiry.id === requestedAnswer && inquiry.status === "answered")
+    : null;
+  const destination = new URL("/", origin);
+  destination.searchParams.set("c", caseId); // URL מפורש -> רענון ישחזר את הבירור
+  if (answeredInquiry) destination.searchParams.set("answer", answeredInquiry.id);
+  const res = NextResponse.redirect(destination);
   res.cookies.set("strauss_case", caseId, {
     httpOnly: true, sameSite: "lax", path: "/", maxAge: 60 * 60 * 24 * 7,
   });

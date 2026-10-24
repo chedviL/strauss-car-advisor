@@ -3,6 +3,7 @@
 // המנוע נשאר טהור; השירות מרכיב CompleteInput מהעובדות, התרחיש וה-dataset.
 
 import { calculateScenario, InvalidInputError } from "../../domain/calculation/engine.js";
+import { isComparisonStale } from "../../domain/calculation/staleness.js";
 import type {
   CompleteInput,
   ScenarioResult,
@@ -444,13 +445,21 @@ export class CaseService {
     const ctx = all.find((x) => x.inquiry.id === inquiryId);
     if (!ctx) return { status: "not_found" };
 
+    const alreadyAnsweredWithSameValue =
+      ctx.inquiry.status === "answered" &&
+      ctx.inquiry.answerValue === answer.value &&
+      ctx.inquiry.answerNote === answer.note &&
+      ctx.inquiry.effectiveFrom === answer.effectiveFrom;
+
     // 2) בדיקת רלוונטיות לפי גרסת העובדות שבטביעת ההקשר.
     const fpRev = parseFactsRevisionFromFingerprint(ctx.inquiry.contextFingerprint);
     const stale = fpRev !== null && fpRev !== ctx.currentFactsRevision;
 
     // 3) רושמים את התשובה תמיד (תיעוד מה שהנציג מסר). פעולה אידמפוטנטית:
     //    רישום חוזר של אותה תשובה אינו משנה דבר פרט ל-answered_at.
-    const inquiry = await this.repo.answerInquiry(inquiryId, ownerId, answer);
+    const inquiry = alreadyAnsweredWithSameValue
+      ? ctx.inquiry
+      : await this.repo.answerInquiry(inquiryId, ownerId, answer);
 
     // 4) הבהרת זכאות - תיעוד בלבד, אין ערך-החלה.
     if (ctx.inquiry.type !== "employee_participation") {
@@ -484,6 +493,18 @@ export class CaseService {
     if (!state) return { status: "not_found" };
     const scen = state.scenarios.find((s) => s.id === ctx.inquiry.scenarioId);
     if (!scen) return { status: "recorded_not_applied", inquiry, caseId: ctx.caseId, reason: "no_scenario" };
+
+    if (alreadyAnsweredWithSameValue && scen.participation === answer.value) {
+      const comparison = state.latestComparison;
+      const snapshot = comparison?.inputSnapshot as Record<string, { id?: unknown; participation?: unknown }> | undefined;
+      const answeredScenario = snapshot?.[scen.role];
+      const comparisonMatchesAnswer = !!comparison &&
+        !isComparisonStale(state) &&
+        comparison.completedAt >= (inquiry.answeredAt ?? "") &&
+        comparison[scen.role === "baseline" ? "baselineScenarioId" : "alternativeScenarioId"] === scen.id &&
+        answeredScenario?.id === scen.id && answeredScenario.participation === answer.value;
+      if (comparisonMatchesAnswer) return { status: "applied", inquiry, caseId: ctx.caseId, recomputed: true };
+    }
 
     if (scen.participation !== answer.value) {
       if (scen.role === "baseline") {
