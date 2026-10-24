@@ -5,6 +5,7 @@
 // שום דבר לא מוחל על התיק בלי אישור מפורש. נתון חסר (null) אינו אפס.
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 
 type Field = { value: number | null; confidence: "high" | "low" };
@@ -37,6 +38,10 @@ const fromDisp = (k: string, s: string): number | null => {
 export function PayslipUpload({ onApplied, caseId: propCaseId }: { onApplied?: (result: { caseId: string | null; uploadId: string }) => void; caseId?: string | null }) {
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const openerRef = useRef<HTMLButtonElement | null>(null);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const busyRef = useRef(false);
+  const resetRef = useRef<() => void>(() => {});
   const [phase, setPhase] = useState<Phase>("idle");
   const [msg, setMsg] = useState<string>("");
   const [uploadId, setUploadId] = useState<string | null>(null);
@@ -172,6 +177,53 @@ export function PayslipUpload({ onApplied, caseId: propCaseId }: { onApplied?: (
   }
 
   const busy = phase === "uploading" || phase === "extracting" || phase === "applying";
+  const dialogOpen = phase !== "idle";
+  busyRef.current = busy;
+  resetRef.current = () => { if (!busyRef.current) void reset(); };
+
+  useEffect(() => {
+    if (!dialogOpen) return;
+    const root = dialogRef.current;
+    if (!root) return;
+    const inerted: HTMLElement[] = [];
+    const previousOverflow = document.body.style.overflow;
+    for (const child of Array.from(document.body.children)) {
+      if (child === root.parentElement || !(child instanceof HTMLElement) || child.tagName === "SCRIPT") continue;
+      if (!child.inert) { child.inert = true; inerted.push(child); }
+    }
+    document.body.style.overflow = "hidden";
+    const focusable = () => Array.from(root.querySelectorAll<HTMLElement>(
+      'button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])',
+    )).filter((el) => el.offsetParent !== null);
+    const first = focusable()[0];
+    (first ?? root).focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        resetRef.current();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const items = focusable();
+      if (!items.length) { event.preventDefault(); root.focus(); return; }
+      const firstItem = items[0]!;
+      const lastItem = items[items.length - 1]!;
+      if (event.shiftKey && document.activeElement === firstItem) { event.preventDefault(); lastItem.focus(); }
+      else if (!event.shiftKey && document.activeElement === lastItem) { event.preventDefault(); firstItem.focus(); }
+      else if (!root.contains(document.activeElement)) { event.preventDefault(); firstItem.focus(); }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      for (const child of inerted) child.inert = false;
+      document.body.style.overflow = previousOverflow;
+      requestAnimationFrame(() => openerRef.current?.focus());
+    };
+  }, [dialogOpen]);
+
+  useEffect(() => {
+    if (phase === "review") dialogRef.current?.querySelector<HTMLInputElement>('input[type="number"]')?.focus();
+  }, [phase]);
 
   return (
     <>
@@ -180,6 +232,7 @@ export function PayslipUpload({ onApplied, caseId: propCaseId }: { onApplied?: (
         hidden onChange={(e) => pick(e.target.files)}
       />
       <button
+        ref={openerRef}
         type="button" className="icon-btn has-tip" aria-label="העלאת תלוש (PDF או תמונה)"
         disabled={busy}
         onClick={() => fileRef.current?.click()}
@@ -194,10 +247,15 @@ export function PayslipUpload({ onApplied, caseId: propCaseId }: { onApplied?: (
         <span className="ui-tip" aria-hidden="true">העלאת תלוש (PDF או תמונה)</span>
       </button>
 
-      {phase !== "idle" && (
-        <div role="dialog" aria-label="העלאת תלוש" style={overlayStyle} onClick={(e) => { if (e.target === e.currentTarget && !busy) reset(); }}>
+      {dialogOpen && typeof document !== "undefined" && createPortal(
+        <div className="payslip-overlay" onClick={(e) => { if (e.target === e.currentTarget && !busy) void reset(); }}>
           <div
+            ref={dialogRef}
             className="card anim-card"
+            role="dialog"
+            aria-modal="true"
+            aria-label="העלאת תלוש"
+            tabIndex={-1}
             style={panelStyle}
             // החלון מרונדר בתוך <form> של הצ'אט: Enter בשדה מספר היה שולח את הודעת הצ'אט שבתיבה.
             onKeyDown={(e) => { if (e.key === "Enter" && (e.target as HTMLElement).tagName === "INPUT") e.preventDefault(); }}
@@ -272,18 +330,15 @@ export function PayslipUpload({ onApplied, caseId: propCaseId }: { onApplied?: (
               </div>
             )}
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </>
   );
 }
 
-const overlayStyle: React.CSSProperties = {
-  position: "fixed", inset: 0, background: "rgba(34,29,24,0.32)", zIndex: 60,
-  display: "flex", alignItems: "center", justifyContent: "center", padding: "var(--space-4)",
-};
 const panelStyle: React.CSSProperties = {
-  width: "min(520px, 96vw)", maxHeight: "86vh", overflowY: "auto", padding: "var(--space-4)",
+  width: "min(520px, 96vw)", maxHeight: "86dvh", overflowY: "auto", padding: "var(--space-4)",
 };
 
 function PaperclipIcon() {

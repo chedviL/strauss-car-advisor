@@ -347,6 +347,14 @@ html.vm-open, html.vm-open body { overflow: hidden; }
   .vm-root.is-closing .vm-panel, .vm-root.is-closing .vm-backdrop { animation: none !important; }
   .vm-progress-bar i, .vm-choice, .vm-choice-mark, .vm-chip, .vm-invite { transition: none !important; }
 }
+html[data-a11y-stopmotion] .vm-backdrop,
+html[data-a11y-stopmotion] .vm-panel,
+html[data-a11y-stopmotion] .vm-view,
+html[data-a11y-stopmotion] .vm-root.is-closing .vm-panel,
+html[data-a11y-stopmotion] .vm-root.is-closing .vm-backdrop {
+  animation: none !important;
+  transition: none !important;
+}
 
 /* ───────── ניגודיות גבוהה (מצב נגישות קיים; התפריט עצמו לא משתנה) ───────── */
 html[data-a11y-contrast] .vm-panel,

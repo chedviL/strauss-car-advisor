@@ -7,7 +7,7 @@
 // (מאמת בעלות, מגדיר cookie, ומפנה ל-/?c=). "שיחה חדשה" -> startNewInquiry.
 // אין כאן לוגיקה עסקית - ניווט בלבד.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { continueInquiry, clearActiveInquiry, deleteInquiry } from "../../app/inquiry-actions.js";
 import { clearNewScopeState } from "./vehicle-match/match-state.js";
@@ -36,7 +36,44 @@ export function ConversationSidebar({
 }) {
   const [open, setOpen] = useState(false); // מצב מגירת הנייד
   const [mounted, setMounted] = useState(false); // ל-portal (זמין רק בצד הלקוח)
+  const openerRef = useRef<HTMLButtonElement | null>(null);
+  const drawerRootRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => setMounted(true), []);
+
+  useEffect(() => {
+    if (!open || !mounted) return;
+    const root = drawerRootRef.current;
+    if (!root) return;
+    const inerted: HTMLElement[] = [];
+    const previousOverflow = document.body.style.overflow;
+    for (const child of Array.from(document.body.children)) {
+      if (child === root || !(child instanceof HTMLElement) || child.tagName === "SCRIPT") continue;
+      if (!child.inert) { child.inert = true; inerted.push(child); }
+    }
+    document.body.style.overflow = "hidden";
+    const focusable = () => Array.from(root.querySelectorAll<HTMLElement>(
+      'button:not(:disabled), a[href], input:not(:disabled), [tabindex]:not([tabindex="-1"])',
+    )).filter((el) => el.offsetParent !== null);
+    focusable()[0]?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); setOpen(false); return; }
+      if (event.key !== "Tab") return;
+      const items = focusable();
+      if (!items.length) { event.preventDefault(); return; }
+      const first = items[0]!;
+      const last = items[items.length - 1]!;
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+      else if (!root.contains(document.activeElement)) { event.preventDefault(); first.focus(); }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      for (const child of inerted) child.inert = false;
+      document.body.style.overflow = previousOverflow;
+      requestAnimationFrame(() => openerRef.current?.focus());
+    };
+  }, [open, mounted]);
 
   // סוגרים את המגירה רק אחרי שאירוע ה-submit כבר נשלח. סגירה סינכרונית ב-onClick
   // מסירה את ה-<form> מה-DOM לפני שהדפדפן מבצע את השליחה, ולכן ה-server action
@@ -112,6 +149,7 @@ export function ConversationSidebar({
     <>
       {/* כפתור פתיחת מגירת ההיסטוריה (תמיד; הסרגל נסתר כברירת מחדל). */}
       <button
+        ref={openerRef}
         type="button"
         className="sidebar-toggle"
         aria-label="היסטוריית שיחות"
@@ -123,11 +161,12 @@ export function ConversationSidebar({
       {/* המגירה מרונדרת דרך portal ל-body כדי לצאת מה-stacking context של הכותרת,
           אחרת היא נפתחת מאחורי כרטיס הצ'אט. */}
       {open && mounted && createPortal(
-        <div className="sidebar-backdrop drawer-backdrop" onClick={() => setOpen(false)}>
+        <div ref={drawerRootRef} className="sidebar-backdrop drawer-backdrop" onClick={(e) => { if (e.target === e.currentTarget) setOpen(false); }}>
           <aside
             className="sidebar sidebar-mobile drawer-panel"
             onClick={(e) => e.stopPropagation()}
             role="dialog"
+            aria-modal="true"
             aria-label="היסטוריית בירורים"
           >
             <div className="sidebar-mobile-head">

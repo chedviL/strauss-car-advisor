@@ -15,10 +15,12 @@ export function MessageBubble({
   role,
   parts,
   streaming = false,
+  animateEntry = false,
 }: {
   role: string;
   parts: Array<Record<string, unknown>>;
   streaming?: boolean;
+  animateEntry?: boolean;
 }) {
   const isUser = role === "user";
   const textParts = parts.filter((p) => p.type === "text").map((p) => p.text as string);
@@ -31,7 +33,7 @@ export function MessageBubble({
   // מעטפת יציבה ומעוגנת לימין (ראו chat-message-layout.ts): תחילת המשפט לא זזה
   // בזמן streaming. המשתמש/ת עם משטח רך (מצומצם לתוכן); היועץ ברוחב מלא ללא מסגרת.
   return (
-    <div dir="rtl" className={`msg-row ${isUser ? "msg-row-user" : "msg-row-assistant"}`} style={rowStyle}>
+    <div dir="rtl" className={`msg-row ${isUser ? "msg-row-user" : "msg-row-assistant"} ${animateEntry ? "msg-row-enter" : ""}`.trim()} style={rowStyle}>
       <div
         dir="rtl"
         className={isUser ? "msg-bubble msg-bubble-user" : "msg-bubble msg-bubble-assistant"}

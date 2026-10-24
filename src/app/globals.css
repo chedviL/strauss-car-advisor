@@ -67,6 +67,10 @@
   /* מעברים קצרים */
   --t-fast: 120ms;
   --t-med: 200ms;
+  --t-control: 160ms;
+  --t-enter: 240ms;
+  --t-drawer: 320ms;
+  --ease-motion: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 * { box-sizing: border-box; }
@@ -100,8 +104,8 @@ a { color: var(--color-primary); text-underline-offset: 3px; }
   border-radius: var(--radius-pill);
   padding: var(--space-2) var(--space-4);
   cursor: pointer;
-  transition: background-color var(--t-fast) ease, border-color var(--t-fast) ease,
-              box-shadow var(--t-fast) ease, transform var(--t-fast) ease;
+  transition: background-color var(--t-control) ease, border-color var(--t-control) ease,
+              box-shadow var(--t-control) ease, transform var(--t-control) ease;
 }
 .btn:hover:not(:disabled) { background: var(--color-surface-2); border-color: var(--color-primary); }
 .btn:active:not(:disabled) { transform: translateY(1px); }
@@ -204,12 +208,30 @@ input::placeholder, textarea::placeholder { color: var(--color-muted); opacity: 
 /* מגירה: החלקה קצרה מצד ההתחלה (ימין ב-RTL) + עמעום רקע */
 @keyframes drawerIn { from { transform: translateX(-100%); } to { transform: none; } }
 @keyframes backdropIn { from { opacity: 0; } to { opacity: 1; } }
-.drawer-panel { animation: drawerIn var(--t-med) cubic-bezier(0.22, 1, 0.36, 1) both; }
-.drawer-backdrop { animation: backdropIn var(--t-med) ease both; }
+.drawer-panel { animation: drawerIn var(--t-drawer) var(--ease-motion) both; }
+.drawer-backdrop { animation: backdropIn var(--t-enter) ease both; }
 
 /* מעברים עדינים (מופעלים רק כשאין העדפת תנועה מופחתת) */
 @keyframes fadeInUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 .anim-card { animation: fadeInUp var(--t-med) ease both; }
+
+@keyframes payslipPanelIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+.payslip-overlay {
+  position: fixed; inset: 0; z-index: 60;
+  display: flex; align-items: center; justify-content: center;
+  padding: max(var(--space-3), env(safe-area-inset-top)) var(--space-3) max(var(--space-3), env(safe-area-inset-bottom));
+  background: rgba(34, 29, 24, 0.32);
+  animation: backdropIn var(--t-enter) ease both;
+}
+.payslip-overlay > .card {
+  animation: payslipPanelIn var(--t-enter) var(--ease-motion) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .payslip-overlay, .payslip-overlay > .card { animation: none !important; }
+}
 
 /* גלילה עדינה */
 .scroll-y { overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--color-border-strong) transparent; }
@@ -664,11 +686,11 @@ body.chat-scrolled .app-brand-sub { opacity: 0; max-width: 0; padding-inline-sta
 
 /* ─── כרטיס השוואה קומפקטי (המשך לשיחה, מעל תשובת המודל) ─── */
 /* כניסה מדורגת ורכה (לא "בום"): הכרטיס נכנס, ואז הרכיבים בתוכו בזה אחר זה. */
-@keyframes cmpCardIn { from { opacity: 0; transform: translateY(10px) scale(0.985); } to { opacity: 1; transform: none; } }
-@keyframes cmpRise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
-@keyframes cmpNumIn { 0% { opacity: 0; transform: scale(0.8); } 60% { transform: scale(1.04); } 100% { opacity: 1; transform: scale(1); } }
+@keyframes cmpCardIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
-.cmp-inline { animation: cmpCardIn 520ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+.cmp-inline { animation: cmpCardIn var(--t-enter) var(--ease-motion) both; }
+@keyframes cmpUpdated { 50% { box-shadow: 0 0 0 2px var(--brand-teal-soft); } }
+.cmp-inline.is-updated { animation: cmpUpdated 520ms ease-out both; }
 .cmp-card {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
@@ -676,17 +698,7 @@ body.chat-scrolled .app-brand-sub { opacity: 0; max-width: 0; padding-inline-sta
   padding: var(--space-3);
   display: flex; flex-direction: column; gap: var(--space-3);
 }
-/* רכיבי הכרטיס נכנסים בהשהיות עוקבות (stagger) לתחושת "הגעה". */
-.cmp-card .cmp-top    { animation: cmpRise 420ms ease both; animation-delay: 120ms; }
-.cmp-card .cmp-delta  { animation: cmpRise 460ms ease both; animation-delay: 220ms; }
-.cmp-card .cmp-delta-num { display: inline-block; animation: cmpNumIn 520ms cubic-bezier(0.22,1,0.36,1) both; animation-delay: 340ms; }
-.cmp-card .cmp-tiles  { animation: cmpRise 460ms ease both; animation-delay: 420ms; }
-/* ההשהיה על ה-tile עצמו (לא על ה-inner) כדי לא להתנגש בטרנספורם ה-flip. */
-.cmp-card .cmp-tile:nth-child(1) { animation: cmpRise 420ms ease both; animation-delay: 500ms; }
-.cmp-card .cmp-tile:nth-child(2) { animation: cmpRise 420ms ease both; animation-delay: 600ms; }
-/* z-index: אנימציית cmpRise (fill-mode both) יוצרת stacking context לכל אחד מילדי הכרטיס,
-   והם מצוירים לפי סדר ה-DOM. בלי z-index, בועת ההסבר של כפתור ה-PDF (שנפתחת מתחת לכפתור
-   וחופפת את שורת ההפרש והאריחים) נשארת בתוך ה-context של .cmp-top ומוסתרת מאחוריהם. */
+/* תוכן הכרטיס והמספרים נשארים יציבים; רק המעטפת מופיעה פעם אחת. */
 .cmp-top { position: relative; z-index: 5; display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
 .cmp-top-actions { display: inline-flex; align-items: center; gap: var(--space-1); }
 
@@ -769,16 +781,19 @@ body.chat-scrolled .app-brand-sub { opacity: 0; max-width: 0; padding-inline-sta
 .cmp-tile-row span:last-child { color: var(--color-text); }
 
 @media (prefers-reduced-motion: reduce) {
-  .cmp-inline, .cmp-card .cmp-top, .cmp-card .cmp-delta, .cmp-card .cmp-delta-num,
-  .cmp-card .cmp-tiles, .cmp-card .cmp-tile { animation: none !important; }
+  .cmp-inline, .cmp-inline.is-updated { animation: none !important; }
   .cmp-tile-inner { transition: none; }
 }
+html[data-a11y-stopmotion] .cmp-inline,
+html[data-a11y-stopmotion] .cmp-inline.is-updated {
+  animation: none !important;
+  transition: none !important;
+}
 
-/* הופעת הודעה רכה וחד-פעמית (לא בכל רינדור של streaming - React שומר על אותו
-   אלמנט לפי key, ולכן האנימציה רצה פעם אחת בכניסת ההודעה). */
-.msg-row { animation: msgIn 260ms ease both; }
+/* הופעת הודעה חדשה בלבד; היסטוריה משוחזרת ו-streaming נשארים יציבים. */
+.msg-row-enter { animation: msgIn var(--t-enter) var(--ease-motion) both; }
 @keyframes msgIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-@media (prefers-reduced-motion: reduce) { .msg-row { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .msg-row-enter { animation: none; } }
 
 /* ─── בועת הודעה: משתמש (משטח רך) מול יועץ (רוחב מלא, שקוף) ─── */
 .msg-bubble {
@@ -1354,12 +1369,14 @@ body.chat-locked .convo-hero {
 .login-entrance-group { opacity: 1; } /* ברירת מחדל: גלוי */
 .login-shell.is-entering .login-entrance-group {
   opacity: 0;
-  animation: loginGroupIn 620ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  animation: loginGroupIn var(--t-enter) var(--ease-motion) both;
   animation-delay: var(--enter-delay, 0ms);
 }
+/* שדות הכניסה זמינים מיד; רק המיתוג והכותרת מקבלים הופעה עדינה. */
+.login-shell.is-entering .login-form { opacity: 1; animation: none; }
 /* האיור נחשף בעמעום עדין, בלי הגדלה (שומר חיתוך). */
 .login-shell.is-entering .car-visual {
-  animation: loginVisualFade 800ms ease both;
+  animation: loginVisualFade 400ms ease both;
 }
 
 /* נצנוץ עדין חד-פעמי שעובר על הלוגו בכניסה (דקורטיבי, לא חוזר). */
@@ -1377,13 +1394,13 @@ body.chat-locked .convo-hero {
   pointer-events: none;
   background: linear-gradient(100deg, transparent, rgba(255,255,255,0.55), transparent);
   transform: translateX(-120%);
-  animation: brandShimmer 1100ms ease 500ms both;
+  animation: brandShimmer 700ms ease 180ms both;
 }
 
 /* מצבי כפתור גרפיט: hover צל עדין, לחיצה scale(0.98), מושבת ללא אפקט לחיצה. */
-.btn-graphite { transition: background-color var(--t-fast) ease, box-shadow var(--t-med) ease, transform 90ms ease; }
+.btn-graphite { transition: background-color var(--t-control) ease, box-shadow var(--t-med) ease, transform var(--t-control) ease; }
 .btn-graphite:not(:disabled):hover { box-shadow: 0 6px 18px rgba(34,29,24,0.18); }
-.btn-graphite:not(:disabled):active { transform: scale(0.98); }
+.btn-graphite:not(:disabled):active { transform: translateY(1px); }
 .btn-graphite:disabled { box-shadow: none; }
 
 /* ספינר קטן בתוך הכפתור. */
@@ -1403,7 +1420,7 @@ body.chat-locked .convo-hero {
 .login-form-swap { position: relative; }
 @keyframes formStepInFwd { from { opacity: 0; transform: translateX(14px); } to { opacity: 1; transform: none; } }
 @keyframes formStepInBack { from { opacity: 0; transform: translateX(-14px); } to { opacity: 1; transform: none; } }
-.login-form-step { animation: formStepInFwd 320ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+.login-form-step { animation: formStepInFwd var(--t-enter) var(--ease-motion) both; }
 .login-form-swap.to-back .login-form-step { animation-name: formStepInBack; }
 
 /* ─── שדה מייל: floating label + אייקון ─── */
@@ -1620,6 +1637,12 @@ body.chat-locked .convo-hero {
   .login-entrance-group { opacity: 1 !important; transform: none !important; }
   .otp-error { animation: none !important; }      /* בלי רעד */
   .otp-cell.is-filled { animation: none !important; }  /* בלי פופ */
+}
+
+html[data-a11y-stopmotion] .payslip-overlay,
+html[data-a11y-stopmotion] .payslip-overlay > .card {
+  animation: none !important;
+  transition: none !important;
 }
 
 /* ═══════════════════════════════════════════════════════════

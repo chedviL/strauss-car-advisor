@@ -52,6 +52,14 @@ export function LoginForm({
     try { setSim(new URLSearchParams(window.location.search).get("sim") === "1"); } catch { /* noop */ }
   }, []);
 
+  useEffect(() => {
+    if (step !== "code") return;
+    const frame = requestAnimationFrame(() => {
+      document.querySelector<HTMLInputElement>('[aria-label="ספרה 1 מתוך 8"]')?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [step]);
+
   // busy = בזמן בקשת שרת. מדווח להורה (מגביר מעט פולסים באיור).
   useEffect(() => { onBusy?.(pending); }, [pending, onBusy]);
 

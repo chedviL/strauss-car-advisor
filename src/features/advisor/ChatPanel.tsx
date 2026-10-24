@@ -45,6 +45,9 @@ const PLACEHOLDER_EXAMPLES = [
 
 export function ChatPanel({ initialMessages = [], showExamples = false, comparison = null, userId, caseId = null }: ChatPanelProps) {
   const [input, setInput] = useState("");
+  const pendingNewTurn = useRef(false);
+  const previousComparison = useRef(comparison);
+  const [comparisonUpdated, setComparisonUpdated] = useState(false);
   // "איזה רכב מתאים לי?": מגירה, פתיחה מפורשת בלבד. הפעולה אינה שולחת הודעה ואינה נוגעת בתיק.
   const [matchOpen, setMatchOpen] = useState(false);
   const matchOpenerRef = useRef<HTMLElement | null>(null);
@@ -52,6 +55,13 @@ export function ChatPanel({ initialMessages = [], showExamples = false, comparis
   // (מסך אחר) - נופלים לשורה מעל תיבת ההקלדה. undefined = טרם נבדק (לא מציירים כפתור).
   const [launcherSlot, setLauncherSlot] = useState<HTMLElement | null | undefined>(undefined);
   useEffect(() => { setLauncherSlot(document.getElementById("vm-launcher-slot")); }, []);
+  useEffect(() => {
+    if (previousComparison.current === comparison) return;
+    previousComparison.current = comparison;
+    setComparisonUpdated(true);
+    const timer = window.setTimeout(() => setComparisonUpdated(false), 520);
+    return () => window.clearTimeout(timer);
+  }, [comparison]);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const [draftAsk, setDraftAsk] = useState<{ draft: string; proposed: string } | null>(null);
   const [replacedDraft, setReplacedDraft] = useState<string | null>(null);
@@ -78,6 +88,14 @@ export function ChatPanel({ initialMessages = [], showExamples = false, comparis
   // את שליטתם. isAtBottom מתעדכן בגלילה; showScrollBtn מציג כפתור "למטה".
   const isAtBottom = useRef(true);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
+  const knownMessageIds = useRef(new Set(initialMessages.map((message) => message.id)));
+  const [newMessageIds, setNewMessageIds] = useState<Set<string>>(() => new Set());
+
+  useEffect(() => {
+    pendingNewTurn.current = false;
+    knownMessageIds.current = new Set(initialMessages.map((message) => message.id));
+    setNewMessageIds(new Set());
+  }, [caseId, initialMessages]);
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
     const el = scrollRef.current;
@@ -142,6 +160,40 @@ export function ChatPanel({ initialMessages = [], showExamples = false, comparis
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages.length, busy]);
 
+  useEffect(() => {
+    const added = messages.filter((message) => !knownMessageIds.current.has(message.id));
+    if (!added.length) return;
+    for (const message of added) knownMessageIds.current.add(message.id);
+    if (pendingNewTurn.current) {
+      const addedIds = added.map((message) => message.id);
+      setNewMessageIds((current) => new Set([...current, ...addedIds]));
+      window.setTimeout(() => {
+        setNewMessageIds((current) => {
+          const next = new Set(current);
+          for (const id of addedIds) next.delete(id);
+          return next;
+        });
+      }, 300);
+    }
+    if (isAtBottom.current) requestAnimationFrame(() => scrollToBottom("auto"));
+  }, [messages, scrollToBottom]);
+
+  useEffect(() => {
+    const element = scrollRef.current;
+    if (!element || typeof ResizeObserver === "undefined") return;
+    const content = Array.from(element.children);
+    if (!content.length) return;
+    const observer = new ResizeObserver(() => {
+      const distance = element.scrollHeight - element.scrollTop - element.clientHeight;
+      const atBottom = distance < 80;
+      isAtBottom.current = atBottom;
+      setShowScrollBtn(distance > 120);
+      if (atBottom) element.scrollTop = element.scrollHeight;
+    });
+    for (const child of content) observer.observe(child);
+    return () => observer.disconnect();
+  }, [messages, comparison, busy]);
+
   // בזמן כתיבת התשובה (busy) הטקסט נחשף בהדרגה (אפקט הקלדה) ולכן הגובה גדל בלי
   // ש-messages.length משתנה. מצמידים לתחתית בקצב קבוע כל עוד המשתמש/ת שם/ה.
   useEffect(() => {
@@ -173,6 +225,7 @@ export function ChatPanel({ initialMessages = [], showExamples = false, comparis
     // בגלל רינדור-שרת מחדש. רענון השרת מתבצע רק כשמגיע אירוע השוואה אמיתי
     // (ה-effect הבא), שבו הכרטיס המרונדר-בשרת אכן צריך להישלף מחדש.
     if (wasBusy.current && status === "ready") {
+      pendingNewTurn.current = false;
       if (resumePayslip.current) {
         const queued = resumePayslip.current;
         resumePayslip.current = null;
@@ -312,6 +365,7 @@ export function ChatPanel({ initialMessages = [], showExamples = false, comparis
   function sendText(text: string) {
     const clean = text.trim();
     if (!clean || busy) return;
+    pendingNewTurn.current = true;
     lastSentText.current = clean;
     void sendMessage({ text: clean });
   }
@@ -319,8 +373,8 @@ export function ChatPanel({ initialMessages = [], showExamples = false, comparis
     e.preventDefault();
     const text = input.trim();
     if (!text || busy) return;
-    setInput("");
     sendText(text);
+    setInput("");
   }
   function retrySave() {
     if (lastSentText.current) sendText(lastSentText.current);
@@ -360,13 +414,14 @@ export function ChatPanel({ initialMessages = [], showExamples = false, comparis
                 role={m.role}
                 parts={m.parts}
                 streaming={busy && idx === messages.length - 1 && m.role === "assistant"}
+                animateEntry={newMessageIds.has(m.id)}
               />
             ))}
             {/* TypingHint עם aria-live="polite" ממוקד רק על חיווי ה-"חשיבה".
                 מוסתר ברגע שהיועץ התחיל לכתוב טקסט. */}
             {showTyping && <TypingHint label={busyLabel} />}
             {/* כרטיס ההשוואה מגיע אחרי תשובת היועץ */}
-            {comparison && !busy && <div className="cmp-inline">{comparison}</div>}
+            {comparison && !busy && <div className={`cmp-inline ${comparisonUpdated ? "is-updated" : ""}`.trim()}>{comparison}</div>}
             {!busy && savePhase === "retrying" && (
               <div style={{ color: "var(--color-muted)", fontSize: "var(--font-sm)" }} aria-live="polite">שומר…</div>
             )}

@@ -24,8 +24,7 @@ import {
   scopeKey, setCachedResult, type GroupChoice, type PersistedMatchState,
 } from "./match-state.js";
 
-const CLOSE_MS = 170;
-const LEAVE_MS = 190;
+const LEAVE_MS = 180;
 const FOCUSABLE = 'button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, [tabindex]:not([tabindex="-1"])';
 
 type OkResponse = Extract<VehicleMatchResponse, { status: "ok" }>;
@@ -66,8 +65,9 @@ export function VehicleMatchDrawer(props: VehicleMatchDrawerProps) {
   useEffect(() => {
     if (open) { setRender(true); setClosing(false); return; }
     if (!render) return;
+    if (motionOff()) { setRender(false); setClosing(false); return; }
     setClosing(true);
-    const t = window.setTimeout(() => { setRender(false); setClosing(false); }, CLOSE_MS);
+    const t = window.setTimeout(() => { setRender(false); setClosing(false); }, 160);
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
