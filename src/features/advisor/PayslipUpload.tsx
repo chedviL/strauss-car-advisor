@@ -104,15 +104,13 @@ export function PayslipUpload({ onApplied, caseId: propCaseId }: { onApplied?: (
       });
       const data = await res.json();
       if (data.status === "applied" || data.status === "already_applied") {
-        setPhase("applied");
-        setMsg(data.status === "already_applied"
-          ? "הנתונים כבר הוחלו קודם."
-          : "הנתונים הוחלו על התיק. אפשר לשנות כל פרט ולהמשיך בשיחה.");
         // רק החלה חדשה מפעילה הודעת המשך; אישור חוזר נשאר אידמפוטנטי.
         if (data.status === "applied") onApplied?.({
           caseId: typeof data.caseId === "string" ? data.caseId : activeCid,
           uploadId,
         });
+        // סגירה אוטומטית אחרי החלה מוצלחת — אין צורך בלחיצת "סגור" ידנית.
+        setPhase("idle"); setMsg(""); setUploadId(null); setDraft(null);
       } else if (data.status === "conflict") {
         setPhase("error"); setMsg(data.message ?? "הנתונים השתנו בינתיים; רענן/י ונסה/י שוב.");
       } else {
@@ -260,9 +258,6 @@ export function PayslipUpload({ onApplied, caseId: propCaseId }: { onApplied?: (
               </>
             )}
 
-            {phase === "applied" && (
-              <button type="button" className="btn" onClick={reset}>סגור</button>
-            )}
             {phase === "error" && (
               <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-2)" }}>
                 {/* הקובץ אינו נמחק אוטומטית: אפשר לנסות שוב, להחליף או למחוק. */}
