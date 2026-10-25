@@ -34,10 +34,11 @@ export async function answerAsRep(
   userId: string,
   inquiryId: string,
   answer: { value: number | null; note: string | null; effectiveFrom: string | null },
-  options?: { today?: string },
+  options?: { today?: string; notify?: boolean },
 ): Promise<RepAnswerOutcome> {
   if (await getStaffScope(conn, userId)) {
-    return await answerAsStaff(service, conn, userId, inquiryId, answer, options);
+    const staffOptions = options?.today === undefined ? undefined : { today: options.today };
+    return await answerAsStaff(service, conn, userId, inquiryId, answer, staffOptions);
   }
   return await answerAsDemo(service, conn, userId, inquiryId, answer, options);
 }

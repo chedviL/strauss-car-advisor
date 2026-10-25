@@ -14,6 +14,7 @@ import { describe, it, expect, afterAll } from "vitest";
 import { createClient } from "@supabase/supabase-js";
 import { createAuthClient, type CookieAdapter, type CookieToSet } from "../../src/server/auth/supabase.js";
 import { userFromClient } from "../../src/server/auth/claims.js";
+import { DEMO_LOGIN_EMAIL } from "../../src/domain/demo-login.js";
 
 const URL_ = process.env.SUPABASE_URL;
 const SERVICE = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -147,6 +148,36 @@ run("סשן Supabase Auth אמיתי (קוד חד-פעמי, ללא משלוח מ
       // ה-refresh token שבוטל אינו מחדש סשן.
       const r = await createAuthClient(jar().adapter).auth.refreshSession({ refresh_token: refresh });
       expect(r.data.session).toBeNull();
+    });
+  });
+
+  it("חשבון ההדגמה: קוד שגוי נדחה, קוד נכון יוצר סשן רגיל שנשמר ומסתיים ביציאה", { timeout: 60000 }, async () => {
+    await withKey(async () => {
+      const demoCode = process.env.DEMO_LOGIN_CODE;
+      if (!demoCode) throw new Error("DEMO_LOGIN_CODE is required for the demo account auth test");
+      const rejected = jar();
+      const invalid = await createAuthClient(rejected.adapter).auth.signInWithPassword({
+        email: DEMO_LOGIN_EMAIL, password: `${demoCode}-wrong`,
+      });
+      expect(invalid.error).toBeTruthy();
+      expect(invalid.data.session).toBeNull();
+      expect(await userFromClient(createAuthClient(rejected.adapter))).toBeNull();
+
+      const j = jar();
+      const client = createAuthClient(j.adapter);
+      const { data, error } = await client.auth.signInWithPassword({
+        email: DEMO_LOGIN_EMAIL, password: demoCode,
+      });
+      expect(error).toBeNull();
+      expect(data.session).toBeTruthy();
+      const user = await userFromClient(createAuthClient(j.adapter));
+      expect(user?.email).toBe(DEMO_LOGIN_EMAIL);
+
+      const refresh = data.session!.refresh_token;
+      await client.auth.signOut();
+      expect([...j.store.keys()].filter((k) => k.startsWith("sb-"))).toHaveLength(0);
+      expect(await userFromClient(createAuthClient(j.adapter))).toBeNull();
+      expect((await createAuthClient(jar().adapter).auth.refreshSession({ refresh_token: refresh })).data.session).toBeNull();
     });
   });
 });

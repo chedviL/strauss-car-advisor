@@ -10,10 +10,11 @@ import { AppHeader } from "../../features/brand/AppHeader.js";
 import { AccountMenu } from "../../features/auth/AccountMenu.js";
 import { RepresentativeWorkspace } from "../../features/representative/RepresentativeWorkspace.js";
 import { DemoIntro } from "../../features/representative/DemoIntro.js";
-import { DEMO_NOTICE } from "../../features/representative/rep-format.js";
+import { DEMO_ACCOUNT_EMAIL_NOTICE, DEMO_NOTICE } from "../../features/representative/rep-format.js";
 import "../../features/representative/representative.css";
 import { loadRepWorkspace } from "../actions.js";
 import { getSessionUser } from "../../server/auth/next-session.js";
+import { isSharedDemoAccount } from "../../domain/demo-login.js";
 
 // עמוד מאומת פר-משתמש: לעולם לא סטטי. maxDuration: הכנת פניות הדוגמה בלחיצה הראשונה
 // כוללת כמה חישובי השוואה מול המסד.
@@ -25,14 +26,21 @@ export default async function RepresentativePage() {
   if (!user) redirect("/login");
   const ws = await loadRepWorkspace();
   if (ws.status === "unauthenticated") redirect("/login");
+  const sharedDemo = isSharedDemoAccount(user.email);
+  const returnInquiry = ws.status === "ok"
+    ? ws.inquiries.find((item) => item.inquiry.status === "open") ?? ws.inquiries[0]
+    : undefined;
+  const employeeHref = sharedDemo && returnInquiry
+    ? `/?c=${encodeURIComponent(returnInquiry.inquiry.caseId)}&answer=${encodeURIComponent(returnInquiry.inquiry.id)}`
+    : "/";
 
   return (
     <main id="main-content" className="app-main">
-      <AppHeader center={<AccountMenu email={user.email} area="rep" />} />
-      <DemoBadge />
+      <AppHeader center={<AccountMenu email={user.email} area="rep" demoAccount={sharedDemo} employeeHref={employeeHref} />} />
+      <DemoBadge sharedAccount={sharedDemo} />
       <div className="rep-shell">
         <div className="rep-titlebar">
-          <h1>אזור נציג</h1>
+          <h1>{sharedDemo ? "אזור נציג — הדגמה" : "אזור נציג"}</h1>
           {ws.status === "ok" && (
             <span className="rep-mode" data-mode={ws.mode}>
               {ws.mode === "demo" ? "התנסות — הדגמה" : "גישה רגילה — נציג מורשה"}
@@ -50,7 +58,7 @@ export default async function RepresentativePage() {
               </p>
             </div>
             {ws.demoAvailable ? (
-              <DemoIntro />
+              <DemoIntro sharedAccount={sharedDemo} />
             ) : (
               <p className="rep-hint">ההתנסות בתפקיד נציג אינה פעילה כרגע.</p>
             )}
@@ -60,7 +68,7 @@ export default async function RepresentativePage() {
         {ws.status === "ok" && (
           <>
             {ws.mode === "demo" ? (
-              <p className="rep-notice" role="note">{DEMO_NOTICE}</p>
+              <p className="rep-notice" role="note">{sharedDemo ? DEMO_ACCOUNT_EMAIL_NOTICE : DEMO_NOTICE}</p>
             ) : (
               <p className="rep-hint">
                 מוצגות הפניות שבהיקף ההרשאה שלך בלבד. התשובה מוחלת על התיק ומעדכנת את ההשוואה אוטומטית, גם אם

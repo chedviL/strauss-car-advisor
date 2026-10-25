@@ -1,6 +1,6 @@
 // src/features/auth/LoginForm.tsx
 "use client";
-// כניסה בשני שלבים: מייל -> קוד חד-פעמי. בלי סיסמה, בלי הרשמה נפרדת, בלי כניסת הדגמה.
+// כניסה רגילה ב-OTP, ולצדה כניסה מצומצמת לחשבון הדגמה ייעודי.
 //
 // ⚠️ לוגיקת ההתחברות לא השתנתה: אותו OTP flow (requestOtp/verifyOtp), אותה שליחה
 // חוזרת + cooldown, אותו טיפול בשגיאות ואותו redirect ל-/inquiries.
@@ -15,8 +15,8 @@
 // הדמיה מקומית: עם ?sim=1 ה-OTP מדומה לוקאלית (בלי מייל אמיתי ובלי לעקוף אימות
 // אמיתי) כדי לבדוק חזותית את כל המצבים. ברירת מחדל: הזרימה האמיתית.
 
-import { useEffect, useState, useTransition, type CSSProperties } from "react";
-import { requestOtp, verifyOtp } from "../../app/auth-actions.js";
+import { useEffect, useState, useTransition, type CSSProperties, type FormEvent } from "react";
+import { loginToDemo, requestOtp, verifyOtp } from "../../app/auth-actions.js";
 import { CarVisual } from "./CarVisual.js";
 import { OtpInput } from "./OtpInput.js";
 
@@ -46,6 +46,9 @@ export function LoginForm({
   const [sim, setSim] = useState(false);
   const [emailTouched, setEmailTouched] = useState(false); // ולידציה רכה אחרי blur
   const [slideBack, setSlideBack] = useState(false);       // כיוון מעבר הטופס
+  const [demoCode, setDemoCode] = useState("");
+  const [demoBusy, setDemoBusy] = useState(false);
+  const [demoError, setDemoError] = useState<string | null>(null);
 
   // זיהוי מצב הדמיה מקומי (?sim=1) - ויזואלי בלבד, לא משנה הרשאות/אימות.
   useEffect(() => {
@@ -131,6 +134,19 @@ export function LoginForm({
     setSlideBack(true); setStep("email"); setCode(""); setError(null); setInfo(null);
   }
 
+  function enterDemo(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setDemoError(null);
+    setDemoBusy(true);
+    startTransition(async () => {
+      const result = await loginToDemo(demoCode);
+      if (result.status === "invalid_code") setDemoError("קוד ההדגמה שגוי. בדקו את הקוד שנמסר ונסו שוב.");
+      else if (result.status === "rate_limited") setDemoError("בוצעו יותר מדי ניסיונות. המתינו מעט ונסו שוב.");
+      else if (result.status === "unavailable") setDemoError(result.message);
+      setDemoBusy(false);
+    });
+  }
+
   return (
     <>
       {/* מיתוג - קבוצת הופעה 1. יציב לאורך המעברים. */}
@@ -189,7 +205,7 @@ export function LoginForm({
                     <span id="email-err" className="field-hint-error" role="alert">כתובת המייל אינה תקינה.</span>
                   )}
                   <button type="submit" className="btn btn-graphite" disabled={pending || !emailLooksValid}>
-                    {pending ? (
+                    {pending && !demoBusy ? (
                       <><span className="btn-spinner" aria-hidden="true" /><span>שולח קוד…</span></>
                     ) : (
                       <><span>שלח לי קוד כניסה</span><ArrowGlyph /></>
@@ -232,7 +248,7 @@ export function LoginForm({
                   <button type="submit" className="btn btn-graphite" disabled={pending || success || !codeReady}>
                     {success ? (
                       <><CheckGlyph /><span>נכנס…</span></>
-                    ) : pending ? (
+                    ) : pending && !demoBusy ? (
                       <><span className="btn-spinner" aria-hidden="true" /><span>בודק את הקוד…</span></>
                     ) : (
                       <span>כניסה</span>
@@ -256,6 +272,31 @@ export function LoginForm({
             {!error && info && <span style={{ color: "var(--color-muted)", fontSize: "var(--font-sm)" }}>{info}</span>}
           </div>
         </form>
+      )}
+
+      {configured && (
+        <section className="demo-login" aria-labelledby="demo-login-title">
+          <h2 id="demo-login-title">רוצה להתנסות במערכת?</h2>
+          <p>כניסת הדגמה לעובד ולנציג, ללא קוד למייל.</p>
+          <form className="demo-login-form" onSubmit={enterDemo} aria-busy={pending}>
+            <label htmlFor="demo-code">קוד הדגמה</label>
+            <input
+              id="demo-code"
+              type="password"
+              autoComplete="current-password"
+              value={demoCode}
+              onChange={(e) => { setDemoCode(e.target.value); setDemoError(null); }}
+              disabled={pending || demoBusy}
+            />
+            <p>קוד הכניסה יימסר בנפרד.</p>
+            <button type="submit" className="btn btn-graphite" disabled={pending || demoBusy || demoCode.length === 0}>
+              {pending && demoBusy ? <><span className="btn-spinner" aria-hidden="true" />מתחברים…</> : "כניסה להדגמה"}
+            </button>
+            <div aria-live="polite" style={{ minHeight: 20 }}>
+              {demoError && <span role="alert" className="login-error">{demoError}</span>}
+            </div>
+          </form>
+        </section>
       )}
 
       {/* איור הרכב בנייד בלבד: מתחת לכפתור, מעל הערת ההדגמה. מוסתר במחשב ב-CSS. */}

@@ -9,10 +9,11 @@ import { caseService } from "../server/web/service.js";
 import { requireOwner, requireUser, AuthRequiredError } from "../server/auth/next-session.js";
 import { getStaffScope, ForbiddenError, type RepInquiryView } from "../server/auth/staff.js";
 import { resolveRepAccess, listForAccess, answerAsRep } from "../server/auth/rep-access.js";
-import { repDemoEnabled, enrollInDemo } from "../server/auth/demo-rep.js";
+import { repDemoEnabled, isDemoEnrolled, answerAsDemo, enrollDemoAccount, enrollInDemo } from "../server/auth/demo-rep.js";
 import { parseRepAnswer, isUuid } from "../server/auth/rep-input.js";
 import { validateFactsPatch, InvalidFactsError } from "../server/services/facts-validation.js";
 import { sendForInquiryNow } from "../server/notify/worker.js";
+import { isSharedDemoAccount } from "../domain/demo-login.js";
 
 export async function startDemoCase(employeeId: string): Promise<void> {
   const owner = await requireOwner();
@@ -211,7 +212,9 @@ export async function loadRepWorkspace(): Promise<RepWorkspace> {
   let user;
   try { user = await requireUser(); } catch { return { status: "unauthenticated" }; }
   const conn = dbUrl();
-  const access = await resolveRepAccess(conn, user.id);
+  const access = isSharedDemoAccount(user.email)
+    ? (await isDemoEnrolled(conn, user.id) ? { mode: "demo" as const } : { mode: "none" as const, demoAvailable: repDemoEnabled() })
+    : await resolveRepAccess(conn, user.id);
   if (access.mode === "none") return { status: "none", demoAvailable: access.demoAvailable };
   const [inquiries, vehicleNames] = await Promise.all([
     listForAccess(conn, user.id, access),
@@ -221,10 +224,12 @@ export async function loadRepWorkspace(): Promise<RepWorkspace> {
 }
 
 /** רענון הרשימה אחרי מענה. שגיאת הרשאה -> null. */
-async function refreshLists(userId: string): Promise<{ inquiries: RepInquiryView[] } | null> {
+async function refreshLists(userId: string, sharedDemo = false): Promise<{ inquiries: RepInquiryView[] } | null> {
   try {
     const conn = dbUrl();
-    const access = await resolveRepAccess(conn, userId);
+    const access = sharedDemo
+      ? (await isDemoEnrolled(conn, userId) ? { mode: "demo" as const } : { mode: "none" as const, demoAvailable: false })
+      : await resolveRepAccess(conn, userId);
     if (access.mode === "none") return null;
     return { inquiries: await listForAccess(conn, userId, access) };
   } catch {
@@ -242,7 +247,8 @@ export async function startRepDemo(): Promise<{ status: "ok" } | { status: "disa
   try { user = await requireUser(); } catch { return { status: "disabled" }; }
   if (!repDemoEnabled()) return { status: "disabled" };
   try {
-    await enrollInDemo(caseService(), dbUrl(), user.id);
+    if (isSharedDemoAccount(user.email)) await enrollDemoAccount(dbUrl(), user.id);
+    else await enrollInDemo(caseService(), dbUrl(), user.id);
     revalidatePath("/representative");
     return { status: "ok" };
   } catch (e) {
@@ -274,18 +280,21 @@ export async function answerRepInquiry(inquiryId: string, answer: unknown): Prom
   if (!isUuid(inquiryId)) return { status: "not_found" };
   const parsed = parseRepAnswer(answer);
   if (!parsed.ok) return { status: "invalid", message: parsed.message };
+  const sharedDemo = isSharedDemoAccount(user.email);
   try {
-    const res = await answerAsRep(caseService(), dbUrl(), user.id, inquiryId, parsed.answer);
+    const res = sharedDemo
+      ? await answerAsDemo(caseService(), dbUrl(), user.id, inquiryId, parsed.answer, { notify: false })
+      : await answerAsRep(caseService(), dbUrl(), user.id, inquiryId, parsed.answer);
     revalidatePath("/");
     // משלוח מיידי של ההתראה *אחרי* שהתגובה נשלחה (after של Next.js), כך שהנציג אינו ממתין
     // ל-SMTP. המשימה כבר נשמרה במסד (enqueue), ולכן גם אם ה-after נכשל - המתזמן ישלח בהמשך.
     // בפניות שנזרעו לא נוצרת משימה (sendForInquiryNow מחזיר no_job).
-    if (res.status !== "not_found" && res.caseId) {
+    if (!sharedDemo && res.status !== "not_found" && res.caseId) {
       after(() => sendForInquiryNow(inquiryId).catch((e) => {
         console.warn("[notify] immediate send failed: " + (e instanceof Error ? e.name : "Error"));
       }));
     }
-    const lists = await refreshLists(user.id);
+    const lists = await refreshLists(user.id, sharedDemo);
     const extra = lists ? { inquiries: lists.inquiries } : {};
     if (res.status === "applied") {
       return res.missingFields && res.missingFields.length > 0

@@ -7,9 +7,9 @@ import "./representative.css";
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { startRepDemo } from "../../app/actions.js";
-import { DEMO_NOTICE } from "./rep-format.js";
+import { DEMO_ACCOUNT_EMAIL_NOTICE, DEMO_NOTICE } from "./rep-format.js";
 
-export function DemoIntro() {
+export function DemoIntro({ sharedAccount = false }: { sharedAccount?: boolean }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -37,14 +37,16 @@ export function DemoIntro() {
   return (
     <div className="rep-card">
       <h2>התנסות כנציג</h2>
-      <p className="rep-notice" style={{ color: "var(--color-text)" }}>{DEMO_NOTICE}</p>
-      <p>
-        בהתנסות תוכלו לראות פניות לדוגמה, לצרף פנייה שפתחתם בעצמכם בשיחה, לענות עליה ולקבל התראה במייל
-        המאומת שלכם. אין צורך בקוד נוסף או בסיסמה.
+      <p className="rep-notice" style={{ color: "var(--color-text)" }}>
+        {sharedAccount ? DEMO_ACCOUNT_EMAIL_NOTICE : DEMO_NOTICE}
+      </p>
+      <p>{sharedAccount
+        ? "אפשר לענות רק לפניות שנפתחו בחשבון ההדגמה. התשובה וההשוואה המעודכנת יופיעו בשיחה."
+        : "בהתנסות אפשר לראות פניות לדוגמה, לצרף פנייה שפתחתם בעצמכם בשיחה, לענות עליה ולקבל התראה במייל המאומת. אין צורך בקוד נוסף או בסיסמה."}
       </p>
       <div className="rep-actions">
         <button type="button" className="btn btn-graphite" onClick={start} disabled={busy} aria-describedby="rep-demo-status">
-          {busy ? (<><span className="rep-spinner" aria-hidden="true" />מכינים פניות לדוגמה…</>) : "התנסות כנציג — להדגמה"}
+          {busy ? (<><span className="rep-spinner" aria-hidden="true" />מכינים סביבת הדגמה…</>) : sharedAccount ? "כניסה לאזור נציג — הדגמה" : "התנסות כנציג — להדגמה"}
         </button>
       </div>
       <div id="rep-demo-status" aria-live="polite">

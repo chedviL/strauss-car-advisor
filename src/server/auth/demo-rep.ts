@@ -113,6 +113,12 @@ export async function enrollInDemo(service: CaseService, conn: string, userId: s
   return await seedDemoInquiries(service, conn, userId);
 }
 
+/** רישום חשבון הדמו המשותף בלבד: הוא יטפל בפניות שלו ולא יקבל פניות seeded. */
+export async function enrollDemoAccount(conn: string, userId: string): Promise<void> {
+  assertEnabled();
+  await withIdentity(conn, userId, async (c) => { await c.query("select demo_rep_enroll()"); });
+}
+
 // ---------- קריאה ----------
 
 /** פניות ההדגמה של המשתמש בלבד. לא מצטרף/דגל כבוי: ForbiddenError. */
@@ -138,7 +144,7 @@ export async function answerAsDemo(
   userId: string,
   inquiryId: string,
   answer: { value: number | null; note: string | null; effectiveFrom: string | null },
-  options?: { today?: string },
+  options?: { today?: string; notify?: boolean },
 ): Promise<RepAnswerOutcome> {
   assertEnabled();
   const access = await withIdentity(conn, userId, async (c) => {
@@ -149,5 +155,8 @@ export async function answerAsDemo(
   // הגנה כפולה: פנייה שנזרעה חייבת להיות בבעלות הסינתטית של המשתמש; owned - בבעלותו.
   const expectedOwner = access.origin === "seeded" ? syntheticOwnerId(userId) : userId;
   if (access.ownerId !== expectedOwner) throw new ForbiddenError("out_of_scope");
-  return await applyAnswerAsOwner(service, conn, userId, access.ownerId, inquiryId, answer, options, access.origin === "owned");
+  return await applyAnswerAsOwner(
+    service, conn, userId, access.ownerId, inquiryId, answer, options,
+    access.origin === "owned" && options?.notify !== false,
+  );
 }

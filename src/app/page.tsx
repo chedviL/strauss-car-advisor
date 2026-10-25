@@ -15,6 +15,7 @@ import { LightTrail } from "../features/brand/LightTrail.js";
 import { ChatWave } from "../features/brand/ChatWave.js";
 import type { CaseState } from "../domain/contracts/case.js";
 import { isUuid } from "../domain/ids.js";
+import { isSharedDemoAccount } from "../domain/demo-login.js";
 
 // עמוד מאומת פר-משתמש: לעולם לא סטטי (קורא סשן/עוגיות). חובה לבנייה ב-Vercel.
 export const dynamic = "force-dynamic";
@@ -24,6 +25,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ c
   const user = await getSessionUser();
   if (!user) redirect("/login");
   const owner = user.id;
+  const demoAccount = isSharedDemoAccount(user.email);
   // הבירור הפעיל נקבע ע"י מזהה מפורש ב-URL (?c=<caseId>) בלבד - לא ע"י עוגייה.
   // כניסה רגילה ל-/ (בלי הפרמטר) פותחת מסך שיחה נקי, בלי לשחזר שיחה קודמת ובלי
   // למחוק אותה. רענון בתוך שיחה פעילה שומר את ?c= ולכן משחזר אותה.
@@ -59,13 +61,13 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ c
       <ChatWave />
       <AppHeader
         leading={<ConversationSidebar summaries={summaries} activeCaseId={caseId} />}
-        center={<AccountMenu email={user.email} />}
+        center={<AccountMenu email={user.email} demoAccount={demoAccount} />}
         actions={
           /* "איזה רכב מתאים לי?": הכפתור מוצג כאן (למעלה בשמאל, תמיד) ע"י ChatPanel דרך portal. */
           <span id="vm-launcher-slot" className="vm-launcher-slot" />
         }
       />
-      <DemoBadge />
+      <DemoBadge sharedAccount={demoAccount} />
 
       {/* גוף: אזור השיחה (ההיסטוריה במגירה מהכותרת). */}
       <div className="app-body">

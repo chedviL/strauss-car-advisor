@@ -9,11 +9,13 @@
 import { SignOutForm } from "./SignOutForm.js";
 
 // email נשמר בחתימה לתאימות עם הקוראים הקיימים, אך אינו מוצג עוד בכותרת.
-export function AccountMenu({ area = "employee" }: { email?: string | null; area?: "employee" | "rep" }) {
+export function AccountMenu({
+  area = "employee", demoAccount = false, employeeHref = "/",
+}: { email?: string | null; area?: "employee" | "rep"; demoAccount?: boolean; employeeHref?: string }) {
   return (
     <nav className="account-menu" aria-label="מעבר בין אזורים">
       <a
-        className={`btn nav-btn${area === "employee" ? " is-current" : ""}`} href="/"
+        className={`btn nav-btn${area === "employee" ? " is-current" : ""}`} href={employeeHref}
         aria-current={area === "employee" ? "page" : undefined}
       >
         אזור עובד
@@ -22,7 +24,7 @@ export function AccountMenu({ area = "employee" }: { email?: string | null; area
         className={`btn nav-btn${area === "rep" ? " is-current" : ""}`} href="/representative"
         aria-current={area === "rep" ? "page" : undefined}
       >
-        אזור נציג
+        {demoAccount ? "אזור נציג — הדגמה" : "אזור נציג"}
       </a>
       <SignOutForm />
     </nav>

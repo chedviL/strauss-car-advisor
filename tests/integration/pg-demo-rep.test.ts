@@ -12,7 +12,7 @@ import { CaseService } from "../../src/server/services/case-service.js";
 import { findActiveDatasetId } from "../../src/server/services/dataset-provider.js";
 import { ForbiddenError, listRepInquiries, answerAsStaff, type RepInquiryView } from "../../src/server/auth/staff.js";
 import {
-  DemoDisabledError, enrollInDemo, isDemoEnrolled, listDemoInquiries, answerAsDemo,
+  DemoDisabledError, enrollDemoAccount, enrollInDemo, isDemoEnrolled, listDemoInquiries, answerAsDemo,
   DEMO_SEEDS, syntheticOwnerId,
 } from "../../src/server/auth/demo-rep.js";
 import { resolveRepAccess, answerAsRep } from "../../src/server/auth/rep-access.js";
@@ -31,6 +31,7 @@ run("התנסות כנציג: הרשאות, בידוד, זריעה והתראו�
 
   const A = uid();
   const B = uid();
+  const sharedDemo = uid();
 
   const byVehicle = (list: RepInquiryView[], code: string) => list.find((q) => q.vehicleCode === code)!;
   const eligibility = (list: RepInquiryView[]) => list.find((q) => q.inquiry.type === "occupation_eligibility_clarification")!;
@@ -323,5 +324,31 @@ run("התנסות כנציג: הרשאות, בידוד, זריעה והתראו�
     expect(state!.latestComparison).toBeTruthy();
     const msgs = await service.loadMessages(mine.caseId, D);
     expect(msgs.map((m) => m.role)).toEqual(["user", "assistant"]);
+  });
+
+  it("חשבון דמו משותף: רק פניות בבעלותו, מענה מעדכן השוואה בלי ליצור התראה", { timeout: 120000 }, async () => {
+    await enrollDemoAccount(APP!, sharedDemo);
+    const mine = await ownInquiry(sharedDemo);
+    const foreign = await ownInquiry(B);
+
+    const before = await listDemoInquiries(APP!, sharedDemo);
+    expect(before).toHaveLength(1);
+    expect(before[0]!.inquiry.id).toBe(mine.inquiryId);
+    expect(before[0]!.origin).toBe("owned");
+    await expect(answerAsDemo(service, APP!, sharedDemo, foreign.inquiryId, ans(1), { notify: false }))
+      .rejects.toBeInstanceOf(ForbiddenError);
+
+    const answer = await answerAsDemo(service, APP!, sharedDemo, mine.inquiryId, ans(850), { notify: false });
+    expect(answer.status).toBe("applied");
+    expect(answer.recomputed).toBe(true);
+    expect(await jobsForCase(mine.caseId)).toHaveLength(0);
+
+    const after = await listDemoInquiries(APP!, sharedDemo);
+    expect(after).toHaveLength(1);
+    expect(after[0]!.inquiry.status).toBe("answered");
+    expect(after[0]!.inquiry.answerValue).toBe(850);
+    const state = await service.getCaseState(mine.caseId, sharedDemo);
+    expect(state!.scenarios.find((s) => s.id === mine.altId)!.participation).toBe(850);
+    expect(state!.latestComparison).toBeTruthy();
   });
 });

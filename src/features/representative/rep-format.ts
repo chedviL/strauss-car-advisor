@@ -5,6 +5,8 @@ export type RepType = "employee_participation" | "occupation_eligibility_clarifi
 
 export const DEMO_NOTICE =
   "התנסות בתפקיד נציג — הגישה מוגבלת לפניות הבדיקה שלך ולנתונים פיקטיביים. במערכת ארגונית הגישה מיועדת לנציגים מורשים.";
+export const DEMO_ACCOUNT_EMAIL_NOTICE =
+  "בהדגמה התשובה זמינה בשיחה. לקבלת התראות במייל ניתן להיכנס באמצעות כתובת אישית.";
 
 export const TYPE_LABEL: Record<RepType, string> = {
   employee_participation: "בירור השתתפות העובד/ת ברכב",

@@ -11,6 +11,7 @@ import { nextCookieAdapter } from "../server/auth/next-session.js";
 import { checkRateLimit } from "../server/web/rate-limit.js";
 import { normalizeEmail, normalizeCode } from "../server/auth/validate.js";
 import { safeReturnPath, RETURN_COOKIE } from "../server/auth/return-path.js";
+import { DEMO_LOGIN_EMAIL } from "../domain/demo-login.js";
 
 export type OtpRequestResult =
   | { status: "sent" }
@@ -24,11 +25,42 @@ export type OtpVerifyResult =
   | { status: "rate_limited"; retryAfterSeconds: number }
   | { status: "unavailable"; message: string };
 
+export type DemoLoginResult =
+  | { status: "invalid_code" }
+  | { status: "rate_limited"; retryAfterSeconds: number }
+  | { status: "unavailable"; message: string };
+
+/** כניסה בסיסמה לחשבון הדמו הייעודי; Supabase יוצר את הסשן הרגיל והמאומת. */
+export async function loginToDemo(code: string): Promise<DemoLoginResult> {
+  const rl = checkRateLimit(`demo-login:${DEMO_LOGIN_EMAIL}`, 20, 10 * 60_000);
+  if (!rl.allowed) return { status: "rate_limited", retryAfterSeconds: rl.retryAfterSeconds };
+  const expectedCode = (process.env.DEMO_LOGIN_CODE ?? "").trim();
+  if (!expectedCode) return { status: "unavailable", message: "כניסת ההדגמה אינה מוגדרת כרגע בשרת." };
+  try {
+    const client = createAuthClient(await nextCookieAdapter());
+    const { data, error } = await client.auth.signInWithPassword({ email: DEMO_LOGIN_EMAIL, password: code });
+    if (error || !data.session) return { status: "invalid_code" };
+  } catch (e) {
+    if (e instanceof AuthConfigError) return { status: "unavailable", message: "ההתחברות עדיין לא הוגדרה בשרת." };
+    console.warn(`[auth] demo sign-in error: ${e instanceof Error ? e.name : "Error"}`);
+    return { status: "unavailable", message: "לא הצלחנו להתחבר כרגע. נסו שוב בעוד רגע." };
+  }
+
+  const store = await cookies();
+  store.delete("strauss_case");
+  store.delete("strauss_visit");
+  const back = safeReturnPath(store.get(RETURN_COOKIE)?.value);
+  store.delete(RETURN_COOKIE);
+  redirect(back ?? "/");
+}
 
 /** שולח קוד כניסה למייל. תמיד אותה תשובה "נשלח" כשהכתובת תקינה (בלי חשיפת קיום). */
 export async function requestOtp(emailRaw: string): Promise<OtpRequestResult> {
   const email = normalizeEmail(emailRaw);
   if (!email) return { status: "invalid_email" };
+  if (email === DEMO_LOGIN_EMAIL) {
+    return { status: "unavailable", message: "לחשבון ההדגמה אין לשלוח קוד למייל. השתמשו בכניסה להדגמה." };
+  }
   // חלון לכל כתובת: מגן מהצפת תיבת הדואר ושרפת מכסה, אך נדיב מספיק להדגמה/בדיקות.
   // עד 10 שליחות ל-15 דקות לכל כתובת (היה 3 ל-10 דקות).
   const rl = checkRateLimit(`otp-send:${email}`, 10, 15 * 60_000);
