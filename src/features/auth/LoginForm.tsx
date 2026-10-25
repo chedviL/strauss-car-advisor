@@ -15,7 +15,7 @@
 // הדמיה מקומית: עם ?sim=1 ה-OTP מדומה לוקאלית (בלי מייל אמיתי ובלי לעקוף אימות
 // אמיתי) כדי לבדוק חזותית את כל המצבים. ברירת מחדל: הזרימה האמיתית.
 
-import { useEffect, useRef, useState, useTransition, type CSSProperties, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, useTransition, type CSSProperties, type FormEvent } from "react";
 import { loginToDemo, requestOtp, verifyOtp } from "../../app/auth-actions.js";
 import { CarVisual } from "./CarVisual.js";
 import { OtpInput } from "./OtpInput.js";
@@ -54,6 +54,10 @@ export function LoginForm({
   const demoTriggerRef = useRef<HTMLButtonElement | null>(null);
   const demoDialogRef = useRef<HTMLElement | null>(null);
   const demoInputRef = useRef<HTMLInputElement | null>(null);
+  const closeDemo = useCallback(() => {
+    setDemoOpen(false);
+    requestAnimationFrame(() => demoTriggerRef.current?.focus({ preventScroll: true }));
+  }, []);
 
   // זיהוי מצב הדמיה מקומי (?sim=1) - ויזואלי בלבד, לא משנה הרשאות/אימות.
   useEffect(() => {
@@ -78,7 +82,7 @@ export function LoginForm({
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        setDemoOpen(false);
+        closeDemo();
         return;
       }
       if (event.key !== "Tab") return;
@@ -95,9 +99,8 @@ export function LoginForm({
     return () => {
       document.removeEventListener("keydown", onKeyDown);
       document.body.style.overflow = previousOverflow;
-      requestAnimationFrame(() => demoTriggerRef.current?.focus());
     };
-  }, [demoOpen]);
+  }, [closeDemo, demoOpen]);
 
   // busy = בזמן בקשת שרת. מדווח להורה (מגביר מעט פולסים באיור).
   useEffect(() => { onBusy?.(pending); }, [pending, onBusy]);
@@ -331,7 +334,7 @@ export function LoginForm({
 
       {configured && demoOpen && (
         <div className="demo-modal-backdrop" onMouseDown={(event) => {
-          if (event.target === event.currentTarget) setDemoOpen(false);
+          if (event.target === event.currentTarget) closeDemo();
         }}>
           <section
             ref={demoDialogRef}
@@ -345,7 +348,7 @@ export function LoginForm({
               type="button"
               className="demo-modal-close"
               aria-label="סגירה"
-              onClick={() => setDemoOpen(false)}
+              onClick={closeDemo}
               disabled={demoBusy}
             >
               ×
