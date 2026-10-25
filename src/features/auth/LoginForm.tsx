@@ -15,10 +15,11 @@
 // הדמיה מקומית: עם ?sim=1 ה-OTP מדומה לוקאלית (בלי מייל אמיתי ובלי לעקוף אימות
 // אמיתי) כדי לבדוק חזותית את כל המצבים. ברירת מחדל: הזרימה האמיתית.
 
-import { useEffect, useState, useTransition, type CSSProperties, type FormEvent } from "react";
+import { useEffect, useRef, useState, useTransition, type CSSProperties, type FormEvent } from "react";
 import { loginToDemo, requestOtp, verifyOtp } from "../../app/auth-actions.js";
 import { CarVisual } from "./CarVisual.js";
 import { OtpInput } from "./OtpInput.js";
+import { DEMO_LOGIN_DISPLAY_CODE } from "../../domain/demo-login.js";
 
 // עוזר טיפוסים: CSS vars מותאמים (--enter-delay) אינם בטיפוס CSSProperties הסטנדרטי.
 type CSSVars = CSSProperties & Record<`--${string}`, string>;
@@ -49,6 +50,10 @@ export function LoginForm({
   const [demoCode, setDemoCode] = useState("");
   const [demoBusy, setDemoBusy] = useState(false);
   const [demoError, setDemoError] = useState<string | null>(null);
+  const [demoOpen, setDemoOpen] = useState(false);
+  const demoTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const demoDialogRef = useRef<HTMLElement | null>(null);
+  const demoInputRef = useRef<HTMLInputElement | null>(null);
 
   // זיהוי מצב הדמיה מקומי (?sim=1) - ויזואלי בלבד, לא משנה הרשאות/אימות.
   useEffect(() => {
@@ -62,6 +67,37 @@ export function LoginForm({
     });
     return () => cancelAnimationFrame(frame);
   }, [step]);
+
+  useEffect(() => {
+    if (!demoOpen) return;
+    const dialog = demoDialogRef.current;
+    if (!dialog) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    demoInputRef.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setDemoOpen(false);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(
+        'button:not(:disabled), input:not(:disabled), [href], [tabindex]:not([tabindex="-1"])',
+      )).filter((element) => element.offsetParent !== null);
+      if (focusable.length === 0) { event.preventDefault(); return; }
+      const first = focusable[0]!;
+      const last = focusable[focusable.length - 1]!;
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = previousOverflow;
+      requestAnimationFrame(() => demoTriggerRef.current?.focus());
+    };
+  }, [demoOpen]);
 
   // busy = בזמן בקשת שרת. מדווח להורה (מגביר מעט פולסים באיור).
   useEffect(() => { onBusy?.(pending); }, [pending, onBusy]);
@@ -145,6 +181,14 @@ export function LoginForm({
       else if (result.status === "unavailable") setDemoError(result.message);
       setDemoBusy(false);
     });
+  }
+
+  async function copyDemoCode() {
+    try {
+      await navigator.clipboard.writeText(DEMO_LOGIN_DISPLAY_CODE);
+    } catch {
+      setDemoError("ההעתקה לא זמינה בדפדפן; אפשר לבחור ולהעתיק את הקוד.");
+    }
   }
 
   return (
@@ -275,28 +319,65 @@ export function LoginForm({
       )}
 
       {configured && (
-        <section className="demo-login" aria-labelledby="demo-login-title">
-          <h2 id="demo-login-title">רוצה להתנסות במערכת?</h2>
-          <p>כניסת הדגמה לעובד ולנציג, ללא קוד למייל.</p>
-          <form className="demo-login-form" onSubmit={enterDemo} aria-busy={pending}>
-            <label htmlFor="demo-code">קוד הדגמה</label>
-            <input
-              id="demo-code"
-              type="password"
-              autoComplete="current-password"
-              value={demoCode}
-              onChange={(e) => { setDemoCode(e.target.value); setDemoError(null); }}
-              disabled={pending || demoBusy}
-            />
-            <p>קוד הכניסה יימסר בנפרד.</p>
-            <button type="submit" className="btn btn-graphite" disabled={pending || demoBusy || demoCode.length === 0}>
-              {pending && demoBusy ? <><span className="btn-spinner" aria-hidden="true" />מתחברים…</> : "כניסה להדגמה"}
+        <button
+          ref={demoTriggerRef}
+          type="button"
+          className="demo-login-link"
+          onClick={() => { setDemoError(null); setDemoOpen(true); }}
+        >
+          להתנסות במערכת
+        </button>
+      )}
+
+      {configured && demoOpen && (
+        <div className="demo-modal-backdrop" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setDemoOpen(false);
+        }}>
+          <section
+            ref={demoDialogRef}
+            className="demo-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="demo-modal-title"
+            tabIndex={-1}
+          >
+            <button
+              type="button"
+              className="demo-modal-close"
+              aria-label="סגירה"
+              onClick={() => setDemoOpen(false)}
+              disabled={demoBusy}
+            >
+              ×
             </button>
-            <div aria-live="polite" style={{ minHeight: 20 }}>
-              {demoError && <span role="alert" className="login-error">{demoError}</span>}
-            </div>
-          </form>
-        </section>
+            <h2 id="demo-modal-title">כניסה להדגמה</h2>
+            <p className="demo-modal-code" dir="rtl">
+              <span>קוד להתנסות:</span>
+              <bdi dir="ltr">{DEMO_LOGIN_DISPLAY_CODE}</bdi>
+              <button type="button" className="demo-copy-button" onClick={copyDemoCode}>
+                העתקה
+              </button>
+            </p>
+            <form className="demo-login-form" onSubmit={enterDemo} aria-busy={demoBusy}>
+              <label htmlFor="demo-code">קוד הדגמה</label>
+              <input
+                ref={demoInputRef}
+                id="demo-code"
+                type="password"
+                autoComplete="current-password"
+                value={demoCode}
+                onChange={(e) => { setDemoCode(e.target.value); setDemoError(null); }}
+                disabled={demoBusy}
+              />
+              <button type="submit" className="btn btn-graphite" disabled={demoBusy || demoCode.length === 0}>
+                {demoBusy ? <><span className="btn-spinner" aria-hidden="true" />מתחברים…</> : "כניסה"}
+              </button>
+              <div aria-live="polite" style={{ minHeight: 20 }}>
+                {demoError && <span role="alert" className="login-error">{demoError}</span>}
+              </div>
+            </form>
+          </section>
+        </div>
       )}
 
       {/* איור הרכב בנייד בלבד: מתחת לכפתור, מעל הערת ההדגמה. מוסתר במחשב ב-CSS. */}
